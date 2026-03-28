@@ -212,6 +212,12 @@ export const TuiThreadCommand = cmd({
           directory: cwd,
           fetch: transport.fetch,
           events: transport.events,
+          classify: async (input) => client.call("classify", input),
+          transcribe: async (input) =>
+            client.call("transcribe", {
+              audio: Buffer.from(input.audio).toString("base64"),
+              model: input.model,
+            }),
           args: {
             continue: args.continue,
             sessionID: args.session,

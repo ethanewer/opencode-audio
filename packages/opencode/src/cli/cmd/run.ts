@@ -27,6 +27,7 @@ import { SkillTool } from "../../tool/skill"
 import { BashTool } from "../../tool/bash"
 import { TodoWriteTool } from "../../tool/todo"
 import { Locale } from "../../util/locale"
+import { transcribeFile } from "../../audio/transcribe"
 
 type ToolProps<T extends Tool.Info> = {
   input: Tool.InferParameters<T>
@@ -302,6 +303,10 @@ export const RunCommand = cmd({
         describe: "show thinking blocks",
         default: false,
       })
+      .option("audio", {
+        type: "string",
+        describe: "path to a .wav file to transcribe as the prompt",
+      })
   },
   handler: async (args) => {
     let message = [...args.message, ...(args["--"] || [])]
@@ -343,6 +348,18 @@ export const RunCommand = cmd({
     }
 
     if (!process.stdin.isTTY) message += "\n" + (await Bun.stdin.text())
+
+    if (args.audio) {
+      const wav = path.resolve(process.cwd(), args.audio)
+      if (!(await Filesystem.exists(wav))) {
+        UI.error(`Audio file not found: ${args.audio}`)
+        process.exit(1)
+      }
+      UI.println("Transcribing audio...")
+      const transcript = await transcribeFile(wav)
+      UI.println(`Transcript: "${transcript}"`)
+      message = transcript
+    }
 
     if (message.trim().length === 0 && !args.command) {
       UI.error("You must provide a message or a command")

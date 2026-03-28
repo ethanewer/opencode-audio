@@ -1087,6 +1087,12 @@ export namespace Config {
             .positive()
             .optional()
             .describe("Timeout in milliseconds for model context protocol (MCP) requests"),
+          voice: z
+            .object({
+              enabled: z.boolean().optional().describe("Enable voice input mode"),
+              model: z.string().optional().describe("Transcription model (default: gpt-4o-mini-transcribe)"),
+            })
+            .optional(),
         })
         .optional(),
     })

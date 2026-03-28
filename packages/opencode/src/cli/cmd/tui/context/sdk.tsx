@@ -8,6 +8,16 @@ export type EventSource = {
   setWorkspace?: (workspaceID?: string) => void
 }
 
+export type ClassifyFn = (input: {
+  providerID: string
+  modelID: string
+  transcript: string
+  options: string[]
+  question?: string
+}) => Promise<{ option: string | null; confidence: number }>
+
+export type TranscribeFn = (input: { audio: Uint8Array; model?: string }) => Promise<string>
+
 export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
   name: "SDK",
   init: (props: {
@@ -16,6 +26,8 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     fetch?: typeof fetch
     headers?: RequestInit["headers"]
     events?: EventSource
+    classify?: ClassifyFn
+    transcribe?: TranscribeFn
   }) => {
     const abort = new AbortController()
     let workspaceID: string | undefined
@@ -112,6 +124,8 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       get workspaceID() {
         return workspaceID
       },
+      classify: props.classify,
+      transcribe: props.transcribe,
       directory: props.directory,
       event: emitter,
       fetch: props.fetch ?? fetch,

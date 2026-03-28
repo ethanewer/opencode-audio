@@ -13,6 +13,10 @@ import { Flag } from "@/flag/flag"
 import { setTimeout as sleep } from "node:timers/promises"
 import { writeHeapSnapshot } from "node:v8"
 import { WorkspaceID } from "@/control-plane/schema"
+import { classify as classifyAudio } from "@/audio/classify"
+import { transcribe as transcribeBytes } from "@/audio/transcribe"
+import { Provider } from "@/provider/provider"
+import { ProviderID, ModelID } from "@/provider/schema"
 
 await Log.init({
   print: process.argv.includes("--print-logs"),
@@ -153,6 +157,21 @@ export const rpc = {
   },
   async setWorkspace(input: { workspaceID?: string }) {
     startEventStream({ directory: process.cwd(), workspaceID: input.workspaceID })
+  },
+  async classify(input: { providerID: string; modelID: string; transcript: string; options: string[]; question?: string }) {
+    return Instance.provide({
+      directory: process.cwd(),
+      init: InstanceBootstrap,
+      async fn() {
+        const model = await Provider.getModel(ProviderID.make(input.providerID), ModelID.make(input.modelID))
+        const lang = await Provider.getLanguage(model)
+        return classifyAudio(lang, input.transcript, input.options, input.question)
+      },
+    })
+  },
+  async transcribe(input: { audio: string; model?: string }) {
+    const bytes = new Uint8Array(Buffer.from(input.audio, "base64"))
+    return transcribeBytes(bytes, input.model)
   },
   async shutdown() {
     Log.Default.info("worker shutting down")

@@ -1616,6 +1616,16 @@ export type Config = {
      * Timeout in milliseconds for model context protocol (MCP) requests
      */
     mcp_timeout?: number
+    voice?: {
+      /**
+       * Enable voice input mode
+       */
+      enabled?: boolean
+      /**
+       * Transcription model (default: gpt-4o-mini-transcribe)
+       */
+      model?: string
+    }
   }
 }
 

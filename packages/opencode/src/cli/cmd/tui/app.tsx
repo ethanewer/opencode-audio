@@ -167,6 +167,8 @@ export function tui(input: {
   fetch?: typeof fetch
   headers?: RequestInit["headers"]
   events?: EventSource
+  classify?: import("./context/sdk").ClassifyFn
+  transcribe?: import("./context/sdk").TranscribeFn
 }) {
   // promise to prevent immediate exit
   return new Promise<void>(async (resolve) => {
@@ -209,6 +211,8 @@ export function tui(input: {
                         fetch={input.fetch}
                         headers={input.headers}
                         events={input.events}
+                        classify={input.classify}
+                        transcribe={input.transcribe}
                       >
                         <SyncProvider>
                           <ThemeProvider mode={mode}>

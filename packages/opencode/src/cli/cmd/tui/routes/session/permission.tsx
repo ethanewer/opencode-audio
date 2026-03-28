@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store"
-import { createMemo, For, Match, Show, Switch } from "solid-js"
-import { Portal, useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
+import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
+import { Portal, useKeyboard, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
 import { useTheme, selectedForeground } from "../../context/theme"
@@ -16,6 +16,10 @@ import { Locale } from "@/util/locale"
 import { Global } from "@/global"
 import { useDialog } from "../../ui/dialog"
 import { useTuiConfig } from "../../context/tui-config"
+import { usePromptRef } from "../../context/prompt"
+import { useLocal } from "../../context/local"
+import { useVoice } from "../../util/voice"
+import { useToast } from "../../ui/toast"
 
 type PermissionStage = "permission" | "always" | "reject"
 
@@ -123,6 +127,278 @@ function TextBody(props: { title: string; description?: string; icon?: string })
         </box>
       </Show>
     </>
+  )
+}
+
+const PERMISSION_VOICE = ["no", "yes", "allow always"] as const
+
+function permissionVoiceLabel(option: string | null) {
+  if (option === "no") return "Reject"
+  if (option === "yes") return "Allow once"
+  if (option === "allow always") return "Allow always"
+  return "No match"
+}
+
+function PermissionTriVoicePrompt(props: {
+  header: JSX.Element
+  body: JSX.Element
+  fullscreen?: boolean
+  onNo: () => void
+  onYes: () => void
+  onAlways: () => void
+}) {
+  const { theme } = useTheme()
+  const keybind = useKeybind()
+  const dimensions = useTerminalDimensions()
+  const opts = { once: "Allow once", always: "Allow always", reject: "Reject" } as const
+  const keys = Object.keys(opts) as (keyof typeof opts)[]
+  const [store, setStore] = createStore({
+    selected: keys[0],
+    expanded: false,
+  })
+  const diffKey = Keybind.parse("ctrl+f")[0]
+  const narrow = createMemo(() => dimensions().width < 80)
+  const dialog = useDialog()
+  const promptRef = usePromptRef()
+  const toast = useToast()
+  const sdk = useSDK()
+  const local = useLocal()
+  const voiced = createMemo(() => promptRef.mode === "voice")
+  const [classifying, setClassifying] = createSignal(false)
+  const [voiceTrace, setVoiceTrace] = createSignal<{
+    transcript: string
+    matched: string
+    confidence: number | null
+  } | null>(null)
+
+  async function handleVoice(text: string) {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    if (!voiced()) return
+    const model = local.model.current()
+    if (!model || !sdk.classify) {
+      toast.show({ variant: "warning", message: "Select a model to use voice for permissions", duration: 3000 })
+      return
+    }
+    setClassifying(true)
+    try {
+      const result = await sdk.classify({
+        providerID: model.providerID,
+        modelID: model.modelID,
+        transcript: text,
+        options: [...PERMISSION_VOICE],
+        question: "Permission: allow once, allow always, or reject.",
+      })
+      setClassifying(false)
+      if (!voiced()) return
+      const ok = Boolean(result.option && result.confidence !== 0)
+      const conf = typeof result.confidence === "number" ? result.confidence : null
+      setVoiceTrace({
+        transcript: trimmed,
+        matched: ok ? permissionVoiceLabel(result.option) : "No match",
+        confidence: conf,
+      })
+      if (!result.option || result.confidence === 0) {
+        toast.show({ variant: "warning", message: "Didn't catch that, try again", duration: 2000 })
+        return
+      }
+      if (result.option === "no") props.onNo()
+      else if (result.option === "yes") props.onYes()
+      else if (result.option === "allow always") props.onAlways()
+    } catch (err) {
+      setClassifying(false)
+      if (!voiced()) return
+      setVoiceTrace({
+        transcript: trimmed,
+        matched: "Classification failed",
+        confidence: null,
+      })
+      toast.show({
+        variant: "error",
+        title: "Classification failed",
+        message: err instanceof Error ? err.message : "An unknown error occurred",
+        duration: 5000,
+      })
+    }
+  }
+
+  const voice = useVoice({ onResult: handleVoice })
+
+  createEffect(() => {
+    if (voice.recording()) setVoiceTrace(null)
+  })
+
+  useKeyboard((evt) => {
+    if (dialog.stack.length > 0) return
+
+    if (voiced()) {
+      if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+        evt.preventDefault()
+        if (voice.recording()) {
+          voice.cancel()
+          return
+        }
+        props.onNo()
+        return
+      }
+      if (evt.name === "space") {
+        evt.preventDefault()
+        if (classifying()) return
+        voice.toggle()
+        return
+      }
+    }
+
+    if (evt.name === "left" || evt.name == "h") {
+      evt.preventDefault()
+      const idx = keys.indexOf(store.selected)
+      const next = keys[(idx - 1 + keys.length) % keys.length]
+      setStore("selected", next)
+    }
+
+    if (evt.name === "right" || evt.name == "l") {
+      evt.preventDefault()
+      const idx = keys.indexOf(store.selected)
+      const next = keys[(idx + 1) % keys.length]
+      setStore("selected", next)
+    }
+
+    if (evt.name === "return") {
+      evt.preventDefault()
+      if (store.selected === "once") props.onYes()
+      if (store.selected === "always") props.onAlways()
+      if (store.selected === "reject") props.onNo()
+    }
+
+    if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+      evt.preventDefault()
+      props.onNo()
+    }
+
+    if (props.fullscreen && diffKey && Keybind.match(diffKey, keybind.parse(evt))) {
+      evt.preventDefault()
+      evt.stopPropagation()
+      setStore("expanded", (v) => !v)
+    }
+  })
+
+  const hint = createMemo(() => (store.expanded ? "minimize" : "fullscreen"))
+
+  const content = () => (
+    <box
+      backgroundColor={theme.backgroundPanel}
+      border={["left"]}
+      borderColor={theme.warning}
+      customBorderChars={SplitBorder.customBorderChars}
+      {...(store.expanded
+        ? { top: dimensions().height * -1 + 1, bottom: 1, left: 2, right: 2, position: "absolute" }
+        : {
+            top: 0,
+            maxHeight: 15,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            position: "relative",
+          })}
+    >
+      <box gap={1} paddingLeft={1} paddingRight={3} paddingTop={1} paddingBottom={1} flexGrow={1}>
+        <box paddingLeft={1} flexShrink={0}>
+          {props.header}
+        </box>
+        {props.body}
+        <Show when={voiced() && classifying()}>
+          <box paddingLeft={1}>
+            <text fg={theme.textMuted}>Processing...</text>
+          </box>
+        </Show>
+        <Show when={voiced() && !classifying() && (voice.recording() || voice.transcribing())}>
+          <box paddingLeft={1}>
+            <text fg={theme.textMuted}>{voice.placeholder()}</text>
+          </box>
+        </Show>
+        <Show when={voiced() && voiceTrace()}>
+          <box paddingLeft={1} gap={0} flexDirection="column">
+            <text fg={theme.textMuted}>
+              <span style={{ fg: theme.textMuted }}>Heard: </span>
+              <span style={{ fg: theme.text }}>"{voiceTrace()!.transcript}"</span>
+            </text>
+            <text fg={theme.textMuted}>
+              <span style={{ fg: theme.textMuted }}>Matched: </span>
+              <span style={{ fg: theme.secondary }}>{voiceTrace()!.matched}</span>
+              <Show when={voiceTrace()!.confidence != null}>
+                <span style={{ fg: theme.textMuted }}>
+                  {" "}
+                  · {Math.round((voiceTrace()!.confidence ?? 0) * 100)}%
+                </span>
+              </Show>
+            </text>
+          </box>
+        </Show>
+      </box>
+      <box
+        flexDirection={narrow() ? "column" : "row"}
+        flexShrink={0}
+        gap={1}
+        paddingTop={1}
+        paddingLeft={2}
+        paddingRight={3}
+        paddingBottom={1}
+        backgroundColor={theme.backgroundElement}
+        justifyContent={narrow() ? "flex-start" : "space-between"}
+        alignItems={narrow() ? "flex-start" : "center"}
+      >
+        <box flexDirection="row" gap={1} flexShrink={0}>
+          <For each={keys}>
+            {(option) => (
+              <box
+                paddingLeft={1}
+                paddingRight={1}
+                backgroundColor={option === store.selected ? theme.warning : theme.backgroundMenu}
+                onMouseOver={() => setStore("selected", option)}
+                onMouseUp={() => {
+                  setStore("selected", option)
+                  if (option === "once") props.onYes()
+                  if (option === "always") props.onAlways()
+                  if (option === "reject") props.onNo()
+                }}
+              >
+                <text fg={option === store.selected ? selectedForeground(theme, theme.warning) : theme.textMuted}>
+                  {opts[option]}
+                </text>
+              </box>
+            )}
+          </For>
+        </box>
+        <box flexDirection="row" gap={2} flexShrink={0}>
+          <Show when={voiced()}>
+            <text fg={theme.text}>
+              space <span style={{ fg: theme.textMuted }}>{voice.recording() ? "stop" : "record"}</span>
+            </text>
+          </Show>
+          <Show when={props.fullscreen}>
+            <text fg={theme.text}>
+              {"ctrl+f"} <span style={{ fg: theme.textMuted }}>{hint()}</span>
+            </text>
+          </Show>
+          <Show when={!voiced()}>
+            <text fg={theme.text}>
+              {"⇆"} <span style={{ fg: theme.textMuted }}>select</span>
+            </text>
+          </Show>
+          <Show when={!voiced()}>
+            <text fg={theme.text}>
+              enter <span style={{ fg: theme.textMuted }}>confirm</span>
+            </text>
+          </Show>
+        </box>
+      </box>
+    </box>
+  )
+
+  return (
+    <Show when={!store.expanded} fallback={<Portal>{content()}</Portal>}>
+      {content()}
+    </Show>
   )
 }
 
@@ -427,29 +703,24 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
           )
 
           const body = (
-            <Prompt
-              title="Permission required"
+            <PermissionTriVoicePrompt
               header={header()}
               body={current.body}
-              options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
-              escapeKey="reject"
               fullscreen
-              onSelect={(option) => {
-                if (option === "always") {
-                  setStore("stage", "always")
+              onAlways={() => {
+                setStore("stage", "always")
+              }}
+              onNo={() => {
+                if (session()?.parentID) {
+                  setStore("stage", "reject")
                   return
                 }
-                if (option === "reject") {
-                  if (session()?.parentID) {
-                    setStore("stage", "reject")
-                    return
-                  }
-                  sdk.client.permission.reply({
-                    reply: "reject",
-                    requestID: props.request.id,
-                  })
-                  return
-                }
+                sdk.client.permission.reply({
+                  reply: "reject",
+                  requestID: props.request.id,
+                })
+              }}
+              onYes={() => {
                 sdk.client.permission.reply({
                   reply: "once",
                   requestID: props.request.id,
@@ -473,9 +744,35 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
   const dimensions = useTerminalDimensions()
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
+  const promptRef = usePromptRef()
+  const voiced = createMemo(() => promptRef.mode === "voice")
+
+  const voice = useVoice({
+    onResult(text) {
+      if (!text.trim()) return
+      props.onConfirm(text)
+    },
+  })
 
   useKeyboard((evt) => {
     if (dialog.stack.length > 0) return
+
+    if (voiced()) {
+      if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+        evt.preventDefault()
+        if (voice.recording()) {
+          voice.cancel()
+          return
+        }
+        props.onCancel()
+        return
+      }
+      if (evt.name === "space") {
+        evt.preventDefault()
+        voice.toggle()
+        return
+      }
+    }
 
     if (evt.name === "escape" || keybind.match("app_exit", evt)) {
       evt.preventDefault()
@@ -516,18 +813,30 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         alignItems={narrow() ? "flex-start" : "center"}
         gap={1}
       >
-        <textarea
-          ref={(val: TextareaRenderable) => (input = val)}
-          focused
-          textColor={theme.text}
-          focusedTextColor={theme.text}
-          cursorColor={theme.primary}
-          keyBindings={textareaKeybindings()}
-        />
+        <Show when={voiced()}>
+          <text fg={theme.textMuted}>{voice.placeholder()}</text>
+        </Show>
+        <Show when={!voiced()}>
+          <textarea
+            ref={(val: TextareaRenderable) => (input = val)}
+            focused
+            textColor={theme.text}
+            focusedTextColor={theme.text}
+            cursorColor={theme.primary}
+            keyBindings={textareaKeybindings()}
+          />
+        </Show>
         <box flexDirection="row" gap={2} flexShrink={0}>
-          <text fg={theme.text}>
-            enter <span style={{ fg: theme.textMuted }}>confirm</span>
-          </text>
+          <Show when={voiced()}>
+            <text fg={theme.text}>
+              space <span style={{ fg: theme.textMuted }}>{voice.recording() ? "stop" : "record"}</span>
+            </text>
+          </Show>
+          <Show when={!voiced()}>
+            <text fg={theme.text}>
+              enter <span style={{ fg: theme.textMuted }}>confirm</span>
+            </text>
+          </Show>
           <text fg={theme.text}>
             esc <span style={{ fg: theme.textMuted }}>cancel</span>
           </text>
@@ -593,7 +902,6 @@ function Prompt<const T extends Record<string, string>>(props: {
   })
 
   const hint = createMemo(() => (store.expanded ? "minimize" : "fullscreen"))
-  const renderer = useRenderer()
 
   const content = () => (
     <box

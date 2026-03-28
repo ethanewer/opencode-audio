@@ -35,6 +35,8 @@ import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
+import { usePromptRef, type PromptMode } from "../../context/prompt"
+import { useVoice } from "../../util/voice"
 
 export type PromptProps = {
   sessionID?: string
@@ -92,6 +94,7 @@ export function Prompt(props: PromptProps) {
   }
 
   const textareaKeybindings = useTextareaKeybindings()
+  const promptRef = usePromptRef()
 
   const fileStyleId = syntax().getStyleId("extmark.file")!
   const agentStyleId = syntax().getStyleId("extmark.agent")!
@@ -124,7 +127,7 @@ export function Prompt(props: PromptProps) {
 
   const [store, setStore] = createStore<{
     prompt: PromptInfo
-    mode: "normal" | "shell"
+    mode: PromptMode
     extmarkToPartIndex: Map<number, number>
     interrupt: number
     placeholder: number
@@ -134,10 +137,34 @@ export function Prompt(props: PromptProps) {
       input: "",
       parts: [],
     },
-    mode: "normal",
+    mode: promptRef.mode,
     extmarkToPartIndex: new Map(),
     interrupt: 0,
   })
+
+  if (!props.sessionID && store.mode === "normal" && sync.data.config.experimental?.voice?.enabled)
+    setStore("mode", "voice")
+
+  createEffect(() => promptRef.setMode(store.mode))
+
+  const voice = useVoice({
+    onResult(text) {
+      if (store.mode !== "voice") return
+      if (!text.trim()) return
+      input.setText(text)
+      setStore("prompt", "input", text)
+      submit()
+    },
+  })
+
+  createEffect(
+    on(
+      () => store.mode,
+      (mode) => {
+        if (mode !== "voice") voice.cancel()
+      },
+    ),
+  )
 
   createEffect(
     on(
@@ -351,6 +378,18 @@ export function Prompt(props: PromptProps) {
               }}
             />
           ))
+        },
+      },
+      {
+        title: "Voice mode",
+        value: "prompt.voice",
+        category: "Prompt",
+        slash: {
+          name: "voice",
+        },
+        onSelect: (dialog) => {
+          setStore("mode", "voice")
+          dialog.clear()
         },
       },
     ]
@@ -767,6 +806,7 @@ export function Prompt(props: PromptProps) {
   const highlight = createMemo(() => {
     if (keybind.leader) return theme.border
     if (store.mode === "shell") return theme.primary
+    if (store.mode === "voice") return theme.warning
     return local.agent.color(local.agent.current().name)
   })
 
@@ -778,6 +818,9 @@ export function Prompt(props: PromptProps) {
   })
 
   const placeholderText = createMemo(() => {
+    if (store.mode === "voice") {
+      return voice.placeholder()
+    }
     if (props.sessionID) return undefined
     if (store.mode === "shell") {
       const example = SHELL_PLACEHOLDERS[store.placeholder % SHELL_PLACEHOLDERS.length]
@@ -911,6 +954,22 @@ export function Prompt(props: PromptProps) {
                     return
                   }
                 }
+                if (store.mode === "voice") {
+                  if (e.name === "escape") {
+                    e.preventDefault()
+                    voice.cancel()
+                    setStore("mode", "normal")
+                    return
+                  }
+                  if (e.name === "space") {
+                    e.preventDefault()
+                    if (voice.transcribing()) return
+                    voice.toggle()
+                    return
+                  }
+                  e.preventDefault()
+                  return
+                }
                 if (store.mode === "normal") autocomplete.onKeyDown(e)
                 if (!autocomplete.visible) {
                   if (
@@ -1028,7 +1087,7 @@ export function Prompt(props: PromptProps) {
             />
             <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1}>
               <text fg={highlight()}>
-                {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
+                {store.mode === "shell" ? "Shell" : store.mode === "voice" ? "Voice" : Locale.titlecase(local.agent.current().name)}{" "}
               </text>
               <Show when={store.mode === "normal"}>
                 <box flexDirection="row" gap={1}>
@@ -1173,6 +1232,17 @@ export function Prompt(props: PromptProps) {
                 <Match when={store.mode === "shell"}>
                   <text fg={theme.text}>
                     esc <span style={{ fg: theme.textMuted }}>exit shell mode</span>
+                  </text>
+                </Match>
+                <Match when={store.mode === "voice"}>
+                  <text fg={theme.text}>
+                    space{" "}
+                    <span style={{ fg: theme.textMuted }}>
+                      {voice.recording() ? "stop recording" : voice.transcribing() ? "transcribing..." : "record"}
+                    </span>
+                  </text>
+                  <text fg={theme.text}>
+                    esc <span style={{ fg: theme.textMuted }}>exit voice mode</span>
                   </text>
                 </Match>
               </Switch>
