@@ -968,6 +968,8 @@ export namespace Config {
           // primary
           plan: Agent.optional(),
           build: Agent.optional(),
+          "voice-build": Agent.optional(),
+          "voice-plan": Agent.optional(),
           // subagent
           general: Agent.optional(),
           explore: Agent.optional(),
@@ -1091,6 +1093,15 @@ export namespace Config {
             .object({
               enabled: z.boolean().optional().describe("Enable voice input mode"),
               model: z.string().optional().describe("Transcription model (default: gpt-4o-mini-transcribe)"),
+              tts: z
+                .object({
+                  enabled: z.boolean().optional().describe("Enable text-to-speech output"),
+                  model: z.string().optional().describe("TTS model (default: gpt-4o-mini-tts)"),
+                  voice: z.string().optional().describe("Voice ID (default: coral)"),
+                  speed: z.number().min(0.5).max(4).optional().describe("Playback speed multiplier (default: 1)"),
+                  status: z.boolean().optional().describe("Speak status updates while the agent works (default: true)"),
+                })
+                .optional(),
             })
             .optional(),
         })
@@ -1239,11 +1250,6 @@ export namespace Config {
 
           const parsed = Info.safeParse(normalized)
           if (parsed.success) {
-            if (!parsed.data.$schema && isFile) {
-              parsed.data.$schema = "https://opencode.ai/config.json"
-              const updated = original.replace(/^\s*\{/, '{\n  "$schema": "https://opencode.ai/config.json",')
-              yield* fs.writeFileString(options.path, updated).pipe(Effect.catch(() => Effect.void))
-            }
             const data = parsed.data
             if (data.plugin && isFile) {
               const list = data.plugin

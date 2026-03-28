@@ -23,6 +23,7 @@ import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
 import { Permission } from "@/permission"
 import { Auth } from "@/auth"
+import PROMPT_VOICE from "@/agent/prompt/voice.txt"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -72,6 +73,8 @@ export namespace LLM {
       [
         // use agent prompt otherwise provider prompt
         ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
+        // append voice prompt for voice agents (preserves provider prompt)
+        ...(input.agent.name.startsWith("voice-") && !input.agent.prompt ? [PROMPT_VOICE] : []),
         // any custom prompt passed into this call
         ...input.system,
         // any custom prompt from last user message

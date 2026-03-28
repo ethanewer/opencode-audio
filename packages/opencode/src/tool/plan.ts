@@ -22,15 +22,25 @@ export const PlanExitTool = Tool.define("plan_exit", {
   async execute(_params, ctx) {
     const session = await Session.get(ctx.sessionID)
     const plan = path.relative(Instance.worktree, Session.plan(session))
+
+    let voice = false
+    for await (const item of MessageV2.stream(ctx.sessionID)) {
+      if (item.info.role === "user") {
+        voice = item.info.agent === "voice-plan"
+        break
+      }
+    }
+    const target = voice ? "voice-build" : "build"
+
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
       questions: [
         {
-          question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
+          question: `Plan at ${plan} is complete. Would you like to switch to the ${target} agent and start implementing?`,
           header: "Build Agent",
           custom: false,
           options: [
-            { label: "Yes", description: "Switch to build agent and start implementing the plan" },
+            { label: "Yes", description: `Switch to ${target} agent and start implementing the plan` },
             { label: "No", description: "Stay with plan agent to continue refining the plan" },
           ],
         },
@@ -50,7 +60,7 @@ export const PlanExitTool = Tool.define("plan_exit", {
       time: {
         created: Date.now(),
       },
-      agent: "build",
+      agent: target,
       model,
     }
     await Session.updateMessage(userMsg)
@@ -64,8 +74,8 @@ export const PlanExitTool = Tool.define("plan_exit", {
     } satisfies MessageV2.TextPart)
 
     return {
-      title: "Switching to build agent",
-      output: "User approved switching to build agent. Wait for further instructions.",
+      title: `Switching to ${target} agent`,
+      output: `User approved switching to ${target} agent. Wait for further instructions.`,
       metadata: {},
     }
   },

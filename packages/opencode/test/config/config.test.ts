@@ -226,14 +226,13 @@ test("handles environment variable substitution", async () => {
   }
 })
 
-test("preserves env variables when adding $schema to config", async () => {
+test("does not auto-inject $schema into config files", async () => {
   const originalEnv = process.env["PRESERVE_VAR"]
   process.env["PRESERVE_VAR"] = "secret_value"
 
   try {
     await using tmp = await tmpdir({
       init: async (dir) => {
-        // Config without $schema - should trigger auto-add
         await Filesystem.write(
           path.join(dir, "opencode.json"),
           JSON.stringify({
@@ -248,11 +247,11 @@ test("preserves env variables when adding $schema to config", async () => {
         const config = await Config.get()
         expect(config.username).toBe("secret_value")
 
-        // Read the file to verify the env variable was preserved
+        // File should remain unchanged — no $schema auto-injection
         const content = await Filesystem.readText(path.join(tmp.path, "opencode.json"))
         expect(content).toContain("{env:PRESERVE_VAR}")
         expect(content).not.toContain("secret_value")
-        expect(content).toContain("$schema")
+        expect(content).not.toContain("$schema")
       },
     })
   } finally {

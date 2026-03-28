@@ -143,6 +143,45 @@ export namespace Agent {
               mode: "primary",
               native: true,
             },
+            "voice-build": {
+              name: "voice-build",
+              description: "Voice build agent. Same as build but responses are optimized for text-to-speech output.",
+              options: {},
+              permission: Permission.merge(
+                defaults,
+                Permission.fromConfig({
+                  question: "allow",
+                  plan_enter: "allow",
+                }),
+                user,
+              ),
+              mode: "primary",
+              native: true,
+            },
+            "voice-plan": {
+              name: "voice-plan",
+              description: "Voice plan agent. Same as plan but responses are optimized for text-to-speech output.",
+              options: {},
+              permission: Permission.merge(
+                defaults,
+                Permission.fromConfig({
+                  question: "allow",
+                  plan_exit: "allow",
+                  external_directory: {
+                    [path.join(Global.Path.data, "plans", "*")]: "allow",
+                  },
+                  edit: {
+                    "*": "deny",
+                    [path.join(".opencode", "plans", "*.md")]: "allow",
+                    [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]:
+                      "allow",
+                  },
+                }),
+                user,
+              ),
+              mode: "primary",
+              native: true,
+            },
             general: {
               name: "general",
               description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,

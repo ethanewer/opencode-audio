@@ -169,6 +169,7 @@ export function tui(input: {
   events?: EventSource
   classify?: import("./context/sdk").ClassifyFn
   transcribe?: import("./context/sdk").TranscribeFn
+  speak?: import("./context/sdk").SpeakFn
 }) {
   // promise to prevent immediate exit
   return new Promise<void>(async (resolve) => {
@@ -213,6 +214,7 @@ export function tui(input: {
                         events={input.events}
                         classify={input.classify}
                         transcribe={input.transcribe}
+                        speak={input.speak}
                       >
                         <SyncProvider>
                           <ThemeProvider mode={mode}>
