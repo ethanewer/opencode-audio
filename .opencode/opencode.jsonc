@@ -15,11 +15,4 @@
     "github-triage": false,
     "github-pr-search": false,
   },
-  "experimental": {
-    "voice": {
-      "tts": {
-        "voice": "echo",
-      },
-    },
-  },
 }

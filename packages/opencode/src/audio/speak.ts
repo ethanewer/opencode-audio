@@ -104,7 +104,7 @@ function atempoFilter(speed: number): string {
   }
   while (remaining < 0.5) {
     filters.push("atempo=0.5")
-    remaining /= 0.5
+    remaining *= 2
   }
   filters.push(`atempo=${remaining}`)
   return filters.join(",")
