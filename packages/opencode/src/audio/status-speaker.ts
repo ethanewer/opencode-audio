@@ -1,8 +1,6 @@
-import { play } from "./speak"
-import type { SpeakFn } from "./speech-queue"
+import { speakStream, playStream } from "./speak"
 
 interface StatusSpeakerOptions {
-  speak: SpeakFn
   model?: string
   voice?: string
   speed?: number
@@ -12,15 +10,13 @@ interface StatusSpeakerOptions {
 export class StatusSpeaker {
   private busy = false
   private abort: AbortController | null = null
-  private player: ReturnType<typeof play> | null = null
-  private speakFn: SpeakFn
+  private player: ReturnType<typeof playStream> | null = null
   private model?: string
   private voice?: string
   private speed?: number
   private onIdle?: () => void
 
   constructor(options: StatusSpeakerOptions) {
-    this.speakFn = options.speak
     this.model = options.model
     this.voice = options.voice
     this.speed = options.speed
@@ -32,12 +28,10 @@ export class StatusSpeaker {
     this.busy = true
     const abort = new AbortController()
     this.abort = abort
-    this.speakFn({ text, model: this.model, voice: this.voice })
-      .then(async (base64) => {
+    speakStream(text, { model: this.model, voice: this.voice, abortSignal: abort.signal })
+      .then(async (stream) => {
         if (abort.signal.aborted) return
-        const audio = new Uint8Array(Buffer.from(base64, "base64"))
-        if (audio.length === 0 || abort.signal.aborted) return
-        const p = play(audio, { speed: this.speed })
+        const p = playStream(stream, { speed: this.speed })
         this.player = p
         await p.done
       })

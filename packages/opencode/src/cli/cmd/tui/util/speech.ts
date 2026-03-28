@@ -3,6 +3,7 @@ import { useSDK } from "@tui/context/sdk"
 import { useSync } from "@tui/context/sync"
 import { SpeechQueue } from "@/audio/speech-queue"
 import { StatusSpeaker } from "@/audio/status-speaker"
+import { warmup } from "@/audio/speak"
 
 const VOICE_AGENTS = new Set(["voice-build", "voice-plan"])
 
@@ -31,16 +32,18 @@ export function useSpeech(sessionID: () => string) {
   let queueIdle = true
   let statusIdle = true
 
+  // Pre-warm the TLS connection so the first TTS request is faster
+  if (enabled()) warmup()
+
   function checkIdle() {
     if (queueIdle && statusIdle) setSpeaking(false)
   }
 
   function getQueue() {
-    if (!sdk.speak || !enabled()) return null
+    if (!enabled()) return null
     if (!queue) {
       const config = ttsConfig()
       queue = new SpeechQueue({
-        speak: sdk.speak,
         model: config?.model,
         voice: config?.voice,
         speed: config?.speed,
@@ -54,11 +57,10 @@ export function useSpeech(sessionID: () => string) {
   }
 
   function getStatus() {
-    if (!sdk.speak || !enabled()) return null
+    if (!enabled()) return null
     if (!statusSpeaker) {
       const config = ttsConfig()
       statusSpeaker = new StatusSpeaker({
-        speak: sdk.speak,
         model: config?.model,
         voice: config?.voice,
         speed: config?.speed,
@@ -125,13 +127,19 @@ export function useSpeech(sessionID: () => string) {
 
     if (part.type === "tool") {
       if (!stepHasTools && streaming) {
-        // Tool appeared after we started streaming text — cancel the queue
-        queue?.cancel()
+        // Tool appeared after we started streaming text — flush so
+        // buffered text is spoken immediately instead of being deferred
+        queue?.flush()
+        // Clear stepBuffer so the same text isn't re-spoken by
+        // StatusSpeaker at step-finish
+        stepBuffer = ""
         streaming = false
       }
       stepHasTools = true
     } else if (part.type === "step-finish") {
       if (!muted && stepHasTools && stepBuffer.trim() && ttsConfig()?.status !== false) {
+        // Cancel any queue audio still playing from the flush
+        queue?.cancel()
         statusIdle = false
         setSpeaking(true)
         getStatus()?.speak(stepBuffer.trim())
@@ -160,6 +168,9 @@ export function useSpeech(sessionID: () => string) {
           .join("\n")
           .trim()
         if (text) {
+          // Cancel any in-progress audio before speaking the new message
+          queue?.cancel()
+          statusSpeaker?.cancel()
           const q = getQueue()
           if (q) {
             queueIdle = false
@@ -171,11 +182,12 @@ export function useSpeech(sessionID: () => string) {
       } else {
         // Normal case: flush status text and streamed queue
         if (stepHasTools && stepBuffer.trim() && ttsConfig()?.status !== false) {
+          // Cancel any queue audio still playing so status doesn't overlap
+          queue?.cancel()
           statusIdle = false
           setSpeaking(true)
           getStatus()?.speak(stepBuffer.trim())
-        }
-        if (queue) {
+        } else if (queue) {
           queue.flush()
         }
       }

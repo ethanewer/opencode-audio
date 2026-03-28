@@ -1,9 +1,6 @@
-import { play } from "./speak"
+import { speakStream, playStream } from "./speak"
 
-export type SpeakFn = (input: { text: string; model?: string; voice?: string }) => Promise<string>
-
-interface SpeechQueueOptions {
-  speak: SpeakFn
+export interface SpeechQueueOptions {
   model?: string
   voice?: string
   speed?: number
@@ -12,18 +9,16 @@ interface SpeechQueueOptions {
 
 export class SpeechQueue {
   private buffer = ""
-  private queue: Array<{ audio: Promise<Uint8Array>; abort: AbortController }> = []
-  private playing: ReturnType<typeof play> | null = null
+  private queue: Array<{ stream: Promise<ReadableStream<Uint8Array>>; abort: AbortController }> = []
+  private playing: ReturnType<typeof playStream> | null = null
   private processing = false
   private generation = 0
-  private speakFn: SpeakFn
   private model?: string
   private voice?: string
   private speed?: number
   private onIdle?: () => void
 
   constructor(options: SpeechQueueOptions) {
-    this.speakFn = options.speak
     this.model = options.model
     this.voice = options.voice
     this.speed = options.speed
@@ -66,14 +61,19 @@ export class SpeechQueue {
 
   private enqueue(text: string) {
     const abort = new AbortController()
-    const audio = this.speakFn({ text, model: this.model, voice: this.voice }).then(
-      (base64) => {
-        if (abort.signal.aborted) return new Uint8Array(0)
-        return new Uint8Array(Buffer.from(base64, "base64"))
-      },
-      () => new Uint8Array(0),
+    const stream = speakStream(text, {
+      model: this.model,
+      voice: this.voice,
+      abortSignal: abort.signal,
+    }).catch(
+      () =>
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            c.close()
+          },
+        }),
     )
-    this.queue.push({ audio, abort })
+    this.queue.push({ stream, abort })
     if (!this.processing) {
       this.processQueue()
     }
@@ -84,11 +84,11 @@ export class SpeechQueue {
     const gen = this.generation
     while (this.queue.length > 0 && this.generation === gen) {
       const item = this.queue[0]
-      const audio = await item.audio
+      const stream = await item.stream
       if (this.generation !== gen) break
       this.queue.shift()
-      if (item.abort.signal.aborted || audio.length === 0) continue
-      const player = play(audio, { speed: this.speed })
+      if (item.abort.signal.aborted) continue
+      const player = playStream(stream, { speed: this.speed })
       this.playing = player
       await player.done
       if (this.generation !== gen) break
