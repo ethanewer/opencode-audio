@@ -222,7 +222,7 @@ function PermissionTriVoicePrompt(props: {
     }
   }
 
-  const voice = useVoice({ onResult: handleVoice })
+  const voice = useVoice({ onResult: handleVoice, color: theme.warning })
 
   createEffect(() => {
     if (voice.recording()) setVoiceTrace(null)
@@ -313,7 +313,7 @@ function PermissionTriVoicePrompt(props: {
         </Show>
         <Show when={voiced() && !classifying() && (voice.recording() || voice.transcribing())}>
           <box paddingLeft={1}>
-            <text fg={theme.textMuted}>{voice.placeholder()}</text>
+            <text content={voice.placeholder()} />
           </box>
         </Show>
         <Show when={voiced() && voiceTrace()}>
@@ -326,10 +326,7 @@ function PermissionTriVoicePrompt(props: {
               <span style={{ fg: theme.textMuted }}>Matched: </span>
               <span style={{ fg: theme.secondary }}>{voiceTrace()!.matched}</span>
               <Show when={voiceTrace()!.confidence != null}>
-                <span style={{ fg: theme.textMuted }}>
-                  {" "}
-                  · {Math.round((voiceTrace()!.confidence ?? 0) * 100)}%
-                </span>
+                <span style={{ fg: theme.textMuted }}> · {Math.round((voiceTrace()!.confidence ?? 0) * 100)}%</span>
               </Show>
             </text>
           </box>
@@ -752,6 +749,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
       if (!text.trim()) return
       props.onConfirm(text)
     },
+    color: theme.warning,
   })
 
   useKeyboard((evt) => {
@@ -814,7 +812,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         gap={1}
       >
         <Show when={voiced()}>
-          <text fg={theme.textMuted}>{voice.placeholder()}</text>
+          <text content={voice.placeholder()} />
         </Show>
         <Show when={!voiced()}>
           <textarea

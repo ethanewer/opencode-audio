@@ -133,6 +133,7 @@ export function Prompt(props: PromptProps) {
     extmarkToPartIndex: Map<number, number>
     interrupt: number
     placeholder: number
+    returnToVoice: boolean
   }>({
     placeholder: Math.floor(Math.random() * PLACEHOLDERS.length),
     prompt: {
@@ -142,6 +143,7 @@ export function Prompt(props: PromptProps) {
     mode: promptRef.mode,
     extmarkToPartIndex: new Map(),
     interrupt: 0,
+    returnToVoice: false,
   })
 
   if (!props.sessionID && store.mode === "normal" && sync.data.config.experimental?.voice?.enabled)
@@ -149,14 +151,19 @@ export function Prompt(props: PromptProps) {
 
   createEffect(() => promptRef.setMode(store.mode))
 
+  let submitting = false
   const voice = useVoice({
     onResult(text) {
       if (store.mode !== "voice") return
       if (!text.trim()) return
+      submitting = true
       input.setText(text)
       setStore("prompt", "input", text)
-      submit()
+      submit().finally(() => {
+        submitting = false
+      })
     },
+    color: theme.warning,
   })
 
   createEffect(
@@ -165,6 +172,23 @@ export function Prompt(props: PromptProps) {
       (mode) => {
         if (mode !== "voice") voice.cancel()
       },
+    ),
+  )
+
+  // If text appears in the prompt while in voice mode (e.g. from /skills or /undo),
+  // switch to normal mode so the user can edit and submit it.
+  // The submitting guard prevents this from firing during voice transcription submit.
+  createEffect(
+    on(
+      () => store.prompt.input,
+      (val) => {
+        if (submitting) return
+        if (store.mode === "voice" && val) {
+          setStore("returnToVoice", true)
+          setStore("mode", "normal")
+        }
+      },
+      { defer: true },
     ),
   )
 
@@ -253,7 +277,12 @@ export function Prompt(props: PromptProps) {
           if (!input.focused) return
           // TODO: this should be its own command
           if (store.mode === "shell") {
-            setStore("mode", "normal")
+            if (store.returnToVoice) {
+              setStore("returnToVoice", false)
+              setStore("mode", "voice")
+            } else {
+              setStore("mode", "normal")
+            }
             return
           }
           if (!props.sessionID) return
@@ -714,6 +743,10 @@ export function Prompt(props: PromptProps) {
       parts: [],
     })
     setStore("extmarkToPartIndex", new Map())
+    if (store.returnToVoice) {
+      setStore("returnToVoice", false)
+      setStore("mode", "voice")
+    }
     props.onSubmit?.()
 
     // temporary hack to make sure the message is sent
@@ -808,7 +841,6 @@ export function Prompt(props: PromptProps) {
   const highlight = createMemo(() => {
     if (keybind.leader) return theme.border
     if (store.mode === "shell") return theme.primary
-    if (store.mode === "voice") return theme.warning
     return local.agent.color(local.agent.current().name)
   })
 
@@ -872,6 +904,13 @@ export function Prompt(props: PromptProps) {
         fileStyleId={fileStyleId}
         agentStyleId={agentStyleId}
         promptPartTypeId={() => promptPartTypeId}
+        onSlashSelect={() => {
+          if (!store.returnToVoice) return
+          // Check the textarea directly since onContentChange is async
+          if (input.plainText) return
+          setStore("returnToVoice", false)
+          setStore("mode", "voice")
+        }}
       />
       <box ref={(r) => (anchor = r)} visible={props.visible !== false}>
         <box
@@ -943,7 +982,7 @@ export function Prompt(props: PromptProps) {
                     return
                   }
                 }
-                if (e.name === "!" && input.visualCursor.offset === 0) {
+                if (e.name === "!" && input.visualCursor.offset === 0 && store.mode !== "voice") {
                   setStore("placeholder", Math.floor(Math.random() * SHELL_PLACEHOLDERS.length))
                   setStore("mode", "shell")
                   e.preventDefault()
@@ -951,10 +990,31 @@ export function Prompt(props: PromptProps) {
                 }
                 if (store.mode === "shell") {
                   if ((e.name === "backspace" && input.visualCursor.offset === 0) || e.name === "escape") {
-                    setStore("mode", "normal")
+                    if (store.returnToVoice) {
+                      setStore("returnToVoice", false)
+                      setStore("mode", "voice")
+                    } else {
+                      setStore("mode", "normal")
+                    }
                     e.preventDefault()
                     return
                   }
+                }
+                if (
+                  store.returnToVoice &&
+                  store.mode === "normal" &&
+                  e.name === "escape" &&
+                  status().type === "idle" &&
+                  !autocomplete.visible
+                ) {
+                  setStore("returnToVoice", false)
+                  setStore("mode", "voice")
+                  input.clear()
+                  input.extmarks.clear()
+                  setStore("prompt", { input: "", parts: [] })
+                  setStore("extmarkToPartIndex", new Map())
+                  e.preventDefault()
+                  return
                 }
                 if (store.mode === "voice") {
                   if (e.name === "escape") {
@@ -974,6 +1034,21 @@ export function Prompt(props: PromptProps) {
                     voice.toggle()
                     return
                   }
+                  if (e.name === "!" && input.visualCursor.offset === 0) {
+                    voice.cancel()
+                    setStore("returnToVoice", true)
+                    setStore("placeholder", Math.floor(Math.random() * SHELL_PLACEHOLDERS.length))
+                    setStore("mode", "shell")
+                    e.preventDefault()
+                    return
+                  }
+                  if (e.name === "/" && input.visualCursor.offset === 0) {
+                    voice.cancel()
+                    setStore("returnToVoice", true)
+                    setStore("mode", "normal")
+                    // don't preventDefault — let "/" be typed for command autocomplete
+                    return
+                  }
                   e.preventDefault()
                   return
                 }
@@ -989,6 +1064,7 @@ export function Prompt(props: PromptProps) {
                     if (item) {
                       input.setText(item.input)
                       setStore("prompt", item)
+                      setStore("returnToVoice", false)
                       setStore("mode", item.mode ?? "normal")
                       restoreExtmarksFromParts(item.parts)
                       e.preventDefault()
@@ -1090,13 +1166,14 @@ export function Prompt(props: PromptProps) {
               onMouseDown={(r: MouseEvent) => r.target?.focus()}
               focusedBackgroundColor={theme.backgroundElement}
               cursorColor={theme.text}
+              showCursor={store.mode !== "voice"}
               syntaxStyle={syntax()}
             />
             <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1}>
               <text fg={highlight()}>
-                {store.mode === "shell" ? "Shell" : store.mode === "voice" ? "Voice" : Locale.titlecase(local.agent.current().name)}{" "}
+                {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
               </text>
-              <Show when={store.mode === "normal"}>
+              <Show when={store.mode !== "shell"}>
                 <box flexDirection="row" gap={1}>
                   <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
                     {local.model.parsed().model}
@@ -1252,6 +1329,12 @@ export function Prompt(props: PromptProps) {
                     <span style={{ fg: theme.textMuted }}>
                       {voice.recording() ? "stop recording" : voice.transcribing() ? "transcribing..." : "record"}
                     </span>
+                  </text>
+                  <text fg={theme.text}>
+                    ! <span style={{ fg: theme.textMuted }}>shell</span>
+                  </text>
+                  <text fg={theme.text}>
+                    / <span style={{ fg: theme.textMuted }}>command</span>
                   </text>
                   <text fg={theme.text}>
                     esc <span style={{ fg: theme.textMuted }}>exit voice mode</span>
