@@ -1091,6 +1091,14 @@ export namespace Config {
             .object({
               enabled: z.boolean().optional().describe("Enable voice input mode"),
               model: z.string().optional().describe("Transcription model (default: gpt-4o-mini-transcribe)"),
+              tts: z
+                .object({
+                  enabled: z.boolean().optional().describe("Enable text-to-speech output"),
+                  model: z.string().optional().describe("TTS model (default: gpt-4o-mini-tts)"),
+                  voice: z.string().optional().describe("Voice ID (default: coral)"),
+                  speed: z.number().min(0.5).max(4).optional().describe("Playback speed multiplier (default: 1)"),
+                })
+                .optional(),
             })
             .optional(),
         })

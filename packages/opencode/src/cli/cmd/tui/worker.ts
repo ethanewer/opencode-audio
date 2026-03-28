@@ -173,6 +173,11 @@ export const rpc = {
     const bytes = new Uint8Array(Buffer.from(input.audio, "base64"))
     return transcribeBytes(bytes, input.model)
   },
+  async speak(input: { text: string; model?: string; voice?: string }) {
+    const { speak } = await import("@/audio/speak")
+    const audio = await speak(input.text, { model: input.model, voice: input.voice })
+    return Buffer.from(audio).toString("base64")
+  },
   async shutdown() {
     Log.Default.info("worker shutting down")
     if (eventStream.abort) eventStream.abort.abort()

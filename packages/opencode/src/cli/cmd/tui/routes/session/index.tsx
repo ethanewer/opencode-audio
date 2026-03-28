@@ -76,6 +76,7 @@ import { Filesystem } from "@/util/filesystem"
 import { Global } from "@/global"
 import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
+import { useSpeech } from "@tui/util/speech"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
@@ -104,6 +105,7 @@ const context = createContext<{
   diffWrapMode: () => "word" | "none"
   sync: ReturnType<typeof useSync>
   tui: ReturnType<typeof useTuiConfig>
+  cancelSpeech?: () => void
 }>()
 
 function use() {
@@ -1027,6 +1029,8 @@ export function Session() {
   // snap to bottom when session changes
   createEffect(on(() => route.sessionID, toBottom))
 
+  const speech = useSpeech(() => route.sessionID)
+
   return (
     <context.Provider
       value={{
@@ -1042,6 +1046,7 @@ export function Session() {
         diffWrapMode,
         sync,
         tui: tuiConfig,
+        cancelSpeech: speech.cancel,
       }}
     >
       <box flexDirection="row">

@@ -218,6 +218,7 @@ export const TuiThreadCommand = cmd({
               audio: Buffer.from(input.audio).toString("base64"),
               model: input.model,
             }),
+          speak: async (input) => client.call("speak", input),
           args: {
             continue: args.continue,
             sessionID: args.session,
