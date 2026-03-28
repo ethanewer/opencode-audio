@@ -3,6 +3,8 @@ import { useSDK } from "@tui/context/sdk"
 import { useSync } from "@tui/context/sync"
 import { SpeechQueue } from "@/audio/speech-queue"
 
+const VOICE_AGENTS = new Set(["voice-build", "voice-plan"])
+
 export function useSpeech(sessionID: () => string) {
   const sdk = useSDK()
   const sync = useSync()
@@ -28,7 +30,7 @@ export function useSpeech(sessionID: () => string) {
     return queue
   }
 
-  // Speak the final assistant text when the session goes idle
+  // Speak the final assistant text when the session goes idle (voice agents only)
   const offStatus = sdk.event.on("session.status", (evt) => {
     if (!enabled()) return
     if (evt.properties.sessionID !== sessionID()) return
@@ -37,10 +39,14 @@ export function useSpeech(sessionID: () => string) {
     const messages = sync.data.message[sessionID()] ?? []
     const last = messages.findLast((m) => m.role === "assistant")
     if (!last) return
+    if (!VOICE_AGENTS.has(last.agent)) return
 
     const parts = sync.data.part[last.id] ?? []
     const textParts = parts.filter((p) => p.type === "text")
-    const text = textParts.map((p) => p.text).join("\n").trim()
+    const text = textParts
+      .map((p) => p.text)
+      .join("\n")
+      .trim()
     if (!text) return
 
     const q = getQueue()
@@ -50,9 +56,16 @@ export function useSpeech(sessionID: () => string) {
     q.flush()
   })
 
+  function isVoiceAgent() {
+    const messages = sync.data.message[sessionID()] ?? []
+    const last = messages.findLast((m) => m.role === "assistant")
+    return last ? VOICE_AGENTS.has(last.agent) : false
+  }
+
   const offPermission = sdk.event.on("permission.asked", (evt) => {
     if (!enabled()) return
     if (evt.properties.sessionID !== sessionID()) return
+    if (!isVoiceAgent()) return
     const q = getQueue()
     if (!q) return
     queue?.cancel()
@@ -64,6 +77,7 @@ export function useSpeech(sessionID: () => string) {
   const offQuestion = sdk.event.on("question.asked", (evt) => {
     if (!enabled()) return
     if (evt.properties.sessionID !== sessionID()) return
+    if (!isVoiceAgent()) return
     const q = getQueue()
     if (!q) return
     queue?.cancel()

@@ -968,6 +968,8 @@ export namespace Config {
           // primary
           plan: Agent.optional(),
           build: Agent.optional(),
+          "voice-build": Agent.optional(),
+          "voice-plan": Agent.optional(),
           // subagent
           general: Agent.optional(),
           explore: Agent.optional(),
