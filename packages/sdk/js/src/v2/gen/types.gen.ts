@@ -1510,6 +1510,8 @@ export type Config = {
   agent?: {
     plan?: AgentConfig
     build?: AgentConfig
+    "voice-build"?: AgentConfig
+    "voice-plan"?: AgentConfig
     general?: AgentConfig
     explore?: AgentConfig
     title?: AgentConfig
@@ -1642,6 +1644,10 @@ export type Config = {
          * Playback speed multiplier (default: 1)
          */
         speed?: number
+        /**
+         * Speak status updates while the agent works (default: true)
+         */
+        status?: boolean
       }
     }
   }

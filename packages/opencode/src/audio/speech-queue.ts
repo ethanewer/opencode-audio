@@ -7,6 +7,7 @@ interface SpeechQueueOptions {
   model?: string
   voice?: string
   speed?: number
+  onIdle?: () => void
 }
 
 export class SpeechQueue {
@@ -19,12 +20,14 @@ export class SpeechQueue {
   private model?: string
   private voice?: string
   private speed?: number
+  private onIdle?: () => void
 
   constructor(options: SpeechQueueOptions) {
     this.speakFn = options.speak
     this.model = options.model
     this.voice = options.voice
     this.speed = options.speed
+    this.onIdle = options.onIdle
   }
 
   push(text: string) {
@@ -93,6 +96,7 @@ export class SpeechQueue {
     }
     if (this.generation === gen) {
       this.processing = false
+      this.onIdle?.()
     }
   }
 }

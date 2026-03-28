@@ -1099,6 +1099,7 @@ export namespace Config {
                   model: z.string().optional().describe("TTS model (default: gpt-4o-mini-tts)"),
                   voice: z.string().optional().describe("Voice ID (default: coral)"),
                   speed: z.number().min(0.5).max(4).optional().describe("Playback speed multiplier (default: 1)"),
+                  status: z.boolean().optional().describe("Speak status updates while the agent works (default: true)"),
                 })
                 .optional(),
             })

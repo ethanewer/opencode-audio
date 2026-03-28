@@ -13,7 +13,6 @@ import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
-import PROMPT_VOICE from "./prompt/voice.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
@@ -148,7 +147,6 @@ export namespace Agent {
               name: "voice-build",
               description: "Voice build agent. Same as build but responses are optimized for text-to-speech output.",
               options: {},
-              prompt: PROMPT_VOICE,
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({
@@ -164,7 +162,6 @@ export namespace Agent {
               name: "voice-plan",
               description: "Voice plan agent. Same as plan but responses are optimized for text-to-speech output.",
               options: {},
-              prompt: PROMPT_VOICE,
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({

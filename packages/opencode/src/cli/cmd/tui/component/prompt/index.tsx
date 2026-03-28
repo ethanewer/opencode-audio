@@ -47,6 +47,8 @@ export type PromptProps = {
   ref?: (ref: PromptRef) => void
   hint?: JSX.Element
   showPlaceholder?: boolean
+  speaking?: () => boolean
+  cancelSpeech?: () => void
 }
 
 export type PromptRef = {
@@ -961,6 +963,11 @@ export function Prompt(props: PromptProps) {
                     setStore("mode", "normal")
                     return
                   }
+                  if (e.name === "s" && props.speaking?.()) {
+                    e.preventDefault()
+                    props.cancelSpeech?.()
+                    return
+                  }
                   if (e.name === "space") {
                     e.preventDefault()
                     if (voice.transcribing()) return
@@ -1235,6 +1242,11 @@ export function Prompt(props: PromptProps) {
                   </text>
                 </Match>
                 <Match when={store.mode === "voice"}>
+                  <Show when={props.speaking?.()}>
+                    <text fg={theme.text}>
+                      s <span style={{ fg: theme.textMuted }}>stop speaking</span>
+                    </text>
+                  </Show>
                   <text fg={theme.text}>
                     space{" "}
                     <span style={{ fg: theme.textMuted }}>

@@ -1191,6 +1191,8 @@ export function Session() {
                   toBottom()
                 }}
                 sessionID={route.sessionID}
+                speaking={speech.speaking}
+                cancelSpeech={speech.cancel}
               />
             </box>
           </Show>
