@@ -7,39 +7,226 @@
     </picture>
   </a>
 </p>
-<p align="center">The open source AI coding agent.</p>
-<p align="center">
-  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
-</p>
+<p align="center">The open source AI coding agent — with voice.</p>
 
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.zht.md">繁體中文</a> |
-  <a href="README.ko.md">한국어</a> |
-  <a href="README.de.md">Deutsch</a> |
-  <a href="README.es.md">Español</a> |
-  <a href="README.fr.md">Français</a> |
-  <a href="README.it.md">Italiano</a> |
-  <a href="README.da.md">Dansk</a> |
-  <a href="README.ja.md">日本語</a> |
-  <a href="README.pl.md">Polski</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.bs.md">Bosanski</a> |
-  <a href="README.ar.md">العربية</a> |
-  <a href="README.no.md">Norsk</a> |
-  <a href="README.br.md">Português (Brasil)</a> |
-  <a href="README.th.md">ไทย</a> |
-  <a href="README.tr.md">Türkçe</a> |
-  <a href="README.uk.md">Українська</a> |
-  <a href="README.bn.md">বাংলা</a> |
-  <a href="README.gr.md">Ελληνικά</a> |
-  <a href="README.vi.md">Tiếng Việt</a>
-</p>
+> [!IMPORTANT]
+> This is an **unofficial fork** of [OpenCode](https://github.com/anomalyco/opencode). It is not built by or affiliated with the OpenCode team. This fork adds experimental voice input and output capabilities to the CLI and the JavaScript SDK.
 
-[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
+---
+
+### Voice
+
+This fork adds voice capabilities to OpenCode. You can talk to the agent, and optionally have it talk back. There are three ways to use voice depending on your model and configuration.
+
+---
+
+#### Transcribed input, text output
+
+Use your microphone to speak prompts that get transcribed to text via OpenAI's STT API. The agent responds with text as usual. This works with any model.
+
+Enable voice input in your config and use a model like Claude or any other text-only model. Your speech is transcribed with `gpt-4o-mini-transcribe` before being sent to the model.
+
+```jsonc
+{
+  "experimental": {
+    "voice": {
+      "enabled": true,
+    },
+  },
+}
+```
+
+---
+
+#### Transcribed input, spoken output
+
+Same as above, but the agent's text responses are also converted to speech via OpenAI's TTS API. Responses are streamed sentence-by-sentence for low latency. The agent uses a special voice-optimized system prompt that keeps output concise and conversational.
+
+```jsonc
+{
+  "experimental": {
+    "voice": {
+      "enabled": true,
+      "tts": {
+        "enabled": true,
+      },
+    },
+  },
+}
+```
+
+To get spoken responses, switch to the `voice-build` or `voice-plan` agent using **Tab**. These behave identically to the standard `build` and `plan` agents but produce output optimized for speech — short sentences, no markdown, no code fences. TTS output only activates when a voice agent is selected.
+
+---
+
+#### Native audio input
+
+Some models accept audio directly without transcription. When you select a model with native audio input support (like Gemini), your recording is sent as a WAV file attachment instead of being transcribed first. This is auto-detected from the model's capabilities — no extra configuration needed.
+
+Native audio input also works with TTS output enabled. You get audio in, audio out, but the output is still synthesized from the model's text response.
+
+---
+
+#### Fully native audio
+
+For models that support both audio input and audio output natively (like GPT-4o audio), the agent produces speech directly — no STT or TTS involved. The model receives your audio and responds with audio. This is auto-detected when the model advertises audio in both input and output modalities.
+
+With native audio output, the voice system prompt is skipped since the model handles speech formatting itself.
+
+---
+
+### Configure voice
+
+All voice settings live under `experimental.voice` in your `opencode.json` or `opencode.jsonc`.
+
+```jsonc
+{
+  "experimental": {
+    "voice": {
+      "enabled": true,
+      "model": "gpt-4o-mini-transcribe",
+      "tts": {
+        "enabled": true,
+        "model": "gpt-4o-mini-tts",
+        "voice": "coral",
+        "speed": 1,
+        "status": true,
+      },
+    },
+  },
+}
+```
+
+| Key                 | Default                  | Description                                     |
+| ------------------- | ------------------------ | ----------------------------------------------- |
+| `voice.enabled`     | `false`                  | Enable voice input mode                         |
+| `voice.model`       | `gpt-4o-mini-transcribe` | OpenAI transcription model for STT              |
+| `voice.tts.enabled` | `false`                  | Enable text-to-speech output                    |
+| `voice.tts.model`   | `gpt-4o-mini-tts`        | OpenAI TTS model                                |
+| `voice.tts.voice`   | `coral`                  | Voice ID for TTS                                |
+| `voice.tts.speed`   | `1`                      | Playback speed multiplier (0.5–4)               |
+| `voice.tts.status`  | `true`                   | Speak tool status updates while the agent works |
+
+Voice features require an `OPENAI_API_KEY` environment variable for STT and TTS. Native audio input/output uses whatever provider the selected model belongs to.
+
+---
+
+### Use voice in the TUI
+
+When voice is enabled, the prompt starts in voice mode. Press **Space** to start recording and **Space** again to stop. Your audio is transcribed (or sent natively) and submitted as a prompt.
+
+| Key    | Action                              |
+| ------ | ----------------------------------- |
+| Space  | Toggle recording                    |
+| s      | Stop speaking (when TTS is playing) |
+| !      | Enter shell mode                    |
+| /      | Enter command mode                  |
+| Escape | Exit voice mode                     |
+
+You can also enter voice mode by running `/voice` in the prompt. When `voice.enabled` is `true` in your config, the prompt starts in voice mode automatically.
+
+Voice mode also works for answering permission and question prompts. When the agent asks for permission or poses a question, you can speak your answer and it will be classified against the available options.
+
+---
+
+### Voice SDK
+
+The JavaScript SDK includes a voice module for building custom voice interfaces on top of OpenCode. Import it from `@opencode-ai/sdk/v2/voice`.
+
+```ts
+import { createOpencode } from "@opencode-ai/sdk/v2"
+import { createVoiceSession } from "@opencode-ai/sdk/v2/voice"
+
+const { client, server } = await createOpencode()
+
+const session = await createVoiceSession(client, {
+  permission: "dangerous",
+  tts: { voice: "coral" },
+})
+
+// Push recorded audio (WAV Uint8Array) to the input queue
+session.input.push(audioData)
+
+// Read synthesized speech from the output queue
+for await (const chunk of session.output) {
+  // PCM audio data — 24kHz 16-bit signed LE mono
+  playAudio(chunk)
+}
+
+session.close()
+await session.done
+```
+
+---
+
+#### Session options
+
+`createVoiceSession` accepts the following options:
+
+| Option              | Default       | Description                                                                                     |
+| ------------------- | ------------- | ----------------------------------------------------------------------------------------------- |
+| `sessionID`         | —             | Reuse an existing session instead of creating one                                               |
+| `agent`             | `voice-build` | Agent name                                                                                      |
+| `model`             | —             | Model override as `{ providerID, modelID }`                                                     |
+| `permission`        | `safe`        | `"safe"` (auto-reject), `"dangerous"` (allow-all), or a custom ruleset                          |
+| `tts`               | —             | TTS options: `model`, `voice`, `speed`, `apiKey`, `baseUrl`                                     |
+| `stt`               | —             | STT options: `model`, `apiKey`, `baseUrl`, `format` (for raw PCM input)                         |
+| `nativeAudioInput`  | auto          | Send audio directly to the model instead of transcribing. Auto-detected from model capabilities |
+| `nativeAudioOutput` | auto          | Receive audio directly from the model instead of TTS. Auto-detected from model capabilities     |
+| `minSentenceLength` | `40`          | Minimum characters before a sentence is sent to TTS                                             |
+| `toolStatus`        | `false`       | Speak tool execution status on the output queue                                                 |
+| `system`            | —             | Custom system prompt appended to agent defaults                                                 |
+| `tools`             | —             | Tool enable/disable map                                                                         |
+
+---
+
+#### Standalone utilities
+
+The voice module also exports standalone STT, TTS, and audio utility functions.
+
+```ts
+import { stt, tts, pcmToWav, splitSentences, sanitize } from "@opencode-ai/sdk/v2/voice"
+
+// Speech-to-text
+const text = await stt(wavBuffer, { model: "gpt-4o-mini-transcribe" })
+
+// Text-to-speech (returns a ReadableStream of PCM chunks)
+const stream = await tts("Hello world", { voice: "coral" })
+
+// Wrap raw PCM in a WAV header
+const wav = pcmToWav(pcmBuffer, { sampleRate: 24000, channels: 1, bitDepth: 16 })
+
+// Split text into speakable sentences
+const { complete, remaining } = splitSentences(text, false)
+
+// Strip markdown for TTS
+const clean = sanitize(markdownText)
+```
+
+---
+
+### Prerequisites
+
+Voice features require one of the following for audio playback:
+
+- `ffplay` (from FFmpeg) — recommended, supports streaming and speed control
+- `afplay` (macOS built-in) — works but buffers the full response before playing
+- `aplay` (Linux ALSA) — stdin streaming support
+
+For recording, you need one of:
+
+- `rec` (from SoX)
+- `ffmpeg` (uses AVFoundation on macOS, PulseAudio on Linux)
+
+Install both with:
+
+```bash
+# macOS
+brew install ffmpeg sox
+
+# Linux (Debian/Ubuntu)
+sudo apt install ffmpeg sox
+```
 
 ---
 
@@ -107,6 +294,8 @@ OpenCode includes two built-in agents you can switch between with the `Tab` key.
   - Asks permission before running bash commands
   - Ideal for exploring unfamiliar codebases or planning changes
 
+This fork adds **voice-build** and **voice-plan** agents that behave identically but produce speech-optimized output. Switch to these with **Tab** when using TTS.
+
 Also included is a **general** subagent for complex searches and multistep tasks.
 This is used internally and can be invoked using `@general` in messages.
 
@@ -119,10 +308,6 @@ For more info on how to configure OpenCode, [**head over to our docs**](https://
 ### Contributing
 
 If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
-
-### Building on OpenCode
-
-If you are working on a project that's related to OpenCode and is using "opencode" as part of its name, for example "opencode-dashboard" or "opencode-mobile", please add a note to your README to clarify that it is not built by the OpenCode team and is not affiliated with us in any way.
 
 ### FAQ
 
