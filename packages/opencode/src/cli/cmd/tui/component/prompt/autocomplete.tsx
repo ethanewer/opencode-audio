@@ -74,6 +74,7 @@ export function Autocomplete(props: {
   fileStyleId: number
   agentStyleId: number
   promptPartTypeId: () => number
+  onSlashSelect?: () => void
 }) {
   const sdk = useSDK()
   const sync = useSync()
@@ -450,8 +451,10 @@ export function Autocomplete(props: {
   function select() {
     const selected = options()[store.selected]
     if (!selected) return
+    const was = store.visible
     hide()
     selected.onSelect?.()
+    if (was === "/") props.onSlashSelect?.()
   }
 
   function expandDirectory() {
@@ -560,7 +563,9 @@ export function Autocomplete(props: {
             return
           }
           if (name === "escape") {
+            const was = store.visible
             hide()
+            if (was === "/") props.onSlashSelect?.()
             e.preventDefault()
             return
           }

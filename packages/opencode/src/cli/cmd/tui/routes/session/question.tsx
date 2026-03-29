@@ -24,9 +24,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
   const promptRef = usePromptRef()
   const voiced = createMemo(() => promptRef.mode === "voice")
-  const tabs = createMemo(() =>
-    voiced() ? questions().length : single() ? 1 : questions().length + 1,
-  )
+  const tabs = createMemo(() => (voiced() ? questions().length : single() ? 1 : questions().length + 1))
   const [tabHover, setTabHover] = createSignal<number | "confirm" | null>(null)
   const [store, setStore] = createStore({
     tab: 0,
@@ -214,9 +212,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
       if (!voiced()) return
 
       const conf = typeof result.confidence === "number" ? result.confidence : null
-      const ok = Boolean(
-        result.option && result.confidence !== 0 && labels.includes(result.option),
-      )
+      const ok = Boolean(result.option && result.confidence !== 0 && labels.includes(result.option))
 
       if (ok) {
         setVoiceTrace({ transcript: trimmed, matched: result.option!, confidence: conf })
@@ -241,7 +237,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     }
   }
 
-  const voice = useVoice({ onResult: handleVoiceResult })
+  const voice = useVoice({ onResult: handleVoiceResult, color: theme.warning })
 
   createEffect(() => {
     if (voice.recording()) setVoiceTrace(null)
@@ -487,7 +483,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
             </Show>
             <Show when={voiced() && !classifying() && !store.editing && (voice.recording() || voice.transcribing())}>
               <box paddingLeft={1}>
-                <text fg={theme.textMuted}>{voice.placeholder()}</text>
+                <text content={voice.placeholder()} />
               </box>
             </Show>
             <Show when={voiced() && voiceTrace()}>
@@ -500,10 +496,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                   <span style={{ fg: theme.textMuted }}>Matched: </span>
                   <span style={{ fg: theme.secondary }}>{voiceTrace()!.matched}</span>
                   <Show when={voiceTrace()!.confidence != null}>
-                    <span style={{ fg: theme.textMuted }}>
-                      {" "}
-                      · {Math.round((voiceTrace()!.confidence ?? 0) * 100)}%
-                    </span>
+                    <span style={{ fg: theme.textMuted }}> · {Math.round((voiceTrace()!.confidence ?? 0) * 100)}%</span>
                   </Show>
                 </text>
               </box>
@@ -556,9 +549,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                     </box>
                     <box backgroundColor={other() ? theme.backgroundElement : undefined}>
                       <text fg={other() ? theme.secondary : customPicked() ? theme.success : theme.text}>
-                        {multi()
-                          ? `[${customPicked() ? "✓" : " "}] Type your own answer`
-                          : "Type your own answer"}
+                        {multi() ? `[${customPicked() ? "✓" : " "}] Type your own answer` : "Type your own answer"}
                       </text>
                     </box>
 
@@ -569,7 +560,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                   <Show when={store.editing}>
                     <box paddingLeft={3}>
                       <Show when={voiced()}>
-                        <text fg={theme.textMuted}>{voice.placeholder()}</text>
+                        <text content={voice.placeholder()} />
                       </Show>
                       <Show when={!voiced()}>
                         <textarea
@@ -637,10 +628,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         <box flexDirection="row" gap={2}>
           <Show when={voiced()}>
             <text fg={theme.text}>
-              space{" "}
-              <span style={{ fg: theme.textMuted }}>
-                {voice.recording() ? "stop" : "record"}
-              </span>
+              space <span style={{ fg: theme.textMuted }}>{voice.recording() ? "stop" : "record"}</span>
             </text>
           </Show>
           <Show when={!single()}>

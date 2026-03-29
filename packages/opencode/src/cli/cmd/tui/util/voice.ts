@@ -1,4 +1,5 @@
 import { createSignal, onCleanup, createEffect, createMemo } from "solid-js"
+import { t, fg, bold, dim, type ColorInput } from "@opentui/core"
 import { record } from "@/audio/record"
 import { transcribe as transcribeLocal } from "@/audio/transcribe"
 import { useSync } from "@tui/context/sync"
@@ -7,7 +8,7 @@ import { useSDK } from "@tui/context/sdk"
 
 const transcribeTimeoutMs = 120_000
 
-export function useVoice(opts: { onResult: (text: string) => void }) {
+export function useVoice(opts: { onResult: (text: string) => void; color: ColorInput }) {
   const sync = useSync()
   const sdk = useSDK()
   const toast = useToast()
@@ -61,13 +62,10 @@ export function useVoice(opts: { onResult: (text: string) => void }) {
           const text = await Promise.race([
             pending,
             new Promise<never>((_, reject) => {
-              const t = setTimeout(
-                () => reject(new Error("Transcription timed out")),
-                transcribeTimeoutMs,
-              )
-              t.unref?.()
+              const timer = setTimeout(() => reject(new Error("Transcription timed out")), transcribeTimeoutMs)
+              timer.unref?.()
               abort.signal.addEventListener("abort", () => {
-                clearTimeout(t)
+                clearTimeout(timer)
                 reject(new Error("Transcription cancelled"))
               })
             }),
@@ -115,14 +113,15 @@ export function useVoice(opts: { onResult: (text: string) => void }) {
   }
 
   function placeholder() {
-    if (transcribing()) return "Transcribing..."
+    const icon = fg(opts.color)(bold("◉"))
+    if (transcribing()) return t`${icon} ${dim("Transcribing...")}`
     if (rec()) {
       const elapsed = Math.floor((tick() * 80) / 1000)
       const min = String(Math.floor(elapsed / 60)).padStart(2, "0")
       const sec = String(elapsed % 60).padStart(2, "0")
-      return `${frames[tick() % frames.length]} Recording ${min}:${sec} — press space to stop`
+      return t`${icon} ${fg(opts.color)(frames[tick() % frames.length])} ${fg(opts.color)(`Recording ${min}:${sec}`)} ${dim("— press space to stop")}`
     }
-    return "Press space to record"
+    return t`${icon} ${dim("Press space to record")}`
   }
 
   return { recording, transcribing, busy, toggle, cancel, placeholder }

@@ -1386,13 +1386,21 @@ export namespace SessionPrompt {
     }
   }
 
+  function isPlan(name: string) {
+    return name === "plan" || name === "voice-plan"
+  }
+
+  function isBuild(name: string) {
+    return name === "build" || name === "voice-build"
+  }
+
   async function insertReminders(input: { messages: MessageV2.WithParts[]; agent: Agent.Info; session: Session.Info }) {
     const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
     if (!userMessage) return input.messages
 
     // Original logic when experimental plan mode is disabled
     if (!Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE) {
-      if (input.agent.name === "plan") {
+      if (isPlan(input.agent.name)) {
         userMessage.parts.push({
           id: PartID.ascending(),
           messageID: userMessage.info.id,
@@ -1402,8 +1410,8 @@ export namespace SessionPrompt {
           synthetic: true,
         })
       }
-      const wasPlan = input.messages.some((msg) => msg.info.role === "assistant" && msg.info.agent === "plan")
-      if (wasPlan && input.agent.name === "build") {
+      const wasPlan = input.messages.some((msg) => msg.info.role === "assistant" && isPlan(msg.info.agent))
+      if (wasPlan && isBuild(input.agent.name)) {
         userMessage.parts.push({
           id: PartID.ascending(),
           messageID: userMessage.info.id,
@@ -1420,7 +1428,7 @@ export namespace SessionPrompt {
     const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
 
     // Switching from plan mode to build mode
-    if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
+    if (!isPlan(input.agent.name) && assistantMessage && isPlan(assistantMessage.info.agent)) {
       const plan = Session.plan(input.session)
       const exists = await Filesystem.exists(plan)
       if (exists) {
@@ -1439,7 +1447,7 @@ export namespace SessionPrompt {
     }
 
     // Entering plan mode
-    if (input.agent.name === "plan" && assistantMessage?.info.agent !== "plan") {
+    if (isPlan(input.agent.name) && (!assistantMessage || !isPlan(assistantMessage.info.agent))) {
       const plan = Session.plan(input.session)
       const exists = await Filesystem.exists(plan)
       if (!exists) await fs.mkdir(path.dirname(plan), { recursive: true })
