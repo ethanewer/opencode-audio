@@ -9,8 +9,7 @@
 </p>
 <p align="center">The open source AI coding agent — with voice.</p>
 
-> [!IMPORTANT]
-> This is an **unofficial fork** of [OpenCode](https://github.com/anomalyco/opencode). It is not built by or affiliated with the OpenCode team. This fork adds experimental voice input and output capabilities to the CLI and the JavaScript SDK.
+This is an **unofficial fork** of [OpenCode](https://github.com/anomalyco/opencode). It is not built by or affiliated with the OpenCode team. This fork adds experimental voice input and output capabilities to the CLI and the JavaScript SDK.
 
 ---
 
