@@ -6,12 +6,8 @@
     },
   },
   "agent": {
-    "voice-build": {
-      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
-    },
-    "voice-plan": {
-      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
-    },
+    "voice-build": {},
+    "voice-plan": {},
     "docs": {
       "hidden": true,
     },

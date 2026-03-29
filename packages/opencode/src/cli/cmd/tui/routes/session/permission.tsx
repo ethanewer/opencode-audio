@@ -19,7 +19,6 @@ import { useTuiConfig } from "../../context/tui-config"
 import { usePromptRef } from "../../context/prompt"
 import { useLocal } from "../../context/local"
 import { useVoice } from "../../util/voice"
-import { useToast } from "../../ui/toast"
 
 type PermissionStage = "permission" | "always" | "reject"
 
@@ -130,13 +129,66 @@ function TextBody(props: { title: string; description?: string; icon?: string })
   )
 }
 
-const PERMISSION_VOICE = ["no", "yes", "allow always"] as const
+const PERMISSION_VOICE = ["reject", "allow once", "allow always"] as const
 
 function permissionVoiceLabel(option: string | null) {
-  if (option === "no") return "Reject"
-  if (option === "yes") return "Allow once"
+  if (option === "reject") return "Reject"
+  if (option === "allow once") return "Allow once"
   if (option === "allow always") return "Allow always"
   return "No match"
+}
+
+const POSITIVE = [
+  "yes",
+  "allow",
+  "sure",
+  "ok",
+  "okay",
+  "yep",
+  "yeah",
+  "approve",
+  "go",
+  "proceed",
+  "accept",
+  "confirm",
+  "fine",
+  "granted",
+  "yea",
+  "affirmative",
+]
+const NEGATIVE = [
+  "no",
+  "reject",
+  "deny",
+  "denied",
+  "stop",
+  "dont",
+  "nope",
+  "nah",
+  "refuse",
+  "block",
+  "cancel",
+  "decline",
+  "never",
+]
+const ALWAYS = ["always", "permanently", "forever"]
+
+function classifyPermission(transcript: string): (typeof PERMISSION_VOICE)[number] | null {
+  const words = transcript
+    .toLowerCase()
+    .replace(/[.,!?;:'"]/g, "")
+    .split(/\s+/)
+  const has = (list: string[]) => list.some((w) => words.includes(w))
+  const pos = has(POSITIVE)
+  const neg = has(NEGATIVE)
+  const always = has(ALWAYS)
+  if (pos && neg) return null
+  if (neg && always) return "reject"
+  if (neg) return "reject"
+  if (pos && always) return "allow always"
+  if (pos) return "allow once"
+  if (always) return null
+  return null
 }
 
 function PermissionTriVoicePrompt(props: {
@@ -160,7 +212,6 @@ function PermissionTriVoicePrompt(props: {
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
   const promptRef = usePromptRef()
-  const toast = useToast()
   const sdk = useSDK()
   const local = useLocal()
   const voiced = createMemo(() => promptRef.mode === "voice")
@@ -175,9 +226,19 @@ function PermissionTriVoicePrompt(props: {
     const trimmed = text.trim()
     if (!trimmed) return
     if (!voiced()) return
+
+    const quick = classifyPermission(trimmed)
+    if (quick) {
+      setVoiceTrace({ transcript: trimmed, matched: permissionVoiceLabel(quick), confidence: 1 })
+      if (quick === "reject") props.onNo()
+      else if (quick === "allow once") props.onYes()
+      else if (quick === "allow always") props.onAlways()
+      return
+    }
+
     const model = local.model.current()
     if (!model || !sdk.classify) {
-      toast.show({ variant: "warning", message: "Select a model to use voice for permissions", duration: 3000 })
+      setVoiceTrace({ transcript: trimmed, matched: "Didn't catch that, try again", confidence: null })
       return
     }
     setClassifying(true)
@@ -192,37 +253,23 @@ function PermissionTriVoicePrompt(props: {
       setClassifying(false)
       if (!voiced()) return
       const ok = Boolean(result.option && result.confidence !== 0)
-      const conf = typeof result.confidence === "number" ? result.confidence : null
-      setVoiceTrace({
-        transcript: trimmed,
-        matched: ok ? permissionVoiceLabel(result.option) : "No match",
-        confidence: conf,
-      })
-      if (!result.option || result.confidence === 0) {
-        toast.show({ variant: "warning", message: "Didn't catch that, try again", duration: 2000 })
+      if (!ok) {
+        setVoiceTrace({ transcript: trimmed, matched: "Didn't catch that, try again", confidence: null })
         return
       }
-      if (result.option === "no") props.onNo()
-      else if (result.option === "yes") props.onYes()
+      const conf = typeof result.confidence === "number" ? result.confidence : null
+      setVoiceTrace({ transcript: trimmed, matched: permissionVoiceLabel(result.option), confidence: conf })
+      if (result.option === "reject") props.onNo()
+      else if (result.option === "allow once") props.onYes()
       else if (result.option === "allow always") props.onAlways()
-    } catch (err) {
+    } catch {
       setClassifying(false)
       if (!voiced()) return
-      setVoiceTrace({
-        transcript: trimmed,
-        matched: "Classification failed",
-        confidence: null,
-      })
-      toast.show({
-        variant: "error",
-        title: "Classification failed",
-        message: err instanceof Error ? err.message : "An unknown error occurred",
-        duration: 5000,
-      })
+      setVoiceTrace({ transcript: trimmed, matched: "Didn't catch that, try again", confidence: null })
     }
   }
 
-  const voice = useVoice({ onResult: handleVoice, color: theme.warning })
+  const voice = useVoice({ onResult: handleVoice, color: theme.warning, stopDelay: 250 })
 
   createEffect(() => {
     if (voice.recording()) setVoiceTrace(null)
@@ -311,24 +358,27 @@ function PermissionTriVoicePrompt(props: {
             <text fg={theme.textMuted}>Processing...</text>
           </box>
         </Show>
-        <Show when={voiced() && !classifying() && (voice.recording() || voice.transcribing())}>
+        <Show when={voiced() && !classifying()}>
           <box paddingLeft={1}>
-            <text content={voice.placeholder()} />
+            <voice.Indicator />
           </box>
         </Show>
         <Show when={voiced() && voiceTrace()}>
-          <box paddingLeft={1} gap={0} flexDirection="column">
-            <text fg={theme.textMuted}>
+          <box paddingLeft={1} paddingTop={1} flexDirection="column">
+            <text>
               <span style={{ fg: theme.textMuted }}>Heard: </span>
               <span style={{ fg: theme.text }}>"{voiceTrace()!.transcript}"</span>
             </text>
-            <text fg={theme.textMuted}>
-              <span style={{ fg: theme.textMuted }}>Matched: </span>
-              <span style={{ fg: theme.secondary }}>{voiceTrace()!.matched}</span>
-              <Show when={voiceTrace()!.confidence != null}>
+            <Show when={voiceTrace()!.confidence != null}>
+              <text>
+                <span style={{ fg: theme.textMuted }}>Matched: </span>
+                <span style={{ fg: theme.secondary }}>{voiceTrace()!.matched}</span>
                 <span style={{ fg: theme.textMuted }}> · {Math.round((voiceTrace()!.confidence ?? 0) * 100)}%</span>
-              </Show>
-            </text>
+              </text>
+            </Show>
+            <Show when={voiceTrace()!.confidence == null}>
+              <text fg={theme.warning}>{voiceTrace()!.matched}</text>
+            </Show>
           </box>
         </Show>
       </box>
@@ -369,7 +419,10 @@ function PermissionTriVoicePrompt(props: {
         <box flexDirection="row" gap={2} flexShrink={0}>
           <Show when={voiced()}>
             <text fg={theme.text}>
-              space <span style={{ fg: theme.textMuted }}>{voice.recording() ? "stop" : "record"}</span>
+              space{" "}
+              <span style={{ fg: theme.textMuted }}>
+                {voice.recording() ? "stop recording" : voice.transcribing() ? "transcribing..." : "record"}
+              </span>
             </text>
           </Show>
           <Show when={props.fullscreen}>
@@ -812,7 +865,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         gap={1}
       >
         <Show when={voiced()}>
-          <text content={voice.placeholder()} />
+          <voice.Indicator />
         </Show>
         <Show when={!voiced()}>
           <textarea
@@ -827,7 +880,10 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         <box flexDirection="row" gap={2} flexShrink={0}>
           <Show when={voiced()}>
             <text fg={theme.text}>
-              space <span style={{ fg: theme.textMuted }}>{voice.recording() ? "stop" : "record"}</span>
+              space{" "}
+              <span style={{ fg: theme.textMuted }}>
+                {voice.recording() ? "stop recording" : voice.transcribing() ? "transcribing..." : "record"}
+              </span>
             </text>
           </Show>
           <Show when={!voiced()}>

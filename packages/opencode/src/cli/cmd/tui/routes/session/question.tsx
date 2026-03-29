@@ -11,7 +11,7 @@ import { useTextareaKeybindings } from "../../component/textarea-keybindings"
 import { useDialog } from "../../ui/dialog"
 import { usePromptRef } from "../../context/prompt"
 import { useVoice } from "../../util/voice"
-import { useToast } from "../../ui/toast"
+
 import { useLocal } from "../../context/local"
 
 export function QuestionPrompt(props: { request: QuestionRequest }) {
@@ -143,7 +143,6 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   }
 
   const dialog = useDialog()
-  const toast = useToast()
   const local = useLocal()
 
   const [classifying, setClassifying] = createSignal(false)
@@ -223,17 +222,11 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
       setVoiceTrace({ transcript: trimmed, matched: "Custom (no match)", confidence: conf })
       pick(trimmed, true)
-    } catch (err) {
+    } catch {
       setClassifying(false)
       if (!voiced()) return
       setVoiceTrace({ transcript: trimmed, matched: "Custom (error)", confidence: null })
       pick(trimmed, true)
-      toast.show({
-        variant: "error",
-        title: "Classification failed",
-        message: err instanceof Error ? err.message : "An unknown error occurred",
-        duration: 5000,
-      })
     }
   }
 
@@ -481,24 +474,22 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                 <text fg={theme.textMuted}>Processing...</text>
               </box>
             </Show>
-            <Show when={voiced() && !classifying() && !store.editing && (voice.recording() || voice.transcribing())}>
-              <box paddingLeft={1}>
-                <text content={voice.placeholder()} />
-              </box>
-            </Show>
             <Show when={voiced() && voiceTrace()}>
-              <box paddingLeft={1} gap={0} flexDirection="column">
-                <text fg={theme.textMuted}>
+              <box paddingLeft={1} paddingTop={1} flexDirection="column">
+                <text>
                   <span style={{ fg: theme.textMuted }}>Heard: </span>
                   <span style={{ fg: theme.text }}>"{voiceTrace()!.transcript}"</span>
                 </text>
-                <text fg={theme.textMuted}>
-                  <span style={{ fg: theme.textMuted }}>Matched: </span>
-                  <span style={{ fg: theme.secondary }}>{voiceTrace()!.matched}</span>
-                  <Show when={voiceTrace()!.confidence != null}>
+                <Show when={voiceTrace()!.confidence != null}>
+                  <text>
+                    <span style={{ fg: theme.textMuted }}>Matched: </span>
+                    <span style={{ fg: theme.secondary }}>{voiceTrace()!.matched}</span>
                     <span style={{ fg: theme.textMuted }}> · {Math.round((voiceTrace()!.confidence ?? 0) * 100)}%</span>
-                  </Show>
-                </text>
+                  </text>
+                </Show>
+                <Show when={voiceTrace()!.confidence == null}>
+                  <text fg={theme.warning}>{voiceTrace()!.matched}</text>
+                </Show>
               </box>
             </Show>
             <box>
@@ -560,7 +551,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                   <Show when={store.editing}>
                     <box paddingLeft={3}>
                       <Show when={voiced()}>
-                        <text content={voice.placeholder()} />
+                        <voice.Indicator />
                       </Show>
                       <Show when={!voiced()}>
                         <textarea
@@ -616,6 +607,11 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
           </For>
         </Show>
       </box>
+      <Show when={voiced() && !classifying() && !store.editing}>
+        <box paddingLeft={2} paddingBottom={1}>
+          <voice.Indicator />
+        </box>
+      </Show>
       <box
         flexDirection="row"
         flexShrink={0}
@@ -628,7 +624,10 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         <box flexDirection="row" gap={2}>
           <Show when={voiced()}>
             <text fg={theme.text}>
-              space <span style={{ fg: theme.textMuted }}>{voice.recording() ? "stop" : "record"}</span>
+              space{" "}
+              <span style={{ fg: theme.textMuted }}>
+                {voice.recording() ? "stop recording" : voice.transcribing() ? "transcribing..." : "record"}
+              </span>
             </text>
           </Show>
           <Show when={!single()}>
