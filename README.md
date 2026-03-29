@@ -14,6 +14,67 @@
 
 ---
 
+### Install
+
+This fork must be built from source. You need [Bun](https://bun.sh) 1.3 or later.
+
+```bash
+git clone https://github.com/ethanewer/opencode-audio.git
+cd opencode-audio
+bun install
+```
+
+---
+
+#### Run in development
+
+```bash
+bun dev
+```
+
+This starts OpenCode against the `packages/opencode` directory. To target a different project:
+
+```bash
+bun dev /path/to/project
+```
+
+---
+
+#### Build a standalone binary
+
+```bash
+./packages/opencode/script/build.ts --single
+```
+
+The compiled binary is written to `./packages/opencode/dist/opencode-<platform>/bin/opencode`. Replace `<platform>` with your system (e.g. `darwin-arm64`, `linux-x64`).
+
+You can copy this binary anywhere on your `PATH` and run it like a normal CLI tool.
+
+---
+
+#### Audio tools
+
+Voice features require tools for recording and playback. For playback, you need one of:
+
+- `ffplay` (from FFmpeg) — recommended, supports streaming and speed control
+- `afplay` (macOS built-in) — buffers the full response before playing
+- `aplay` (Linux ALSA) — stdin streaming support
+
+For recording, you need one of:
+
+- `rec` (from SoX)
+- `ffmpeg` (uses AVFoundation on macOS, PulseAudio on Linux)
+
+```bash
+# macOS
+brew install ffmpeg sox
+
+# Linux (Debian/Ubuntu)
+sudo apt install ffmpeg sox
+```
+
+---
+
 ### Voice
 
 This fork adds voice capabilities to OpenCode. You can talk to the agent, and optionally have it talk back. There are three ways to use voice depending on your model and configuration.
@@ -205,122 +266,21 @@ const clean = sanitize(markdownText)
 
 ---
 
-### Prerequisites
-
-Voice features require one of the following for audio playback:
-
-- `ffplay` (from FFmpeg) — recommended, supports streaming and speed control
-- `afplay` (macOS built-in) — works but buffers the full response before playing
-- `aplay` (Linux ALSA) — stdin streaming support
-
-For recording, you need one of:
-
-- `rec` (from SoX)
-- `ffmpeg` (uses AVFoundation on macOS, PulseAudio on Linux)
-
-Install both with:
-
-```bash
-# macOS
-brew install ffmpeg sox
-
-# Linux (Debian/Ubuntu)
-sudo apt install ffmpeg sox
-```
-
----
-
-### Installation
-
-```bash
-# YOLO
-curl -fsSL https://opencode.ai/install | bash
-
-# Package managers
-npm i -g opencode-ai@latest        # or bun/pnpm/yarn
-scoop install opencode             # Windows
-choco install opencode             # Windows
-brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)
-brew install opencode              # macOS and Linux (official brew formula, updated less)
-sudo pacman -S opencode            # Arch Linux (Stable)
-paru -S opencode-bin               # Arch Linux (Latest from AUR)
-mise use -g opencode               # Any OS
-nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev branch
-```
-
-> [!TIP]
-> Remove versions older than 0.1.x before installing.
-
-### Desktop App (BETA)
-
-OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
-
-| Platform              | Download                              |
-| --------------------- | ------------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-darwin-aarch64.dmg` |
-| macOS (Intel)         | `opencode-desktop-darwin-x64.dmg`     |
-| Windows               | `opencode-desktop-windows-x64.exe`    |
-| Linux                 | `.deb`, `.rpm`, or AppImage           |
-
-```bash
-# macOS (Homebrew)
-brew install --cask opencode-desktop
-# Windows (Scoop)
-scoop bucket add extras; scoop install extras/opencode-desktop
-```
-
-#### Installation Directory
-
-The install script respects the following priority order for the installation path:
-
-1. `$OPENCODE_INSTALL_DIR` - Custom installation directory
-2. `$XDG_BIN_DIR` - XDG Base Directory Specification compliant path
-3. `$HOME/bin` - Standard user binary directory (if it exists or can be created)
-4. `$HOME/.opencode/bin` - Default fallback
-
-```bash
-# Examples
-OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
-XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
-```
-
 ### Agents
 
-OpenCode includes two built-in agents you can switch between with the `Tab` key.
+OpenCode includes built-in agents you can switch between with the **Tab** key.
 
-- **build** - Default, full-access agent for development work
-- **plan** - Read-only agent for analysis and code exploration
-  - Denies file edits by default
-  - Asks permission before running bash commands
-  - Ideal for exploring unfamiliar codebases or planning changes
+- **build** — default, full-access agent for development work
+- **plan** — read-only agent for analysis and code exploration
+- **voice-build** — same as build but output is optimized for speech
+- **voice-plan** — same as plan but output is optimized for speech
 
-This fork adds **voice-build** and **voice-plan** agents that behave identically but produce speech-optimized output. Switch to these with **Tab** when using TTS.
+The voice agents produce short, conversational responses with no markdown or code fences. Switch to these when using TTS.
 
-Also included is a **general** subagent for complex searches and multistep tasks.
-This is used internally and can be invoked using `@general` in messages.
-
-Learn more about [agents](https://opencode.ai/docs/agents).
-
-### Documentation
-
-For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
-
-### Contributing
-
-If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
-
-### FAQ
-
-#### How is this different from Claude Code?
-
-It's very similar to Claude Code in terms of capability. Here are the key differences:
-
-- 100% open source
-- Not coupled to any provider. Although we recommend the models we provide through [OpenCode Zen](https://opencode.ai/zen), OpenCode can be used with Claude, OpenAI, Google, or even local models. As models evolve, the gaps between them will close and pricing will drop, so being provider-agnostic is important.
-- Out-of-the-box LSP support
-- A focus on TUI. OpenCode is built by neovim users and the creators of [terminal.shop](https://terminal.shop); we are going to push the limits of what's possible in the terminal.
-- A client/server architecture. This, for example, can allow OpenCode to run on your computer while you drive it remotely from a mobile app, meaning that the TUI frontend is just one of the possible clients.
+A **general** subagent is also included for complex searches and multistep tasks. It is used internally and can be invoked with `@general` in messages.
 
 ---
 
-**Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)
+### Original OpenCode documentation
+
+For general OpenCode configuration and usage, see the [upstream OpenCode docs](https://opencode.ai/docs). Note that some features documented there (like the desktop app and package manager installation) apply to the official release and not to this fork.
