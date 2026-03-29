@@ -3,7 +3,7 @@ import { useSDK } from "@tui/context/sdk"
 import { useSync } from "@tui/context/sync"
 import { SpeechQueue } from "@/audio/speech-queue"
 import { StatusSpeaker } from "@/audio/status-speaker"
-import { warmup } from "@/audio/speak"
+import { warmup, play } from "@/audio/speak"
 
 const VOICE_AGENTS = new Set(["voice-build", "voice-plan"])
 
@@ -116,7 +116,7 @@ export function useSpeech(sessionID: () => string) {
     q.push(evt.properties.delta)
   })
 
-  // Detect tool parts and step boundaries
+  // Detect tool parts, step boundaries, and model audio output
   const offPart = sdk.event.on("message.part.updated", (evt) => {
     if (!enabled()) return
     if (evt.properties.sessionID !== sessionID()) return
@@ -124,6 +124,25 @@ export function useSpeech(sessionID: () => string) {
     if (!msg) return
     const part = evt.properties.part
     if (part.messageID !== msg.id) return
+
+    // Model produced native audio (e.g. gpt-audio) — play directly instead of TTS
+    if (part.type === "file" && "mime" in part && typeof part.mime === "string" && part.mime.startsWith("audio/")) {
+      queue?.cancel()
+      statusSpeaker?.cancel()
+      muted = true
+      const b64 = "url" in part && typeof part.url === "string" ? part.url.split(",")[1] : undefined
+      if (b64) {
+        const pcm = Buffer.from(b64, "base64")
+        const p = play(new Uint8Array(pcm))
+        queueIdle = false
+        setSpeaking(true)
+        p.done.then(() => {
+          queueIdle = true
+          checkIdle()
+        })
+      }
+      return
+    }
 
     if (part.type === "tool") {
       if (!stepHasTools && streaming) {

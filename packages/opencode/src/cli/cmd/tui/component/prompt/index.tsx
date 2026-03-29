@@ -163,6 +163,53 @@ export function Prompt(props: PromptProps) {
         submitting = false
       })
     },
+    audioInput: () => !!local.model.parsed().audioInput,
+    async onAudio(audio) {
+      if (store.mode !== "voice") return
+      const selected = local.model.current()
+      if (!selected) return
+      let sessionID = props.sessionID
+      if (sessionID == null) {
+        const res = await sdk.client.session.create({
+          workspaceID: props.workspaceID,
+        })
+        if (res.error) return
+        sessionID = res.data.id
+      }
+      const url = `data:audio/wav;base64,${Buffer.from(audio).toString("base64")}`
+      sdk.client.session
+        .prompt({
+          sessionID,
+          ...selected,
+          messageID: MessageID.ascending(),
+          agent: local.agent.current().name,
+          model: selected,
+          variant: local.model.variant.current(),
+          parts: [
+            {
+              id: PartID.ascending(),
+              type: "file" as const,
+              mime: "audio/wav",
+              url,
+              filename: "recording.wav",
+            },
+            {
+              id: PartID.ascending(),
+              type: "text" as const,
+              text: "[voice audio input]",
+            },
+          ],
+        })
+        .catch(() => {})
+      props.onSubmit?.()
+      if (!props.sessionID)
+        setTimeout(() => {
+          route.navigate({
+            type: "session",
+            sessionID,
+          })
+        }, 50)
+    },
     color: theme.warning,
   })
 

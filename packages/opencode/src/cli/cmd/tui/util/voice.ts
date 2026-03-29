@@ -8,7 +8,12 @@ import { useSDK } from "@tui/context/sdk"
 
 const transcribeTimeoutMs = 120_000
 
-export function useVoice(opts: { onResult: (text: string) => void; color: ColorInput }) {
+export function useVoice(opts: {
+  onResult: (text: string) => void
+  audioInput?: () => boolean
+  onAudio?: (audio: Uint8Array) => void
+  color: ColorInput
+}) {
   const sync = useSync()
   const sdk = useSDK()
   const toast = useToast()
@@ -51,41 +56,58 @@ export function useVoice(opts: { onResult: (text: string) => void; color: ColorI
     const r = rec()
     if (r) {
       setRec(null)
-      setTranscribing(true)
-      const abort = new AbortController()
-      transcribeAbort = abort
-      r.stop()
-        .then(async (audio) => {
-          if (abort.signal.aborted) return
-          const model = sync.data.config.experimental?.voice?.model
-          const pending = sdk.transcribe?.({ audio, model }) ?? transcribeLocal(audio, model)
-          const text = await Promise.race([
-            pending,
-            new Promise<never>((_, reject) => {
-              const timer = setTimeout(() => reject(new Error("Transcription timed out")), transcribeTimeoutMs)
-              timer.unref?.()
-              abort.signal.addEventListener("abort", () => {
-                clearTimeout(timer)
-                reject(new Error("Transcription cancelled"))
-              })
-            }),
-          ])
-          if (!active) return
-          if (!text.trim()) return
-          opts.onResult(text)
-        })
-        .catch((err) => {
-          if (!active || abort.signal.aborted) return
-          toast.show({
-            variant: "error",
-            title: "Transcription failed",
-            message: err instanceof Error ? err.message : "An unknown error occurred",
-            duration: 5000,
+      if (opts.audioInput?.() && opts.onAudio) {
+        r.stop()
+          .then((audio) => {
+            if (!active) return
+            opts.onAudio!(audio)
           })
-        })
-        .finally(() => {
-          setTranscribing(false)
-        })
+          .catch((err) => {
+            if (!active) return
+            toast.show({
+              variant: "error",
+              title: "Recording failed",
+              message: err instanceof Error ? err.message : "An unknown error occurred",
+              duration: 5000,
+            })
+          })
+      } else {
+        setTranscribing(true)
+        const abort = new AbortController()
+        transcribeAbort = abort
+        r.stop()
+          .then(async (audio) => {
+            if (abort.signal.aborted) return
+            const model = sync.data.config.experimental?.voice?.model
+            const pending = sdk.transcribe?.({ audio, model }) ?? transcribeLocal(audio, model)
+            const text = await Promise.race([
+              pending,
+              new Promise<never>((_, reject) => {
+                const timer = setTimeout(() => reject(new Error("Transcription timed out")), transcribeTimeoutMs)
+                timer.unref?.()
+                abort.signal.addEventListener("abort", () => {
+                  clearTimeout(timer)
+                  reject(new Error("Transcription cancelled"))
+                })
+              }),
+            ])
+            if (!active) return
+            if (!text.trim()) return
+            opts.onResult(text)
+          })
+          .catch((err) => {
+            if (!active || abort.signal.aborted) return
+            toast.show({
+              variant: "error",
+              title: "Transcription failed",
+              message: err instanceof Error ? err.message : "An unknown error occurred",
+              duration: 5000,
+            })
+          })
+          .finally(() => {
+            setTranscribing(false)
+          })
+      }
     } else {
       try {
         setRec(record())
