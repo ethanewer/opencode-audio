@@ -336,6 +336,27 @@ export interface VoiceSessionOptions {
    * StatusSpeaker behavior. Defaults to false.
    */
   toolStatus?: boolean
+
+  /**
+   * When true, audio input is sent directly to the model as a file part
+   * instead of being transcribed via STT first. Use this for models that
+   * accept audio input natively (e.g. Gemini 3.1 Flash Lite, GPT Audio).
+   *
+   * When undefined, auto-detected from the model's capabilities: defaults
+   * to true if the model supports audio input, false otherwise.
+   */
+  nativeAudioInput?: boolean
+
+  /**
+   * When true, audio output from the model is pushed directly to the
+   * output queue instead of running text through TTS. Use this for models
+   * that produce native audio output (e.g. GPT Audio). The model's audio
+   * is emitted as PCM data on the output queue.
+   *
+   * When undefined, auto-detected from the model's capabilities: defaults
+   * to true if the model supports audio output, false otherwise.
+   */
+  nativeAudioOutput?: boolean
 }
 
 export interface VoiceSession {
@@ -361,6 +382,25 @@ export async function createVoiceSession(client: OpencodeClient, options?: Voice
   const agent = options?.agent ?? "voice-build"
   const minLen = options?.minSentenceLength ?? DEFAULT_MIN_SENTENCE_LENGTH
   const speakStatus = options?.toolStatus ?? false
+
+  // Auto-detect native audio capabilities from the model if not explicitly set
+  let sendAudio = options?.nativeAudioInput ?? false
+  let receiveAudio = options?.nativeAudioOutput ?? false
+  if (options?.model && (options.nativeAudioInput === undefined || options.nativeAudioOutput === undefined)) {
+    try {
+      const res = await client.provider.list()
+      if (res.data) {
+        const provider = res.data.all.find((p) => p.id === options.model!.providerID)
+        const model = provider?.models[options.model!.modelID]
+        if (model?.modalities) {
+          if (options.nativeAudioInput === undefined) sendAudio = model.modalities.input.includes("audio")
+          if (options.nativeAudioOutput === undefined) receiveAudio = model.modalities.output.includes("audio")
+        }
+      }
+    } catch {
+      // Provider lookup failed — fall back to defaults (STT/TTS)
+    }
+  }
 
   // Resolve permission mode:
   //  "dangerous" → wildcard allow-all ruleset
@@ -451,6 +491,7 @@ export async function createVoiceSession(client: OpencodeClient, options?: Voice
         if (aborted) break
         const evt = event as Event
         if (evt.type === "message.part.delta") {
+          if (receiveAudio) continue // skip text→TTS when model produces native audio
           if (evt.properties.sessionID !== sessionID) continue
           if (evt.properties.field !== "text") continue
           if (!active) active = evt.properties.messageID
@@ -459,7 +500,7 @@ export async function createVoiceSession(client: OpencodeClient, options?: Voice
         } else if (evt.type === "session.status") {
           if (evt.properties.sessionID !== sessionID) continue
           if (evt.properties.status.type === "idle") {
-            await flushBuffer(generation)
+            if (!receiveAudio) await flushBuffer(generation)
             active = ""
           }
         } else if (evt.type === "permission.asked" && !isDangerous) {
@@ -468,6 +509,25 @@ export async function createVoiceSession(client: OpencodeClient, options?: Voice
             requestID: evt.properties.id,
             reply: "reject",
           })
+        } else if (evt.type === "message.part.updated" && receiveAudio) {
+          if (evt.properties.sessionID !== sessionID) continue
+          const part = evt.properties.part
+          if (part.type === "file" && part.mime.startsWith("audio/")) {
+            // Model produced native audio — push PCM directly to output queue
+            const b64 = part.url.split(",")[1]
+            if (b64) {
+              const pcm =
+                typeof Buffer !== "undefined"
+                  ? new Uint8Array(Buffer.from(b64, "base64"))
+                  : (() => {
+                      const s = atob(b64)
+                      const a = new Uint8Array(s.length)
+                      for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i)
+                      return a
+                    })()
+              output.push(pcm)
+            }
+          }
         } else if (evt.type === "message.part.updated" && speakStatus) {
           if (evt.properties.sessionID !== sessionID) continue
           const part = evt.properties.part
@@ -495,21 +555,43 @@ export async function createVoiceSession(client: OpencodeClient, options?: Voice
       if (aborted) break
       const expected = generation
       try {
-        const text = await stt(audio, {
-          model: options?.stt?.model,
-          apiKey: options?.stt?.apiKey,
-          baseUrl: options?.stt?.baseUrl,
-          format: options?.stt?.format,
-          signal: ctrl.signal,
-        })
-        if (!text.trim() || generation !== expected) continue
+        const parts: Array<
+          { type: "text"; text: string } | { type: "file"; mime: string; url: string; filename?: string }
+        > = []
+        if (sendAudio) {
+          const b64 =
+            typeof Buffer !== "undefined"
+              ? Buffer.from(audio).toString("base64")
+              : (() => {
+                  let s = ""
+                  for (let i = 0; i < audio.length; i++) s += String.fromCharCode(audio[i])
+                  return btoa(s)
+                })()
+          parts.push({
+            type: "file",
+            mime: "audio/wav",
+            url: `data:audio/wav;base64,${b64}`,
+            filename: "recording.wav",
+          })
+          parts.push({ type: "text", text: "[voice audio input]" })
+        } else {
+          const text = await stt(audio, {
+            model: options?.stt?.model,
+            apiKey: options?.stt?.apiKey,
+            baseUrl: options?.stt?.baseUrl,
+            format: options?.stt?.format,
+            signal: ctrl.signal,
+          })
+          if (!text.trim() || generation !== expected) continue
+          parts.push({ type: "text", text })
+        }
         // Reset output state for new prompt
         buffer = ""
         active = ""
         await client.session.prompt({
           sessionID,
           agent,
-          parts: [{ type: "text", text }],
+          parts,
           ...(options?.model ? { model: options.model } : {}),
           ...(options?.system ? { system: options.system } : {}),
           ...(options?.tools ? { tools: options.tools } : {}),
