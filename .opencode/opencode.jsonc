@@ -6,8 +6,6 @@
     },
   },
   "agent": {
-    "voice-build": {},
-    "voice-plan": {},
     "docs": {
       "hidden": true,
     },

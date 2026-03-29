@@ -163,7 +163,7 @@ export function Prompt(props: PromptProps) {
         submitting = false
       })
     },
-    audioInput: () => !!local.model.parsed().audioInput,
+    audioInput: () => !!local.system.info().hasAudioInput,
     async onAudio(audio) {
       if (store.mode !== "voice") return
       const selected = local.model.current()
@@ -182,7 +182,7 @@ export function Prompt(props: PromptProps) {
           sessionID,
           ...selected,
           messageID: MessageID.ascending(),
-          agent: local.agent.current().name,
+          agent: local.agent.resolved(),
           model: selected,
           variant: local.model.variant.current(),
           parts: [
@@ -260,11 +260,20 @@ export function Prompt(props: PromptProps) {
 
       syncedSessionID = sessionID
 
-      // Only set agent if it's a primary agent (not a subagent)
-      const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
-      if (msg.agent && isPrimaryAgent) {
-        local.agent.set(msg.agent)
-        if (msg.model) local.model.set(msg.model)
+      // Try to restore agent and system from the last user message
+      if (msg.agent) {
+        // Find a system matching the message's model AND variant
+        if (msg.model) {
+          const modelKey = `${msg.model.providerID}/${msg.model.modelID}`
+          const candidates = local.system.list().filter((s) => s.model === modelKey)
+          // Prefer exact model+variant match, fall back to model-only match
+          const match = candidates.find((s) => s.variant === msg.variant) ?? candidates[0]
+          if (match) local.system.set(match.key)
+        }
+        // Set agent (strip voice- prefix for user-facing agent)
+        const base = msg.agent.replace(/^voice-/, "")
+        const isPrimaryAgent = local.agent.list().some((x) => x.name === base || x.name === msg.agent)
+        if (isPrimaryAgent) local.agent.set(base)
         if (msg.variant) local.model.variant.set(msg.variant)
       }
     }
@@ -722,7 +731,7 @@ export function Prompt(props: PromptProps) {
     if (store.mode === "shell") {
       sdk.client.session.shell({
         sessionID,
-        agent: local.agent.current().name,
+        agent: local.agent.resolved(),
         model: {
           providerID: selectedModel.providerID,
           modelID: selectedModel.modelID,
@@ -749,7 +758,7 @@ export function Prompt(props: PromptProps) {
         sessionID,
         command: command.slice(1),
         arguments: args,
-        agent: local.agent.current().name,
+        agent: local.agent.resolved(),
         model: `${selectedModel.providerID}/${selectedModel.modelID}`,
         messageID,
         variant,
@@ -766,7 +775,7 @@ export function Prompt(props: PromptProps) {
           sessionID,
           ...selectedModel,
           messageID,
-          agent: local.agent.current().name,
+          agent: local.agent.resolved(),
           model: selectedModel,
           variant,
           parts: [
@@ -896,6 +905,22 @@ export function Prompt(props: PromptProps) {
     if (variants.length === 0) return false
     const current = local.model.variant.current()
     return !!current
+  })
+
+  const systemLabel = createMemo(() => {
+    const cur = local.system.current()
+    if (cur?.label) return cur.label
+    return local.model.parsed().model
+  })
+
+  const systemProviders = createMemo(() => {
+    const info = local.system.info()
+    const parts: string[] = []
+    if (info.provider) parts.push(info.provider.name)
+    if (info.transcription && !info.hasAudioInput) parts.push("OpenAI STT")
+    if (info.hasTts && !info.hasAudioOutput) parts.push("OpenAI TTS")
+    if (!parts.length) return ""
+    return `(${parts.join(", ")})`
   })
 
   const placeholderText = createMemo(() => {
@@ -1223,15 +1248,12 @@ export function Prompt(props: PromptProps) {
               <Show when={store.mode !== "shell"}>
                 <box flexDirection="row" gap={1}>
                   <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
-                    {local.model.parsed().model}
+                    {systemLabel()}
                   </text>
-                  <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
                   <Show when={showVariant()}>
-                    <text fg={theme.textMuted}>·</text>
-                    <text>
-                      <span style={{ fg: theme.warning, bold: true }}>{local.model.variant.current()}</span>
-                    </text>
+                    <text fg={theme.error}>{local.model.variant.current()}</text>
                   </Show>
+                  <text fg={theme.textMuted}>{systemProviders()}</text>
                 </box>
               </Show>
             </box>
@@ -1356,6 +1378,11 @@ export function Prompt(props: PromptProps) {
                   <text fg={theme.text}>
                     {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>agents</span>
                   </text>
+                  <Show when={local.system.list().length > 1}>
+                    <text fg={theme.text}>
+                      {keybind.print("system_cycle")} <span style={{ fg: theme.textMuted }}>systems</span>
+                    </text>
+                  </Show>
                   <text fg={theme.text}>
                     {keybind.print("command_list")} <span style={{ fg: theme.textMuted }}>commands</span>
                   </text>

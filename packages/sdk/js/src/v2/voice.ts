@@ -274,7 +274,102 @@ async function streamToQueue(
 
 export type PermissionMode = "safe" | "dangerous"
 
+/**
+ * A voice system groups a model with optional STT and TTS configuration.
+ * Mirrors the TUI config `system` structure with a single agent instead of
+ * an agents array.
+ */
+export interface VoiceSystem {
+  /** Main LLM model in provider/model format (e.g. "anthropic/claude-opus-4-6"). */
+  model: string
+  /** Model variant / reasoning effort (e.g. "medium", "high", "max"). */
+  variant?: string
+  /** STT model for voice input transcription (e.g. "gpt-4o-mini-transcribe"). */
+  transcription?: string
+  /** TTS configuration for voice output. */
+  tts?: {
+    model?: string
+    voice?: string
+    speed?: number
+  }
+  /** Agent name. Defaults to "voice-build". */
+  agent?: string
+  /** OpenAI API key for STT/TTS requests. Falls back to OPENAI_API_KEY env var. */
+  apiKey?: string
+  /** OpenAI base URL for STT/TTS requests. Falls back to OPENAI_BASE_URL env var. */
+  baseUrl?: string
+}
+
+const TTS_DEFAULT = { model: "gpt-4o-mini-tts", voice: "echo", speed: 1.25 }
+const STT_DEFAULT = "gpt-4o-mini-transcribe"
+
+/**
+ * Built-in voice systems. Each is a ready-to-use system with TTS and
+ * transcription configured. Pass the key as a string to
+ * `createVoiceSession({ system: "claude-opus-medium-voice" })`.
+ */
+export const voiceSystems = {
+  "claude-opus-medium-voice": {
+    model: "anthropic/claude-opus-4-6",
+    variant: "medium",
+    transcription: STT_DEFAULT,
+    tts: TTS_DEFAULT,
+  },
+  "claude-opus-high-voice": {
+    model: "anthropic/claude-opus-4-6",
+    variant: "high",
+    transcription: STT_DEFAULT,
+    tts: TTS_DEFAULT,
+  },
+  "claude-opus-max-voice": {
+    model: "anthropic/claude-opus-4-6",
+    variant: "max",
+    transcription: STT_DEFAULT,
+    tts: TTS_DEFAULT,
+  },
+  "gpt-medium-voice": {
+    model: "openai/gpt-5.4",
+    variant: "medium",
+    transcription: STT_DEFAULT,
+    tts: TTS_DEFAULT,
+  },
+  "gpt-high-voice": {
+    model: "openai/gpt-5.4",
+    variant: "high",
+    transcription: STT_DEFAULT,
+    tts: TTS_DEFAULT,
+  },
+  "gpt-xhigh-voice": {
+    model: "openai/gpt-5.4",
+    variant: "xhigh",
+    transcription: STT_DEFAULT,
+    tts: TTS_DEFAULT,
+  },
+  "gpt-audio-voice": {
+    model: "openai/gpt-audio",
+  },
+  "gemini-flash-voice": {
+    model: "openrouter/google/gemini-3.1-flash-lite-preview",
+    transcription: STT_DEFAULT,
+    tts: TTS_DEFAULT,
+  },
+  "gemini-pro-voice": {
+    model: "openrouter/google/gemini-3.1-pro-preview-customtools",
+    transcription: STT_DEFAULT,
+    tts: TTS_DEFAULT,
+  },
+} as const satisfies Record<string, VoiceSystem>
+
+/** Name of a built-in voice system. */
+export type VoiceSystemName = keyof typeof voiceSystems
+
 export interface VoiceSessionOptions {
+  /**
+   * The voice system to use. Pass a built-in system name (e.g.
+   * `"claude-opus-medium-voice"`) or a custom `VoiceSystem` object.
+   */
+  system: VoiceSystemName | VoiceSystem
+
   // ---- Session creation ----
 
   /** Existing session ID to reuse. If omitted, a new session is created. */
@@ -293,14 +388,10 @@ export interface VoiceSessionOptions {
    */
   permission?: PermissionMode | PermissionRuleset
 
-  // ---- Prompt / agent ----
+  // ---- Prompt overrides ----
 
-  /** Agent name. Defaults to "voice-build". */
-  agent?: string
-  /** LLM model override as { providerID, modelID }. */
-  model?: { providerID: string; modelID: string }
   /** Custom system prompt appended to the agent's default system prompt. */
-  system?: string
+  prompt?: string
   /**
    * Tool enable/disable map. Keys are tool names, values are booleans.
    * `true` enables, `false` disables. Unspecified tools use agent defaults.
@@ -308,20 +399,13 @@ export interface VoiceSessionOptions {
   tools?: { [key: string]: boolean }
   /** Output format override (text or JSON schema). */
   format?: OutputFormat
-  /** Prompt variant identifier. */
-  variant?: string
   /**
    * When true the assistant will not reply — useful for injecting context
    * messages without triggering a response.
    */
   noReply?: boolean
 
-  // ---- Audio ----
-
-  /** TTS options (model, voice, speed, apiKey, baseUrl). */
-  tts?: Omit<TtsOptions, "signal">
-  /** STT options (model, apiKey, baseUrl, format for raw PCM input). */
-  stt?: Omit<SttOptions, "signal">
+  // ---- Audio behavior ----
 
   /**
    * Minimum character count before a sentence is emitted for TTS.
@@ -377,24 +461,43 @@ export interface VoiceSession {
   done: Promise<void>
 }
 
-export async function createVoiceSession(client: OpencodeClient, options?: VoiceSessionOptions): Promise<VoiceSession> {
-  const perm = options?.permission ?? "safe"
-  const agent = options?.agent ?? "voice-build"
-  const minLen = options?.minSentenceLength ?? DEFAULT_MIN_SENTENCE_LENGTH
-  const speakStatus = options?.toolStatus ?? false
+function parseModel(id: string) {
+  const [providerID, ...rest] = id.split("/")
+  return { providerID, modelID: rest.join("/") }
+}
+
+export async function createVoiceSession(client: OpencodeClient, options: VoiceSessionOptions): Promise<VoiceSession> {
+  const sys: VoiceSystem = typeof options.system === "string" ? voiceSystems[options.system] : options.system
+  const perm = options.permission ?? "safe"
+  const minLen = options.minSentenceLength ?? DEFAULT_MIN_SENTENCE_LENGTH
+  const speakStatus = options.toolStatus ?? false
+
+  // Resolve system fields
+  const model = parseModel(sys.model)
+  const agent = sys.agent ?? "voice-build"
+  const ttsOpts = sys.tts
+    ? { ...sys.tts, apiKey: sys.apiKey, baseUrl: sys.baseUrl }
+    : sys.apiKey || sys.baseUrl
+      ? { apiKey: sys.apiKey, baseUrl: sys.baseUrl }
+      : undefined
+  const sttOpts: Omit<SttOptions, "signal"> | undefined =
+    sys.transcription || sys.apiKey || sys.baseUrl
+      ? { model: sys.transcription, apiKey: sys.apiKey, baseUrl: sys.baseUrl }
+      : undefined
+  const variant = sys.variant
 
   // Auto-detect native audio capabilities from the model if not explicitly set
-  let sendAudio = options?.nativeAudioInput ?? false
-  let receiveAudio = options?.nativeAudioOutput ?? false
-  if (options?.model && (options.nativeAudioInput === undefined || options.nativeAudioOutput === undefined)) {
+  let sendAudio = options.nativeAudioInput ?? false
+  let receiveAudio = options.nativeAudioOutput ?? false
+  if (options.nativeAudioInput === undefined || options.nativeAudioOutput === undefined) {
     try {
       const res = await client.provider.list()
       if (res.data) {
-        const provider = res.data.all.find((p) => p.id === options.model!.providerID)
-        const model = provider?.models[options.model!.modelID]
-        if (model?.modalities) {
-          if (options.nativeAudioInput === undefined) sendAudio = model.modalities.input.includes("audio")
-          if (options.nativeAudioOutput === undefined) receiveAudio = model.modalities.output.includes("audio")
+        const provider = res.data.all.find((p) => p.id === model.providerID)
+        const info = provider?.models[model.modelID]
+        if (info?.modalities) {
+          if (options.nativeAudioInput === undefined) sendAudio = info.modalities.input.includes("audio")
+          if (options.nativeAudioOutput === undefined) receiveAudio = info.modalities.output.includes("audio")
         }
       }
     } catch {
@@ -446,11 +549,11 @@ export async function createVoiceSession(client: OpencodeClient, options?: Voice
   async function speakText(text: string, expected: number) {
     try {
       const stream = await tts(text, {
-        model: options?.tts?.model,
-        voice: options?.tts?.voice,
-        speed: options?.tts?.speed,
-        apiKey: options?.tts?.apiKey,
-        baseUrl: options?.tts?.baseUrl,
+        model: ttsOpts?.model,
+        voice: ttsOpts?.voice,
+        speed: ttsOpts?.speed,
+        apiKey: ttsOpts?.apiKey,
+        baseUrl: ttsOpts?.baseUrl,
         signal: ctrl.signal,
       })
       if (generation !== expected) return
@@ -576,10 +679,10 @@ export async function createVoiceSession(client: OpencodeClient, options?: Voice
           parts.push({ type: "text", text: "[voice audio input]" })
         } else {
           const text = await stt(audio, {
-            model: options?.stt?.model,
-            apiKey: options?.stt?.apiKey,
-            baseUrl: options?.stt?.baseUrl,
-            format: options?.stt?.format,
+            model: sttOpts?.model,
+            apiKey: sttOpts?.apiKey,
+            baseUrl: sttOpts?.baseUrl,
+            format: sttOpts?.format,
             signal: ctrl.signal,
           })
           if (!text.trim() || generation !== expected) continue
@@ -592,12 +695,12 @@ export async function createVoiceSession(client: OpencodeClient, options?: Voice
           sessionID,
           agent,
           parts,
-          ...(options?.model ? { model: options.model } : {}),
-          ...(options?.system ? { system: options.system } : {}),
-          ...(options?.tools ? { tools: options.tools } : {}),
-          ...(options?.format ? { format: options.format } : {}),
-          ...(options?.variant ? { variant: options.variant } : {}),
-          ...(options?.noReply !== undefined ? { noReply: options.noReply } : {}),
+          model,
+          ...(options.prompt ? { system: options.prompt } : {}),
+          ...(options.tools ? { tools: options.tools } : {}),
+          ...(options.format ? { format: options.format } : {}),
+          ...(variant ? { variant } : {}),
+          ...(options.noReply !== undefined ? { noReply: options.noReply } : {}),
         })
       } catch {
         // STT or prompt error — skip this input

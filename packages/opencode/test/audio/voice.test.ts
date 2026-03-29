@@ -7,7 +7,10 @@ import {
   tts,
   pcmToWav,
   createVoiceSession,
+  voiceSystems,
   type VoiceSession,
+  type VoiceSystem,
+  type VoiceSystemName,
   type TtsOptions,
   type SttOptions,
   type PcmFormat,
@@ -720,8 +723,7 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     expect(session.sessionID).toBe("ses_test123")
@@ -740,9 +742,8 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
       sessionID: "ses_existing",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     expect(session.sessionID).toBe("ses_existing")
@@ -757,9 +758,8 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
       permission: "dangerous",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     expect(calls.create[0].permission).toEqual([{ permission: "*", pattern: "*", action: "allow" }])
@@ -773,9 +773,8 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
       permission: "safe",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     expect(calls.create[0].permission).toBeUndefined()
@@ -789,8 +788,7 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1, 2, 3]))
@@ -805,6 +803,7 @@ describe("createVoiceSession", () => {
     expect(calls.prompt[0].parts[0].type).toBe("text")
     expect(calls.prompt[0].parts[0].text).toBe("transcribed text")
     expect(calls.prompt[0].agent).toBe("voice-build")
+    expect(calls.prompt[0].model).toEqual({ providerID: "test", modelID: "model" })
 
     session.close()
     sse.end()
@@ -815,9 +814,7 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
-      agent: "voice-plan",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", agent: "voice-plan", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -836,8 +833,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_delta",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     // Push enough text as deltas to trigger sentence splitting (>= 40 chars)
@@ -870,8 +866,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_flush",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     // Push short text that won't trigger sentence splitting
@@ -926,8 +921,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_mine",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -969,8 +963,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_field",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -1000,8 +993,7 @@ describe("createVoiceSession", () => {
     const session = await createVoiceSession(client, {
       sessionID: "ses_perm",
       permission: "safe",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -1033,8 +1025,7 @@ describe("createVoiceSession", () => {
     const session = await createVoiceSession(client, {
       sessionID: "ses_perm2",
       permission: "safe",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -1064,8 +1055,7 @@ describe("createVoiceSession", () => {
     const session = await createVoiceSession(client, {
       sessionID: "ses_danger",
       permission: "dangerous",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -1097,8 +1087,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_done",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     expect(session.done).toBeInstanceOf(Promise)
@@ -1118,8 +1107,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_close",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.close()
@@ -1135,8 +1123,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_abort",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.abort()
@@ -1155,9 +1142,7 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
-      model: { providerID: "anthropic", modelID: "claude-3" },
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "anthropic/claude-3", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1187,8 +1172,7 @@ describe("createVoiceSession", () => {
     }) as any
 
     const session = await createVoiceSession(client, {
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1223,8 +1207,7 @@ describe("createVoiceSession", () => {
     }) as any
 
     const session = await createVoiceSession(client, {
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     // First input will fail STT
@@ -1267,8 +1250,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_tts_err",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     // First sentence will fail TTS
@@ -1321,8 +1303,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       tools: { bash: true, edit: false, read: true },
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1340,9 +1321,8 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
-      system: "You are a helpful coding assistant. Always respond concisely.",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+      prompt: "You are a helpful coding assistant. Always respond concisely.",
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1362,8 +1342,7 @@ describe("createVoiceSession", () => {
     const format = { type: "text" as const }
     const session = await createVoiceSession(client, {
       format,
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1381,9 +1360,7 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
-      variant: "concise",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", variant: "concise", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1402,8 +1379,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       noReply: true,
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1422,8 +1398,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       noReply: false,
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1443,8 +1418,7 @@ describe("createVoiceSession", () => {
     const session = await createVoiceSession(client, {
       title: "My voice session",
       parentID: "ses_parent",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     expect(calls.create[0].title).toBe("My voice session")
@@ -1466,8 +1440,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       permission: rules,
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     expect(calls.create[0].permission).toEqual(rules)
@@ -1483,8 +1456,7 @@ describe("createVoiceSession", () => {
     const session = await createVoiceSession(client, {
       sessionID: "ses_custom_perm",
       permission: [{ permission: "bash", pattern: "*", action: "allow" as const }],
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -1514,15 +1486,17 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
-      agent: "voice-plan",
-      model: { providerID: "openai", modelID: "gpt-4o" },
-      system: "Be concise",
+      system: {
+        model: "openai/gpt-4o",
+        agent: "voice-plan",
+        variant: "short",
+        apiKey: "key",
+        baseUrl: "https://test.com/v1",
+      },
+      prompt: "Be concise",
       tools: { bash: false, read: true },
       format: { type: "text" },
-      variant: "short",
       noReply: false,
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1570,8 +1544,7 @@ describe("createVoiceSession", () => {
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_stream",
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -1629,8 +1602,7 @@ describe("createVoiceSession", () => {
     const session = await createVoiceSession(client, {
       sessionID: "ses_minlen",
       minSentenceLength: 1,
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     // "Got it. " is only 7 chars — would be buffered with default 40,
@@ -1675,8 +1647,7 @@ describe("createVoiceSession", () => {
     const session = await createVoiceSession(client, {
       sessionID: "ses_tool",
       toolStatus: true,
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     // Simulate tool running
@@ -1758,8 +1729,7 @@ describe("createVoiceSession", () => {
     const session = await createVoiceSession(client, {
       sessionID: "ses_notool",
       toolStatus: false,
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -1812,8 +1782,7 @@ describe("createVoiceSession", () => {
     const session = await createVoiceSession(client, {
       sessionID: "ses_toolerr",
       toolStatus: true,
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -1846,7 +1815,7 @@ describe("createVoiceSession", () => {
     sse.end()
   })
 
-  test("stt format option is passed through in voice session", async () => {
+  test("stt audio is sent as-is in voice session", async () => {
     const sse = createMockEventStream()
     const { client } = createMockClient(sse)
 
@@ -1866,21 +1835,16 @@ describe("createVoiceSession", () => {
     }) as any
 
     const session = await createVoiceSession(client, {
-      stt: {
-        apiKey: "key",
-        baseUrl: "https://test.com/v1",
-        format: { sampleRate: 16000, channels: 1, bitDepth: 16 },
-      },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
-    // Push 4 bytes of raw PCM
+    // Push 4 bytes of audio
     session.input.push(new Uint8Array([0, 1, 2, 3]))
     session.input.close()
     await new Promise((r) => setTimeout(r, 200))
 
-    // Should be 44 (WAV header) + 4 (PCM data)
-    expect(blobSize).toBe(48)
+    // Audio is sent as-is (no PCM format conversion without format option)
+    expect(blobSize).toBe(4)
 
     session.close()
     sse.end()
@@ -1904,9 +1868,8 @@ describe("createVoiceSession", () => {
     }) as any
 
     const session = await createVoiceSession(client, {
+      system: { model: "test/model", tts: { speed: 2.0 }, apiKey: "key", baseUrl: "https://test.com/v1" },
       sessionID: "ses_speed",
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1", speed: 2.0 },
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
@@ -1946,8 +1909,7 @@ describe("createVoiceSession", () => {
     const { client, calls } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -1983,8 +1945,7 @@ describe("createVoiceSession", () => {
     }) as any
 
     const session = await createVoiceSession(client, {
-      stt: { apiKey: "key", baseUrl: "https://test.com/v1" },
-      tts: { apiKey: "key", baseUrl: "https://test.com/v1" },
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     session.input.push(new Uint8Array([1]))
@@ -2000,6 +1961,329 @@ describe("createVoiceSession", () => {
 
     session.close()
     sse.end()
+  })
+
+  test("built-in system name resolves to correct config", async () => {
+    const sse = createMockEventStream()
+    const { client, calls } = createMockClient(sse)
+
+    // Use a custom system mirroring claude-opus-medium-voice but with test credentials
+    const session = await createVoiceSession(client, {
+      system: {
+        ...voiceSystems["claude-opus-medium-voice"],
+        apiKey: "key",
+        baseUrl: "https://test.com/v1",
+      },
+    })
+
+    session.input.push(new Uint8Array([1]))
+    session.input.close()
+    await new Promise((r) => setTimeout(r, 100))
+
+    expect(calls.prompt[0].model).toEqual({ providerID: "anthropic", modelID: "claude-opus-4-6" })
+    expect(calls.prompt[0].variant).toBe("medium")
+    expect(calls.prompt[0].agent).toBe("voice-build")
+
+    session.close()
+    sse.end()
+  })
+
+  test("built-in system with variant passes variant to prompt", async () => {
+    const sse = createMockEventStream()
+    const { client, calls } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      system: {
+        ...voiceSystems["gpt-xhigh-voice"],
+        apiKey: "key",
+        baseUrl: "https://test.com/v1",
+      },
+    })
+
+    session.input.push(new Uint8Array([1]))
+    session.input.close()
+    await new Promise((r) => setTimeout(r, 100))
+
+    expect(calls.prompt[0].model).toEqual({ providerID: "openai", modelID: "gpt-5.4" })
+    expect(calls.prompt[0].variant).toBe("xhigh")
+
+    session.close()
+    sse.end()
+  })
+
+  test("system without TTS still resolves STT and model", async () => {
+    const sse = createMockEventStream()
+    const { client, calls } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      system: {
+        model: "provider/model-no-tts",
+        transcription: "whisper-1",
+        apiKey: "key",
+        baseUrl: "https://test.com/v1",
+      },
+    })
+
+    session.input.push(new Uint8Array([1]))
+    session.input.close()
+    await new Promise((r) => setTimeout(r, 100))
+
+    expect(calls.prompt[0].model).toEqual({ providerID: "provider", modelID: "model-no-tts" })
+
+    session.close()
+    sse.end()
+  })
+
+  test("system TTS config is passed to speech endpoint", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    let captured: { body: any } | undefined
+    globalThis.fetch = (async (input: any, init: any) => {
+      const req = input instanceof Request ? input : new Request(input, init)
+      if (req.url.includes("/audio/speech")) {
+        captured = { body: await req.json() }
+        return new Response(new Uint8Array([0xaa]), { status: 200 })
+      }
+      return new Response(JSON.stringify({ text: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }) as any
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_tts_cfg",
+      system: {
+        model: "test/model",
+        tts: { model: "custom-tts", voice: "nova", speed: 1.5 },
+        apiKey: "key",
+        baseUrl: "https://test.com/v1",
+      },
+    })
+
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_tts_cfg",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "This is a sentence that is long enough to trigger text to speech. ",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    expect(captured).toBeDefined()
+    expect(captured!.body.model).toBe("custom-tts")
+    expect(captured!.body.voice).toBe("nova")
+    expect(captured!.body.speed).toBe(1.5)
+
+    session.close()
+    sse.end()
+  })
+
+  test("system STT model is passed to transcription endpoint", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    let sttModel: string | undefined
+    globalThis.fetch = (async (input: any, init: any) => {
+      const req = input instanceof Request ? input : new Request(input, init)
+      if (req.url.includes("/audio/transcriptions")) {
+        const fd = await req.formData()
+        sttModel = fd.get("model") as string
+        return new Response(JSON.stringify({ text: "hello" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      return new Response(new Uint8Array([0]), { status: 200 })
+    }) as any
+
+    const session = await createVoiceSession(client, {
+      system: {
+        model: "test/model",
+        transcription: "custom-stt-model",
+        apiKey: "key",
+        baseUrl: "https://test.com/v1",
+      },
+    })
+
+    session.input.push(new Uint8Array([1]))
+    session.input.close()
+    await new Promise((r) => setTimeout(r, 100))
+
+    expect(sttModel).toBe("custom-stt-model")
+
+    session.close()
+    sse.end()
+  })
+
+  test("system without apiKey/baseUrl does not configure STT opts when no transcription", async () => {
+    const sse = createMockEventStream()
+    const { client, calls } = createMockClient(sse)
+
+    // System with no transcription, no apiKey, no baseUrl — STT won't work but should not crash
+    const session = await createVoiceSession(client, {
+      system: { model: "test/model" },
+    })
+
+    expect(session.sessionID).toBe("ses_test123")
+
+    session.close()
+    sse.end()
+  })
+
+  test("system apiKey and baseUrl are used for both STT and TTS", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const urls: string[] = []
+    const keys: string[] = []
+    globalThis.fetch = (async (input: any, init: any) => {
+      const req = input instanceof Request ? input : new Request(input, init)
+      urls.push(req.url)
+      keys.push(req.headers.get("Authorization") ?? "")
+      if (req.url.includes("/audio/transcriptions")) {
+        return new Response(JSON.stringify({ text: "hello" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      if (req.url.includes("/audio/speech")) {
+        return new Response(new Uint8Array([0xaa]), { status: 200 })
+      }
+      return new Response("not found", { status: 404 })
+    }) as any
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_keys",
+      system: {
+        model: "test/model",
+        transcription: "stt-model",
+        tts: { model: "tts-model" },
+        apiKey: "my-api-key",
+        baseUrl: "https://custom.api.com/v1",
+      },
+    })
+
+    // Trigger STT
+    session.input.push(new Uint8Array([1]))
+    session.input.close()
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Trigger TTS
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_keys",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "This is a sentence that is long enough to trigger text to speech. ",
+      },
+    })
+    await new Promise((r) => setTimeout(r, 200))
+
+    // Both STT and TTS should use the custom base URL and API key
+    expect(urls.some((u) => u.startsWith("https://custom.api.com/v1/audio/transcriptions"))).toBe(true)
+    expect(urls.some((u) => u.startsWith("https://custom.api.com/v1/audio/speech"))).toBe(true)
+    expect(keys.every((k) => k === "Bearer my-api-key")).toBe(true)
+
+    session.close()
+    sse.end()
+  })
+
+  test("model with slashes in modelID is parsed correctly", async () => {
+    const sse = createMockEventStream()
+    const { client, calls } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      system: {
+        model: "openrouter/google/gemini-3.1-flash-lite-preview",
+        apiKey: "key",
+        baseUrl: "https://test.com/v1",
+      },
+    })
+
+    session.input.push(new Uint8Array([1]))
+    session.input.close()
+    await new Promise((r) => setTimeout(r, 100))
+
+    expect(calls.prompt[0].model).toEqual({
+      providerID: "openrouter",
+      modelID: "google/gemini-3.1-flash-lite-preview",
+    })
+
+    session.close()
+    sse.end()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// voiceSystems — built-in system presets
+// ---------------------------------------------------------------------------
+
+describe("voiceSystems", () => {
+  test("all built-in systems have valid model format", () => {
+    for (const [name, sys] of Object.entries(voiceSystems)) {
+      expect(sys.model).toContain("/")
+      const [provider, ...rest] = sys.model.split("/")
+      expect(provider.length).toBeGreaterThan(0)
+      expect(rest.join("/").length).toBeGreaterThan(0)
+    }
+  })
+
+  test("all systems with TTS have model and voice fields", () => {
+    for (const [name, sys] of Object.entries(voiceSystems)) {
+      const s = sys as VoiceSystem
+      if (s.tts) {
+        expect(s.tts.model).toBeDefined()
+        expect(s.tts.voice).toBeDefined()
+      }
+    }
+  })
+
+  test("gpt-audio-voice has no TTS or transcription (native audio)", () => {
+    const sys = voiceSystems["gpt-audio-voice"] as VoiceSystem
+    expect(sys.tts).toBeUndefined()
+    expect(sys.transcription).toBeUndefined()
+  })
+
+  test("claude systems have transcription configured", () => {
+    expect(voiceSystems["claude-opus-medium-voice"].transcription).toBe("gpt-4o-mini-transcribe")
+    expect(voiceSystems["claude-opus-high-voice"].transcription).toBe("gpt-4o-mini-transcribe")
+    expect(voiceSystems["claude-opus-max-voice"].transcription).toBe("gpt-4o-mini-transcribe")
+  })
+
+  test("VoiceSystemName type covers all keys", () => {
+    const names: VoiceSystemName[] = [
+      "claude-opus-medium-voice",
+      "claude-opus-high-voice",
+      "claude-opus-max-voice",
+      "gpt-medium-voice",
+      "gpt-high-voice",
+      "gpt-xhigh-voice",
+      "gpt-audio-voice",
+      "gemini-flash-voice",
+      "gemini-pro-voice",
+    ]
+    expect(names.length).toBe(Object.keys(voiceSystems).length)
+  })
+
+  test("VoiceSystem type is usable for custom systems", () => {
+    const custom: VoiceSystem = {
+      model: "custom/my-model",
+      variant: "fast",
+      transcription: "whisper-1",
+      tts: { model: "tts-1", voice: "alloy", speed: 1.0 },
+      agent: "voice-plan",
+      apiKey: "key",
+      baseUrl: "https://custom.com/v1",
+    }
+    expect(custom.model).toBe("custom/my-model")
+    expect(custom.agent).toBe("voice-plan")
   })
 })
 

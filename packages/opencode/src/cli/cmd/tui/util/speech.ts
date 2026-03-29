@@ -1,6 +1,7 @@
 import { createSignal, onCleanup } from "solid-js"
 import { useSDK } from "@tui/context/sdk"
 import { useSync } from "@tui/context/sync"
+import { useLocal } from "@tui/context/local"
 import { SpeechQueue } from "@/audio/speech-queue"
 import { StatusSpeaker } from "@/audio/status-speaker"
 import { warmup, play } from "@/audio/speak"
@@ -10,9 +11,21 @@ const VOICE_AGENTS = new Set(["voice-build", "voice-plan"])
 export function useSpeech(sessionID: () => string) {
   const sdk = useSDK()
   const sync = useSync()
+  const local = useLocal()
 
-  const ttsConfig = () => sync.data.config.experimental?.voice?.tts
-  const enabled = () => !!(sync.data.config.experimental?.voice?.enabled && ttsConfig()?.enabled)
+  const sysInfo = () => local.system.info()
+  const ttsConfig = () => {
+    // System TTS takes priority over global voice config
+    const sys = sysInfo()
+    if (sys.tts) return { ...sys.tts, enabled: true }
+    return sync.data.config.experimental?.voice?.tts
+  }
+  const enabled = () => {
+    if (!sync.data.config.experimental?.voice?.enabled) return false
+    const sys = sysInfo()
+    // Enabled if system has TTS or native audio output
+    return sys.hasTts || sys.hasAudioOutput
+  }
 
   const [speaking, setSpeaking] = createSignal(false)
 
@@ -77,7 +90,8 @@ export function useSpeech(sessionID: () => string) {
     const messages = sync.data.message[sessionID()] ?? []
     const last = messages.findLast((m) => m.role === "assistant")
     if (!last) return undefined
-    if (!VOICE_AGENTS.has(last.agent)) return undefined
+    // Accept both native voice agents and system-resolved voice agents
+    if (!VOICE_AGENTS.has(last.agent) && !sysInfo().hasVoice) return undefined
     return last
   }
 

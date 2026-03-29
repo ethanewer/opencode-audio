@@ -142,6 +142,7 @@ export namespace Agent {
               ),
               mode: "primary",
               native: true,
+              color: "success",
             },
             "voice-build": {
               name: "voice-build",
@@ -157,6 +158,7 @@ export namespace Agent {
               ),
               mode: "primary",
               native: true,
+              hidden: true,
             },
             "voice-plan": {
               name: "voice-plan",
@@ -181,6 +183,7 @@ export namespace Agent {
               ),
               mode: "primary",
               native: true,
+              hidden: true,
             },
             general: {
               name: "general",

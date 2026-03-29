@@ -74,104 +74,32 @@ sudo apt install ffmpeg sox
 
 ---
 
-### Voice
+### Use the CLI
 
-This fork adds voice capabilities to OpenCode. You can talk to the agent, and optionally have it talk back. There are three ways to use voice depending on your model and configuration.
+The TUI ships with a set of default **systems** and **agents** so you can start working immediately. A system groups a model, reasoning level, and optional voice configuration into a single preset. Two agents are available: **build** (full-access development) and **plan** (read-only analysis).
+
+| Key       | Action                                 |
+| --------- | -------------------------------------- |
+| Tab       | Cycle agents within the current system |
+| Shift+Tab | Cycle between systems                  |
+
+The status bar shows the active agent, system label, reasoning level, and providers.
 
 ---
 
-#### Transcribed input, text output
+#### Voice in the TUI
 
-Use your microphone to speak prompts that get transcribed to text via OpenAI's STT API. The agent responds with text as usual. This works with any model.
+To enable voice mode, set `experimental.voice.enabled` to `true` in your config (`~/.config/opencode/opencode.json` or `.opencode/opencode.json`):
 
-Enable voice input in your config and use a model like Claude or any other text-only model. Your speech is transcribed with `gpt-4o-mini-transcribe` before being sent to the model.
-
-```jsonc
+```json
 {
   "experimental": {
     "voice": {
-      "enabled": true,
-    },
-  },
+      "enabled": true
+    }
+  }
 }
 ```
-
----
-
-#### Transcribed input, spoken output
-
-Same as above, but the agent's text responses are also converted to speech via OpenAI's TTS API. Responses are streamed sentence-by-sentence for low latency. The agent uses a special voice-optimized system prompt that keeps output concise and conversational.
-
-```jsonc
-{
-  "experimental": {
-    "voice": {
-      "enabled": true,
-      "tts": {
-        "enabled": true,
-      },
-    },
-  },
-}
-```
-
-To get spoken responses, switch to the `voice-build` or `voice-plan` agent using **Tab**. These behave identically to the standard `build` and `plan` agents but produce output optimized for speech — short sentences, no markdown, no code fences. TTS output only activates when a voice agent is selected.
-
----
-
-#### Native audio input
-
-Some models accept audio directly without transcription. When you select a model with native audio input support (like Gemini), your recording is sent as a WAV file attachment instead of being transcribed first. This is auto-detected from the model's capabilities — no extra configuration needed.
-
-Native audio input also works with TTS output enabled. You get audio in, audio out, but the output is still synthesized from the model's text response.
-
----
-
-#### Fully native audio
-
-For models that support both audio input and audio output natively (like GPT-4o audio), the agent produces speech directly — no STT or TTS involved. The model receives your audio and responds with audio. This is auto-detected when the model advertises audio in both input and output modalities.
-
-With native audio output, the voice system prompt is skipped since the model handles speech formatting itself.
-
----
-
-### Configure voice
-
-All voice settings live under `experimental.voice` in your `opencode.json` or `opencode.jsonc`.
-
-```jsonc
-{
-  "experimental": {
-    "voice": {
-      "enabled": true,
-      "model": "gpt-4o-mini-transcribe",
-      "tts": {
-        "enabled": true,
-        "model": "gpt-4o-mini-tts",
-        "voice": "coral",
-        "speed": 1,
-        "status": true,
-      },
-    },
-  },
-}
-```
-
-| Key                 | Default                  | Description                                     |
-| ------------------- | ------------------------ | ----------------------------------------------- |
-| `voice.enabled`     | `false`                  | Enable voice input mode                         |
-| `voice.model`       | `gpt-4o-mini-transcribe` | OpenAI transcription model for STT              |
-| `voice.tts.enabled` | `false`                  | Enable text-to-speech output                    |
-| `voice.tts.model`   | `gpt-4o-mini-tts`        | OpenAI TTS model                                |
-| `voice.tts.voice`   | `coral`                  | Voice ID for TTS                                |
-| `voice.tts.speed`   | `1`                      | Playback speed multiplier (0.5–4)               |
-| `voice.tts.status`  | `true`                   | Speak tool status updates while the agent works |
-
-Voice features require an `OPENAI_API_KEY` environment variable for STT and TTS. Native audio input/output uses whatever provider the selected model belongs to.
-
----
-
-### Use voice in the TUI
 
 When voice is enabled, the prompt starts in voice mode. Press **Space** to start recording and **Space** again to stop. Your audio is transcribed (or sent natively) and submitted as a prompt.
 
@@ -183,15 +111,28 @@ When voice is enabled, the prompt starts in voice mode. Press **Space** to start
 | /      | Enter command mode                  |
 | Escape | Exit voice mode                     |
 
-You can also enter voice mode by running `/voice` in the prompt. When `voice.enabled` is `true` in your config, the prompt starts in voice mode automatically.
+You can also enter voice mode by running `/voice` in the prompt. Voice mode works for answering permission and question prompts too — speak your answer and it will be classified against the available options.
 
-Voice mode also works for answering permission and question prompts. When the agent asks for permission or poses a question, you can speak your answer and it will be classified against the available options.
+---
+
+#### Voice modes
+
+How voice behaves depends on the active system's configuration:
+
+- **Transcribed input, text output** — Your speech is transcribed via OpenAI's STT API. The agent responds with text. Works with any model that has a `transcription` field.
+- **Transcribed input, spoken output** — Same as above, plus the agent's text is converted to speech via OpenAI's TTS API. Activates when the system has a `tts` config. Responses are streamed sentence-by-sentence for low latency.
+- **Native audio input** — Some models accept audio directly. Your recording is sent as a WAV attachment instead of being transcribed. Auto-detected from the model's capabilities.
+- **Fully native audio** — Models like GPT Audio handle both audio input and output natively. No STT or TTS involved. Auto-detected when the model supports audio in both directions.
 
 ---
 
 ### Voice SDK
 
 The JavaScript SDK includes a voice module for building custom voice interfaces on top of OpenCode. Import it from `@opencode-ai/sdk/v2/voice`.
+
+#### Built-in systems
+
+The voice SDK ships with built-in systems that work out of the box — just pass a system name as a string. All you need are your API keys set as environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`).
 
 ```ts
 import { createOpencode } from "@opencode-ai/sdk/v2"
@@ -200,8 +141,8 @@ import { createVoiceSession } from "@opencode-ai/sdk/v2/voice"
 const { client, server } = await createOpencode()
 
 const session = await createVoiceSession(client, {
+  system: "claude-opus-medium-voice",
   permission: "dangerous",
-  tts: { voice: "coral" },
 })
 
 // Push recorded audio (WAV Uint8Array) to the input queue
@@ -217,26 +158,80 @@ session.close()
 await session.done
 ```
 
+Available built-in systems:
+
+| Name                       | Model                 | Variant | STT    | TTS                          |
+| -------------------------- | --------------------- | ------- | ------ | ---------------------------- |
+| `claude-opus-medium-voice` | Claude Opus 4.6       | medium  | yes    | gpt-4o-mini-tts, echo, 1.25x |
+| `claude-opus-high-voice`   | Claude Opus 4.6       | high    | yes    | gpt-4o-mini-tts, echo, 1.25x |
+| `claude-opus-max-voice`    | Claude Opus 4.6       | max     | yes    | gpt-4o-mini-tts, echo, 1.25x |
+| `gpt-medium-voice`         | GPT 5.4               | medium  | yes    | gpt-4o-mini-tts, echo, 1.25x |
+| `gpt-high-voice`           | GPT 5.4               | high    | yes    | gpt-4o-mini-tts, echo, 1.25x |
+| `gpt-xhigh-voice`          | GPT 5.4               | xhigh   | yes    | gpt-4o-mini-tts, echo, 1.25x |
+| `gpt-audio-voice`          | GPT Audio             | —       | native | native                       |
+| `gemini-flash-voice`       | Gemini 3.1 Flash Lite | —       | yes    | gpt-4o-mini-tts, echo, 1.25x |
+| `gemini-pro-voice`         | Gemini 3.1 Pro        | —       | yes    | gpt-4o-mini-tts, echo, 1.25x |
+
+You can also access the built-in systems directly via the `voiceSystems` export:
+
+```ts
+import { voiceSystems } from "@opencode-ai/sdk/v2/voice"
+
+console.log(Object.keys(voiceSystems))
+// => ["claude-opus-medium-voice", "claude-opus-high-voice", ...]
+```
+
+---
+
+#### Custom systems
+
+Pass a `VoiceSystem` object instead of a string for full control:
+
+```ts
+const session = await createVoiceSession(client, {
+  system: {
+    model: "anthropic/claude-opus-4-6",
+    variant: "medium",
+    transcription: "gpt-4o-mini-transcribe",
+    tts: { model: "gpt-4o-mini-tts", voice: "coral", speed: 1.5 },
+  },
+  permission: "dangerous",
+})
+```
+
 ---
 
 #### Session options
 
-`createVoiceSession` accepts the following options:
+`createVoiceSession` requires a `system` field and accepts the following options:
 
-| Option              | Default       | Description                                                                                     |
-| ------------------- | ------------- | ----------------------------------------------------------------------------------------------- |
-| `sessionID`         | —             | Reuse an existing session instead of creating one                                               |
-| `agent`             | `voice-build` | Agent name                                                                                      |
-| `model`             | —             | Model override as `{ providerID, modelID }`                                                     |
-| `permission`        | `safe`        | `"safe"` (auto-reject), `"dangerous"` (allow-all), or a custom ruleset                          |
-| `tts`               | —             | TTS options: `model`, `voice`, `speed`, `apiKey`, `baseUrl`                                     |
-| `stt`               | —             | STT options: `model`, `apiKey`, `baseUrl`, `format` (for raw PCM input)                         |
-| `nativeAudioInput`  | auto          | Send audio directly to the model instead of transcribing. Auto-detected from model capabilities |
-| `nativeAudioOutput` | auto          | Receive audio directly from the model instead of TTS. Auto-detected from model capabilities     |
-| `minSentenceLength` | `40`          | Minimum characters before a sentence is sent to TTS                                             |
-| `toolStatus`        | `false`       | Speak tool execution status on the output queue                                                 |
-| `system`            | —             | Custom system prompt appended to agent defaults                                                 |
-| `tools`             | —             | Tool enable/disable map                                                                         |
+| Option              | Default | Description                                                                                     |
+| ------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `system`            | —       | **Required.** Built-in system name or custom `VoiceSystem` object                               |
+| `sessionID`         | —       | Reuse an existing session instead of creating one                                               |
+| `permission`        | `safe`  | `"safe"` (auto-reject), `"dangerous"` (allow-all), or a custom ruleset                          |
+| `prompt`            | —       | Custom system prompt appended to agent defaults                                                 |
+| `tools`             | —       | Tool enable/disable map                                                                         |
+| `nativeAudioInput`  | auto    | Send audio directly to the model instead of transcribing. Auto-detected from model capabilities |
+| `nativeAudioOutput` | auto    | Receive audio directly from the model instead of TTS. Auto-detected from model capabilities     |
+| `minSentenceLength` | `40`    | Minimum characters before a sentence is sent to TTS                                             |
+| `toolStatus`        | `false` | Speak tool execution status on the output queue                                                 |
+| `format`            | —       | Output format                                                                                   |
+| `noReply`           | `false` | Don't generate a reply                                                                          |
+
+The custom `system` object has these fields:
+
+| Field           | Default       | Description                                    |
+| --------------- | ------------- | ---------------------------------------------- |
+| `model`         | —             | **Required.** Model in `provider/model` format |
+| `variant`       | —             | Reasoning effort level                         |
+| `transcription` | —             | STT model name                                 |
+| `tts`           | —             | TTS config (`model`, `voice`, `speed`)         |
+| `agent`         | `voice-build` | Agent name                                     |
+| `apiKey`        | —             | OpenAI API key for STT/TTS                     |
+| `baseUrl`       | —             | OpenAI base URL for STT/TTS                    |
+
+The original SDK (`@opencode-ai/sdk/v2`) is completely unchanged.
 
 ---
 
@@ -265,18 +260,95 @@ const clean = sanitize(markdownText)
 
 ---
 
-### Agents
+### Configuration
 
-OpenCode includes built-in agents you can switch between with the **Tab** key.
+Out of the box, the TUI ships with default systems so you can start immediately. To customize which models, reasoning levels, and voice settings are available, define your own systems.
 
-- **build** — default, full-access agent for development work
-- **plan** — read-only agent for analysis and code exploration
-- **voice-build** — same as build but output is optimized for speech
-- **voice-plan** — same as plan but output is optimized for speech
+#### Systems
 
-The voice agents produce short, conversational responses with no markdown or code fences. Switch to these when using TTS.
+A system groups a model, reasoning level, and voice configuration into a single switchable preset.
 
-A **general** subagent is also included for complex searches and multistep tasks. It is used internally and can be invoked with `@general` in messages.
+| Field           | Required | Description                                         |
+| --------------- | -------- | --------------------------------------------------- |
+| `model`         | yes      | LLM model in `provider/model` format                |
+| `label`         | no       | Display name shown in the status bar                |
+| `variant`       | no       | Reasoning effort (`medium`, `high`, `max`, `xhigh`) |
+| `transcription` | no       | STT model name for voice input                      |
+| `tts`           | no       | TTS config object (`model`, `voice`, `speed`)       |
+| `agents`        | no       | Agent list, defaults to `["build", "plan"]`         |
+
+---
+
+#### Custom systems
+
+Define systems in `~/.config/opencode/opencode.json` (or `.opencode/opencode.json`) under the `system` field. When you define custom systems, they replace the defaults entirely.
+
+```json
+{
+  "system": {
+    "claude-voice": {
+      "label": "Claude Opus 4.6",
+      "model": "anthropic/claude-opus-4-6",
+      "variant": "medium",
+      "transcription": "gpt-4o-mini-transcribe",
+      "tts": {
+        "model": "gpt-4o-mini-tts",
+        "voice": "echo",
+        "speed": 1.25
+      },
+      "agents": ["build", "plan"]
+    },
+    "claude-high": {
+      "label": "Claude Opus 4.6",
+      "model": "anthropic/claude-opus-4-6",
+      "variant": "high",
+      "transcription": "gpt-4o-mini-transcribe",
+      "agents": ["build", "plan"]
+    },
+    "gpt-audio": {
+      "label": "GPT Audio",
+      "model": "openai/gpt-audio",
+      "agents": ["build", "plan"]
+    }
+  },
+  "experimental": {
+    "voice": {
+      "enabled": true
+    }
+  }
+}
+```
+
+Voice-optimized agent variants (`voice-build` and `voice-plan`) are used automatically when a system has TTS configured. A **general** subagent for complex searches can be invoked with `@general` in messages.
+
+---
+
+#### Keybinds
+
+| Key         | Action                                 |
+| ----------- | -------------------------------------- |
+| Tab         | Cycle agents within the current system |
+| Shift+Tab   | Cycle between systems                  |
+| `<leader>m` | Open system selection dialog           |
+| `/systems`  | List all available systems             |
+
+---
+
+#### Default systems
+
+New installs with no custom `system` config get these presets:
+
+| Key                        | Model                 | Variant | Voice        |
+| -------------------------- | --------------------- | ------- | ------------ |
+| `claude-opus-medium-voice` | Claude Opus 4.6       | medium  | STT + TTS    |
+| `claude-opus-high`         | Claude Opus 4.6       | high    | STT          |
+| `claude-opus-max`          | Claude Opus 4.6       | max     | STT          |
+| `gpt-medium`               | GPT 5.4               | medium  | STT          |
+| `gpt-high`                 | GPT 5.4               | high    | STT          |
+| `gpt-xhigh`                | GPT 5.4               | xhigh   | STT          |
+| `gpt-audio`                | GPT Audio             | —       | Native audio |
+| `gemini-flash`             | Gemini 3.1 Flash Lite | —       | —            |
+| `gemini-pro`               | Gemini 3.1 Pro        | —       | —            |
 
 ---
 

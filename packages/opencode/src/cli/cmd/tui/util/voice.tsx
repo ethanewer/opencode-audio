@@ -3,6 +3,7 @@ import { t, fg, bold, dim, type ColorInput } from "@opentui/core"
 import { record } from "@/audio/record"
 import { transcribe as transcribeLocal } from "@/audio/transcribe"
 import { useSync } from "@tui/context/sync"
+import { useLocal } from "@tui/context/local"
 import { useToast } from "@tui/ui/toast"
 import { useSDK } from "@tui/context/sdk"
 
@@ -16,6 +17,7 @@ export function useVoice(opts: {
   stopDelay?: number
 }) {
   const sync = useSync()
+  const local = useLocal()
   const sdk = useSDK()
   const toast = useToast()
   const [rec, setRec] = createSignal<ReturnType<typeof record> | null>(null)
@@ -76,7 +78,7 @@ export function useVoice(opts: {
       r.stop()
         .then(async (audio) => {
           if (abort.signal.aborted) return
-          const model = sync.data.config.experimental?.voice?.model
+          const model = local.system.current()?.transcription ?? sync.data.config.experimental?.voice?.model
           const pending = sdk.transcribe?.({ audio, model }) ?? transcribeLocal(audio, model)
           const text = await Promise.race([
             pending,

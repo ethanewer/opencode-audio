@@ -711,15 +711,22 @@ export namespace Config {
         .default("<leader>h")
         .describe("Toggle code block concealment in messages"),
       tool_details: z.string().optional().default("none").describe("Toggle tool details visibility"),
-      model_list: z.string().optional().default("<leader>m").describe("List available models"),
+      model_list: z
+        .string()
+        .optional()
+        .default("none")
+        .describe("@deprecated Use system_list instead. List available models"),
       model_cycle_recent: z.string().optional().default("f2").describe("Next recently used model"),
       model_cycle_recent_reverse: z.string().optional().default("shift+f2").describe("Previous recently used model"),
       model_cycle_favorite: z.string().optional().default("none").describe("Next favorite model"),
       model_cycle_favorite_reverse: z.string().optional().default("none").describe("Previous favorite model"),
       command_list: z.string().optional().default("ctrl+p").describe("List available commands"),
       agent_list: z.string().optional().default("<leader>a").describe("List agents"),
-      agent_cycle: z.string().optional().default("tab").describe("Next agent"),
-      agent_cycle_reverse: z.string().optional().default("shift+tab").describe("Previous agent"),
+      agent_cycle: z.string().optional().default("tab").describe("Next agent within current system"),
+      agent_cycle_reverse: z.string().optional().default("none").describe("Previous agent within current system"),
+      system_cycle: z.string().optional().default("shift+tab").describe("Next system"),
+      system_cycle_reverse: z.string().optional().default("none").describe("Previous system"),
+      system_list: z.string().optional().default("<leader>m").describe("List systems"),
       variant_cycle: z.string().optional().default("ctrl+t").describe("Cycle model variants"),
       input_clear: z.string().optional().default("ctrl+c").describe("Clear input field"),
       input_paste: z.string().optional().default("ctrl+v").describe("Paste from clipboard"),
@@ -898,6 +905,30 @@ export namespace Config {
     })
   export type Provider = z.infer<typeof Provider>
 
+  export const SystemTts = z
+    .object({
+      model: z.string().optional().describe("TTS model (default: gpt-4o-mini-tts)"),
+      voice: z.string().optional().describe("Voice ID (default: coral)"),
+      speed: z.number().min(0.5).max(4).optional().describe("Playback speed multiplier (default: 1)"),
+      status: z.boolean().optional().describe("Speak status updates while the agent works (default: true)"),
+    })
+    .strict()
+    .meta({ ref: "SystemTtsConfig" })
+
+  export const System = z
+    .object({
+      label: z.string().optional().describe("Display name for the system"),
+      model: ModelId.describe("Main LLM model in provider/model format"),
+      variant: z.string().optional().describe("Model variant (e.g. reasoning effort level)"),
+      transcription: z.string().optional().describe("STT model for voice input (e.g. gpt-4o-mini-transcribe)"),
+      tts: SystemTts.optional().describe("Text-to-speech output configuration"),
+      agents: z.array(z.string()).default(["build", "plan"]).describe("Agents available in this system"),
+      options: z.record(z.string(), z.any()).optional().describe("Model-specific options (e.g. reasoningEffort)"),
+    })
+    .strict()
+    .meta({ ref: "SystemConfig" })
+  export type System = z.infer<typeof System>
+
   export const Info = z
     .object({
       $schema: z.string().optional().describe("JSON schema reference for configuration validation"),
@@ -945,6 +976,12 @@ export namespace Config {
       small_model: ModelId.describe(
         "Small model to use for tasks like title generation in the format of provider/model",
       ).optional(),
+      system: z
+        .record(z.string(), System)
+        .optional()
+        .describe(
+          "Named systems — each groups a model, optional STT/TTS, and a list of agents. Shift-tab cycles systems, tab cycles agents within a system.",
+        ),
       default_agent: z
         .string()
         .optional()

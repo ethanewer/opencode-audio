@@ -34,6 +34,7 @@ import { DialogThemeList } from "@tui/component/dialog-theme-list"
 import { DialogHelp } from "./ui/dialog-help"
 import { CommandProvider, useCommandDialog } from "@tui/component/dialog-command"
 import { DialogAgent } from "@tui/component/dialog-agent"
+import { DialogSystem } from "@tui/component/dialog-system"
 import { DialogSessionList } from "@tui/component/dialog-session-list"
 import { DialogWorkspaceList } from "@tui/component/dialog-workspace-list"
 import { KeybindProvider, useKeybind } from "@tui/context/keybind"
@@ -503,53 +504,43 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       title: "Switch model",
       value: "model.list",
       keybind: "model_list",
-      suggested: true,
       category: "Agent",
-      slash: {
-        name: "models",
-      },
+      hidden: true,
       onSelect: () => {
         dialog.replace(() => <DialogModel />)
       },
     },
     {
-      title: "Model cycle",
-      value: "model.cycle_recent",
-      keybind: "model_cycle_recent",
+      title: "Switch system",
+      value: "system.list",
+      keybind: "system_list",
+      suggested: true,
       category: "Agent",
-      hidden: true,
+      slash: {
+        name: "systems",
+      },
       onSelect: () => {
-        local.model.cycle(1)
+        dialog.replace(() => <DialogSystem />)
       },
     },
     {
-      title: "Model cycle reverse",
-      value: "model.cycle_recent_reverse",
-      keybind: "model_cycle_recent_reverse",
+      title: "System cycle",
+      value: "system.cycle",
+      keybind: "system_cycle",
       category: "Agent",
       hidden: true,
       onSelect: () => {
-        local.model.cycle(-1)
+        local.system.move(1)
       },
     },
     {
-      title: "Favorite cycle",
-      value: "model.cycle_favorite",
-      keybind: "model_cycle_favorite",
+      title: "System cycle reverse",
+      value: "system.cycle.reverse",
+      keybind: "system_cycle_reverse",
       category: "Agent",
       hidden: true,
       onSelect: () => {
-        local.model.cycleFavorite(1)
-      },
-    },
-    {
-      title: "Favorite cycle reverse",
-      value: "model.cycle_favorite_reverse",
-      keybind: "model_cycle_favorite_reverse",
-      category: "Agent",
-      hidden: true,
-      onSelect: () => {
-        local.model.cycleFavorite(-1)
+        local.system.move(-1)
       },
     },
     {

@@ -295,6 +295,7 @@ export type EventTuiCommandExecute = {
       | "prompt.clear"
       | "prompt.submit"
       | "agent.cycle"
+      | "system.cycle"
       | string
   }
 }
@@ -1146,6 +1147,58 @@ export type ServerConfig = {
   cors?: Array<string>
 }
 
+/**
+ * Text-to-speech output configuration
+ */
+export type SystemTtsConfig = {
+  /**
+   * TTS model (default: gpt-4o-mini-tts)
+   */
+  model?: string
+  /**
+   * Voice ID (default: coral)
+   */
+  voice?: string
+  /**
+   * Playback speed multiplier (default: 1)
+   */
+  speed?: number
+  /**
+   * Speak status updates while the agent works (default: true)
+   */
+  status?: boolean
+}
+
+export type SystemConfig = {
+  /**
+   * Display name for the system
+   */
+  label?: string
+  /**
+   * Main LLM model in provider/model format
+   */
+  model: string
+  /**
+   * Model variant (e.g. reasoning effort level)
+   */
+  variant?: string
+  /**
+   * STT model for voice input (e.g. gpt-4o-mini-transcribe)
+   */
+  transcription?: string
+  tts?: SystemTtsConfig
+  /**
+   * Agents available in this system
+   */
+  agents?: Array<string>
+  /**
+   * Model-specific options (e.g. reasoningEffort)
+   */
+  options?: {
+    [key: string]: unknown
+  }
+}
+
 export type PermissionActionConfig = "ask" | "allow" | "deny"
 
 export type PermissionObjectConfig = {
@@ -1488,6 +1541,12 @@ export type Config = {
    * Small model to use for tasks like title generation in the format of provider/model
    */
   small_model?: string
+  /**
+   * Named systems — each groups a model, optional STT/TTS, and a list of agents. Shift-tab cycles systems, tab cycles agents within a system.
+   */
+  system?: {
+    [key: string]: SystemConfig
+  }
   /**
    * Default agent to use when none is specified. Must be a primary agent. Falls back to 'build' if not set or if the specified agent is invalid.
    */
