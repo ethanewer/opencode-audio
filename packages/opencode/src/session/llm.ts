@@ -73,8 +73,10 @@ export namespace LLM {
       [
         // use agent prompt otherwise provider prompt
         ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
-        // append voice prompt for voice agents (preserves provider prompt)
-        ...(input.agent.name.startsWith("voice-") && !input.agent.prompt ? [PROMPT_VOICE] : []),
+        // append voice prompt for voice agents using TTS (skip for models with native audio output)
+        ...(input.agent.name.startsWith("voice-") && !input.agent.prompt && !input.model.capabilities.output.audio
+          ? [PROMPT_VOICE]
+          : []),
         // any custom prompt passed into this call
         ...input.system,
         // any custom prompt from last user message
@@ -269,6 +271,7 @@ export namespace LLM {
             }),
         ...input.model.headers,
         ...headers,
+        ...(input.model.capabilities.output.audio ? { "x-audio-correlation": input.user.id } : {}),
       },
       maxRetries: input.retries ?? 0,
       messages,

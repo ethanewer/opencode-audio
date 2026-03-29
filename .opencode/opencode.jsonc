@@ -4,23 +4,6 @@
     "opencode": {
       "options": {},
     },
-    "openrouter": {
-      "models": {
-        "google/gemini-3.1-flash-lite-preview": {
-          "name": "Gemini 3.1 Flash Lite Preview",
-          "modalities": {
-            "input": ["text", "image", "video", "audio", "pdf"],
-            "output": ["text"],
-          },
-          "reasoning": true,
-          "tool_call": true,
-          "attachment": true,
-          "temperature": true,
-          "limit": { "context": 1048576, "output": 65536 },
-          "cost": { "input": 0.25, "output": 1.5, "cache_read": 0.025 },
-        },
-      },
-    },
   },
   "agent": {
     "voice-build": {
@@ -29,13 +12,8 @@
     "voice-plan": {
       "model": "openrouter/google/gemini-3.1-flash-lite-preview",
     },
-  },
-  "experimental": {
-    "voice": {
-      "enabled": true,
-      "tts": {
-        "enabled": true,
-      },
+    "docs": {
+      "hidden": true,
     },
   },
   "permission": {

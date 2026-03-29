@@ -18,6 +18,7 @@ import { iife } from "@/util/iife"
 import { Global } from "../global"
 import path from "path"
 import { Filesystem } from "../util/filesystem"
+import * as AudioOutput from "./audio"
 
 // Direct imports for bundled providers
 import { createAmazonBedrock, type AmazonBedrockProviderSettings } from "@ai-sdk/amazon-bedrock"
@@ -185,7 +186,8 @@ export namespace Provider {
     openai: async () => {
       return {
         autoload: false,
-        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
+        async getModel(sdk: any, modelID: string, options?: Record<string, any>) {
+          if (options?.audioOutput) return sdk.chat(modelID)
           return sdk.responses(modelID)
         },
         options: {},
@@ -1170,12 +1172,21 @@ export namespace Provider {
       })().catch((e) => log.warn("state discovery error", { id: "gitlab", error: e }))
     }
 
+    // Collect model API IDs that support audio output for the fetch wrapper
+    const audioModels = new Set<string>()
+    for (const provider of Object.values(providers)) {
+      for (const model of Object.values(provider.models)) {
+        if (model.capabilities.output.audio) audioModels.add(model.api.id)
+      }
+    }
+
     return {
       models: languages,
       providers,
       sdk,
       modelLoaders,
       varsLoaders,
+      audioModels,
     }
   })
 
@@ -1255,12 +1266,14 @@ export namespace Provider {
         const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
         if (combined) opts.signal = combined
 
-        // Strip openai itemId metadata following what codex does
-        // Codex uses #[serde(skip_serializing)] on id fields for all item types:
-        // Message, Reasoning, FunctionCall, LocalShellCall, CustomToolCall, WebSearchCall
-        // IDs are only re-attached for Azure with store=true
+        // OpenAI-specific request/response handling
         if (model.api.npm === "@ai-sdk/openai" && opts.body && opts.method === "POST") {
           const body = JSON.parse(opts.body as string)
+
+          // Strip openai itemId metadata following what codex does
+          // Codex uses #[serde(skip_serializing)] on id fields for all item types:
+          // Message, Reasoning, FunctionCall, LocalShellCall, CustomToolCall, WebSearchCall
+          // IDs are only re-attached for Azure with store=true
           const isAzure = model.providerID.includes("azure")
           const keepIds = isAzure && body.store === true
           if (!keepIds && Array.isArray(body.input)) {
@@ -1270,6 +1283,100 @@ export namespace Provider {
               }
             }
             opts.body = JSON.stringify(body)
+          }
+
+          // Audio output models: inject modalities/audio into the request,
+          // force non-streaming, capture audio from response, rewrite as SSE stream with transcript text
+          if (s.audioModels.has(body.model)) {
+            const wasStream = body.stream === true
+            const correlation =
+              opts.headers instanceof Headers
+                ? opts.headers.get("x-audio-correlation")
+                : (opts.headers as Record<string, string>)?.["x-audio-correlation"]
+            body.modalities = ["text", "audio"]
+            body.audio = { voice: (await Config.get()).experimental?.voice?.tts?.voice ?? "alloy", format: "pcm16" }
+            delete body.stream
+            delete body.stream_options
+            opts.body = JSON.stringify(body)
+
+            const res = await fetchFn(input, { ...opts, timeout: false } as any)
+            // On API error, pass through the original response for proper error handling
+            if (!res.ok) return res
+            const json = await res.json()
+            const audio = json.choices?.[0]?.message?.audio
+            if (audio?.data && correlation) {
+              AudioOutput.store(correlation, { data: audio.data, transcript: audio.transcript ?? "" })
+            }
+            const transcript = audio?.transcript ?? json.choices?.[0]?.message?.content ?? ""
+
+            if (wasStream) {
+              // Convert non-streaming response to SSE format for streamText compatibility
+              const msg = json.choices?.[0]?.message ?? {}
+              const reason = json.choices?.[0]?.finish_reason ?? "stop"
+              const chunks: string[] = []
+
+              // Emit text content
+              if (transcript) {
+                chunks.push(
+                  `data: ${JSON.stringify({
+                    id: json.id,
+                    object: "chat.completion.chunk",
+                    created: json.created,
+                    model: json.model,
+                    choices: [{ index: 0, delta: { role: "assistant", content: transcript }, finish_reason: null }],
+                  })}\n\n`,
+                )
+              }
+
+              // Emit tool calls
+              if (Array.isArray(msg.tool_calls)) {
+                for (const tc of msg.tool_calls) {
+                  chunks.push(
+                    `data: ${JSON.stringify({
+                      id: json.id,
+                      object: "chat.completion.chunk",
+                      created: json.created,
+                      model: json.model,
+                      choices: [
+                        {
+                          index: 0,
+                          delta: {
+                            tool_calls: [{ index: 0, id: tc.id, type: tc.type, function: tc.function }],
+                          },
+                          finish_reason: null,
+                        },
+                      ],
+                    })}\n\n`,
+                  )
+                }
+              }
+
+              // Emit finish
+              chunks.push(
+                `data: ${JSON.stringify({
+                  id: json.id,
+                  object: "chat.completion.chunk",
+                  created: json.created,
+                  model: json.model,
+                  choices: [{ index: 0, delta: {}, finish_reason: reason }],
+                  usage: json.usage,
+                })}\n\n`,
+              )
+              chunks.push("data: [DONE]\n\n")
+
+              return new Response(chunks.join(""), {
+                status: res.status,
+                headers: { "content-type": "text/event-stream" },
+              })
+            }
+
+            // Non-streaming: rewrite content with transcript
+            json.choices[0].message.content = transcript
+            return new Response(JSON.stringify(json), {
+              status: res.status,
+              statusText: res.statusText,
+              headers: new Headers(res.headers),
+            })
           }
         }
 
@@ -1350,7 +1457,11 @@ export namespace Provider {
 
     try {
       const language = s.modelLoaders[model.providerID]
-        ? await s.modelLoaders[model.providerID](sdk, model.api.id, { ...provider.options, ...model.options })
+        ? await s.modelLoaders[model.providerID](sdk, model.api.id, {
+            ...provider.options,
+            ...model.options,
+            audioOutput: model.capabilities.output.audio,
+          })
         : sdk.languageModel(model.api.id)
       s.models.set(key, language)
       return language

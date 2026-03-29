@@ -16,6 +16,7 @@ import { Permission } from "@/permission"
 import { Question } from "@/question"
 import { PartID } from "./schema"
 import type { SessionID, MessageID } from "./schema"
+import * as AudioOutput from "@/provider/audio"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -350,6 +351,20 @@ export namespace SessionProcessor {
                   continue
               }
               if (needsCompaction) break
+            }
+
+            // Check for audio output from models like gpt-audio
+            const audio = AudioOutput.take(streamInput.user.id)
+            if (audio) {
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: input.assistantMessage.id,
+                sessionID: input.assistantMessage.sessionID,
+                type: "file" as const,
+                mime: "audio/pcm16",
+                url: `data:audio/pcm16;base64,${audio.data}`,
+                filename: "response.audio",
+              })
             }
           } catch (e: any) {
             log.error("process", {
