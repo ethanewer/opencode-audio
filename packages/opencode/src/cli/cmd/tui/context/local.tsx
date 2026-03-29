@@ -227,6 +227,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             provider: provider?.name ?? value.providerID,
             model: info?.name ?? value.modelID,
             reasoning: info?.capabilities?.reasoning ?? false,
+            audioInput: info?.capabilities?.input?.audio ?? false,
           }
         }),
         cycle(direction: 1 | -1) {

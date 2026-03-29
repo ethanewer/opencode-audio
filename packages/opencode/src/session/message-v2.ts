@@ -25,7 +25,7 @@ interface FetchDecompressionError extends Error {
 
 export namespace MessageV2 {
   export function isMedia(mime: string) {
-    return mime.startsWith("image/") || mime === "application/pdf"
+    return mime.startsWith("image/") || mime.startsWith("audio/") || mime === "application/pdf"
   }
 
   export const OutputLengthError = NamedError.create("MessageOutputLengthError", z.object({}))
