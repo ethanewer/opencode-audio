@@ -123,4 +123,16 @@ describe("tool.registry", () => {
       },
     })
   })
+
+  test("registers transcribe and read_audio tools", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const ids = await ToolRegistry.ids()
+        expect(ids).toContain("transcribe")
+        expect(ids).toContain("read_audio")
+      },
+    })
+  })
 })

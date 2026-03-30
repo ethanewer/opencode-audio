@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test"
 import {
+  AsyncQueue,
   AsyncAudioQueue,
   splitSentences,
   sanitize,
@@ -151,6 +152,49 @@ describe("AsyncAudioQueue", () => {
     q.push(new Uint8Array([4]))
     expect((await q.next()).value).toEqual(new Uint8Array([3]))
     expect((await q.next()).value).toEqual(new Uint8Array([4]))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AsyncQueue (generic)
+// ---------------------------------------------------------------------------
+
+describe("AsyncQueue", () => {
+  test("works with string type", async () => {
+    const q = new AsyncQueue<string>()
+    q.push("hello")
+    q.push("world")
+    const a = await q.next()
+    const b = await q.next()
+    expect(a.value).toBe("hello")
+    expect(b.value).toBe("world")
+    expect(a.done).toBe(false)
+  })
+
+  test("close terminates pending next", async () => {
+    const q = new AsyncQueue<string>()
+    const pending = q.next()
+    q.close()
+    const result = await pending
+    expect(result.done).toBe(true)
+  })
+
+  test("async iteration yields items then terminates", async () => {
+    const q = new AsyncQueue<string>()
+    q.push("a")
+    q.push("b")
+    setTimeout(() => q.close(), 10)
+    const items: string[] = []
+    for await (const item of q) {
+      items.push(item)
+    }
+    expect(items).toEqual(["a", "b"])
+  })
+
+  test("AsyncAudioQueue is a subclass of AsyncQueue", () => {
+    const q = new AsyncAudioQueue()
+    expect(q).toBeInstanceOf(AsyncQueue)
+    expect(q).toBeInstanceOf(AsyncAudioQueue)
   })
 })
 
@@ -729,6 +773,7 @@ describe("createVoiceSession", () => {
     expect(session.sessionID).toBe("ses_test123")
     expect(session.input).toBeInstanceOf(AsyncAudioQueue)
     expect(session.output).toBeInstanceOf(AsyncAudioQueue)
+    expect(session.transcript).toBeInstanceOf(AsyncQueue)
     expect(typeof session.abort).toBe("function")
     expect(typeof session.close).toBe("function")
     expect(calls.create.length).toBe(1)
@@ -1115,6 +1160,7 @@ describe("createVoiceSession", () => {
 
     expect(session.input.closed).toBe(true)
     expect(session.output.closed).toBe(true)
+    expect(session.transcript.closed).toBe(true)
   })
 
   test("abort increments generation and calls session abort", async () => {
@@ -2219,6 +2265,703 @@ describe("createVoiceSession", () => {
     session.close()
     sse.end()
   })
+
+  test("TTS path emits sanitized transcript alongside audio", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_transcript",
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_transcript",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "This is a **bold** sentence that is long enough to trigger TTS. ",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    const result = await session.transcript.next()
+    expect(result.done).toBe(false)
+    // Should be sanitized (bold markers stripped)
+    expect(result.value).toBe("This is a bold sentence that is long enough to trigger TTS.")
+
+    session.close()
+    sse.end()
+  })
+
+  test("TTS path flushes transcript on idle", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_tflush",
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Push short text that won't trigger sentence splitting
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_tflush",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "Short text",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Send idle to flush
+    sse.push({
+      type: "session.status",
+      properties: {
+        sessionID: "ses_tflush",
+        status: { type: "idle" },
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    const result = await session.transcript.next()
+    expect(result.done).toBe(false)
+    expect(result.value).toBe("Short text")
+
+    session.close()
+    sse.end()
+  })
+
+  test("native audio path emits transcript from text deltas on idle", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_native_t",
+      nativeAudioOutput: true,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Simulate text deltas that arrive alongside native audio
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_native_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "Hello from native audio model.",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Send idle to flush transcript buffer
+    sse.push({
+      type: "session.status",
+      properties: {
+        sessionID: "ses_native_t",
+        status: { type: "idle" },
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    const result = await session.transcript.next()
+    expect(result.done).toBe(false)
+    expect(result.value).toBe("Hello from native audio model.")
+
+    session.close()
+    sse.end()
+  })
+
+  test("native audio path does not trigger TTS for text deltas", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    let ttsCalled = false
+    globalThis.fetch = (async (input: any, init: any) => {
+      const req = input instanceof Request ? input : new Request(input, init)
+      if (req.url.includes("/audio/speech")) {
+        ttsCalled = true
+        return new Response(new Uint8Array([0]), { status: 200 })
+      }
+      return new Response(JSON.stringify({ text: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }) as any
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_native_notts",
+      nativeAudioOutput: true,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_native_notts",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "This text should not trigger TTS because native audio output is enabled. ",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    expect(ttsCalled).toBe(false)
+
+    session.close()
+    sse.end()
+  })
+
+  test("toolStatus transcript emits tool status text", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_tool_t",
+      toolStatus: true,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    sse.push({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "ses_tool_t",
+        part: {
+          id: "p1",
+          sessionID: "ses_tool_t",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "bash",
+          state: {
+            status: "running",
+            input: { command: "ls" },
+            title: "listing files",
+            time: { start: Date.now() },
+          },
+        },
+        time: Date.now(),
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    const result = await session.transcript.next()
+    expect(result.done).toBe(false)
+    expect(result.value).toBe("Running listing files.")
+
+    session.close()
+    sse.end()
+  })
+
+  test("abort clears pending transcript buffer", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_abort_t",
+      nativeAudioOutput: true,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Push text deltas that accumulate in the transcript buffer
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_abort_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "This should be discarded",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Abort clears the buffer
+    session.abort()
+
+    // Send idle — should not emit transcript since buffer was cleared
+    sse.push({
+      type: "session.status",
+      properties: {
+        sessionID: "ses_abort_t",
+        status: { type: "idle" },
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Now push new content after abort
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_abort_t",
+        messageID: "msg2",
+        partID: "part2",
+        field: "text",
+        delta: "Fresh content after abort",
+      },
+    })
+
+    sse.push({
+      type: "session.status",
+      properties: {
+        sessionID: "ses_abort_t",
+        status: { type: "idle" },
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    const result = await session.transcript.next()
+    expect(result.done).toBe(false)
+    expect(result.value).toBe("Fresh content after abort")
+
+    session.close()
+    sse.end()
+  })
+
+  test("multiple sentences produce multiple transcript entries", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_multi_t",
+      minSentenceLength: 1,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_multi_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "First sentence. Second sentence. Third sentence. ",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 300))
+
+    const a = await session.transcript.next()
+    const b = await session.transcript.next()
+    const c = await session.transcript.next()
+    expect(a.value).toBe("First sentence.")
+    expect(b.value).toBe("Second sentence.")
+    expect(c.value).toBe("Third sentence.")
+
+    session.close()
+    sse.end()
+  })
+
+  test("TTS error does not prevent transcript emission", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    // Make TTS always fail
+    globalThis.fetch = (async (input: any, init: any) => {
+      const req = input instanceof Request ? input : new Request(input, init)
+      if (req.url.includes("/audio/speech")) {
+        return new Response("error", { status: 500 })
+      }
+      return new Response(JSON.stringify({ text: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }) as any
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_tts_fail_t",
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_tts_fail_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "This sentence should still appear in transcript despite TTS failure. ",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    // Transcript should still have the text even though TTS failed
+    const result = await session.transcript.next()
+    expect(result.done).toBe(false)
+    expect(result.value).toBe("This sentence should still appear in transcript despite TTS failure.")
+
+    session.close()
+    sse.end()
+  })
+
+  test("other session events do not appear in native audio transcript", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_filter_t",
+      nativeAudioOutput: true,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Push delta from OTHER session
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_other",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "Wrong session text",
+      },
+    })
+
+    // Push delta from OUR session
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_filter_t",
+        messageID: "msg2",
+        partID: "part2",
+        field: "text",
+        delta: "Correct session text",
+      },
+    })
+
+    // Flush both
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_other", status: { type: "idle" } },
+    })
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_filter_t", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    const result = await session.transcript.next()
+    expect(result.value).toBe("Correct session text")
+
+    session.close()
+    sse.end()
+  })
+
+  test("non-text field deltas ignored in native audio transcript", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_field_t",
+      nativeAudioOutput: true,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Push reasoning delta (should be ignored)
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_field_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "reasoning",
+        delta: "This is reasoning and should not appear",
+      },
+    })
+
+    // Push text delta (should be captured)
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_field_t",
+        messageID: "msg1",
+        partID: "part2",
+        field: "text",
+        delta: "This is actual text",
+      },
+    })
+
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_field_t", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    const result = await session.transcript.next()
+    expect(result.value).toBe("This is actual text")
+
+    session.close()
+    sse.end()
+  })
+
+  test("native audio multiple deltas concatenate into single transcript", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_concat_t",
+      nativeAudioOutput: true,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Push multiple text deltas
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_concat_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "Hello ",
+      },
+    })
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_concat_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "world, ",
+      },
+    })
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_concat_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "how are you?",
+      },
+    })
+
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_concat_t", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Should be concatenated into a single transcript entry
+    const result = await session.transcript.next()
+    expect(result.value).toBe("Hello world, how are you?")
+
+    session.close()
+    sse.end()
+  })
+
+  test("whitespace-only native audio transcript is not emitted", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_ws_t",
+      nativeAudioOutput: true,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Push whitespace-only delta
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_ws_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "   \n  ",
+      },
+    })
+
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_ws_t", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Then push real content
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_ws_t",
+        messageID: "msg2",
+        partID: "part2",
+        field: "text",
+        delta: "Real content",
+      },
+    })
+
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_ws_t", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    // First transcript entry should be the real content, not whitespace
+    const result = await session.transcript.next()
+    expect(result.value).toBe("Real content")
+
+    session.close()
+    sse.end()
+  })
+
+  test("new prompt resets native audio transcript buffer", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    globalThis.fetch = (async (input: any, init: any) => {
+      const req = input instanceof Request ? input : new Request(input, init)
+      if (req.url.includes("/audio/transcriptions")) {
+        return new Response(JSON.stringify({ text: "user input" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      return new Response(new Uint8Array([0]), { status: 200 })
+    }) as any
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_reset_t",
+      nativeAudioOutput: true,
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Accumulate text in tbuf
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_reset_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "Stale text from old response",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Send new input — should reset tbuf
+    session.input.push(new Uint8Array([1]))
+    session.input.close()
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Now idle fires — stale text should have been cleared
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_reset_t", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Push new response text
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_reset_t",
+        messageID: "msg2",
+        partID: "part2",
+        field: "text",
+        delta: "Fresh response text",
+      },
+    })
+
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_reset_t", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    // First transcript should be the fresh text, not the stale text
+    const result = await session.transcript.next()
+    expect(result.value).toBe("Fresh response text")
+
+    session.close()
+    sse.end()
+  })
+
+  test("sequential TTS responses produce ordered transcript entries", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_seq_t",
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // First response
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_seq_t",
+        messageID: "msg1",
+        partID: "part1",
+        field: "text",
+        delta: "First response sentence that is long enough to trigger. ",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    // Idle between responses
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_seq_t", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Second response (new messageID)
+    sse.push({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_seq_t",
+        messageID: "msg2",
+        partID: "part2",
+        field: "text",
+        delta: "Second response sentence that is also long enough to trigger. ",
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    // Drain transcript entries
+    const entries: string[] = []
+    while (true) {
+      const timeout = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 50))
+      const next = session.transcript.next().then((r) => (r.done ? ("done" as const) : r.value))
+      const result = await Promise.race([next, timeout])
+      if (result === "timeout" || result === "done") break
+      entries.push(result)
+    }
+
+    expect(entries.length).toBe(2)
+    expect(entries[0]).toContain("First response")
+    expect(entries[1]).toContain("Second response")
+
+    session.close()
+    sse.end()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -2268,6 +3011,7 @@ describe("voiceSystems", () => {
       "gpt-audio-voice",
       "gemini-flash-voice",
       "gemini-pro-voice",
+      "minimax-m2.5-voice",
     ]
     expect(names.length).toBe(Object.keys(voiceSystems).length)
   })

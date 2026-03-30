@@ -788,6 +788,163 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ])
   })
+
+  test("skips abandoned tool calls (error with empty input from cleanup)", () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "do something",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "text",
+            text: "I'll edit the file",
+          },
+          {
+            ...basePart(assistantID, "a2"),
+            type: "tool",
+            callID: "call-abandoned",
+            tool: "write",
+            state: {
+              status: "error",
+              input: {},
+              error: "Tool execution aborted",
+              time: { start: 0, end: 0 },
+            },
+          },
+          {
+            ...basePart(assistantID, "a3"),
+            type: "tool",
+            callID: "call-completed",
+            tool: "edit",
+            state: {
+              status: "completed",
+              input: { file: "test.ts" },
+              output: "done",
+              title: "edit test.ts",
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const result = MessageV2.toModelMessages(input, model)
+
+    // The abandoned write tool (empty input, "Tool execution aborted") should be skipped
+    // Only the completed edit tool should appear
+    expect(result).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "do something" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I'll edit the file" },
+          {
+            type: "tool-call",
+            toolCallId: "call-completed",
+            toolName: "edit",
+            input: { file: "test.ts" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-completed",
+            toolName: "edit",
+            output: { type: "text", value: "done" },
+          },
+        ],
+      },
+    ])
+  })
+
+  test("keeps error tool calls with non-empty input (legitimate errors)", () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "run tool",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "bash",
+            state: {
+              status: "error",
+              input: { cmd: "rm -rf /" },
+              error: "Permission denied",
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const result = MessageV2.toModelMessages(input, model)
+
+    // Error tool with non-empty input should NOT be skipped
+    expect(result).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "run tool" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "bash",
+            input: { cmd: "rm -rf /" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "bash",
+            output: { type: "error-text", value: "Permission denied" },
+          },
+        ],
+      },
+    ])
+  })
 })
 
 describe("session.message-v2.fromError", () => {

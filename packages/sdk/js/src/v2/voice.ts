@@ -2,12 +2,12 @@ import type { OpencodeClient } from "./gen/sdk.gen.js"
 import type { Event, OutputFormat, PermissionRuleset } from "./gen/types.gen.js"
 
 // ---------------------------------------------------------------------------
-// AsyncAudioQueue — async iterable queue for raw audio data
+// AsyncQueue — generic async iterable queue
 // ---------------------------------------------------------------------------
 
-export class AsyncAudioQueue implements AsyncIterable<Uint8Array> {
-  private queue: Uint8Array[] = []
-  private resolvers: Array<(value: IteratorResult<Uint8Array>) => void> = []
+export class AsyncQueue<T> implements AsyncIterable<T> {
+  private queue: T[] = []
+  private resolvers: Array<(value: IteratorResult<T>) => void> = []
   private done = false
 
   /** Whether the queue has been closed. */
@@ -20,7 +20,7 @@ export class AsyncAudioQueue implements AsyncIterable<Uint8Array> {
     return this.queue.length
   }
 
-  push(data: Uint8Array) {
+  push(data: T) {
     if (this.done) return
     const resolve = this.resolvers.shift()
     if (resolve) resolve({ value: data, done: false })
@@ -36,7 +36,7 @@ export class AsyncAudioQueue implements AsyncIterable<Uint8Array> {
     this.resolvers.length = 0
   }
 
-  async next(): Promise<IteratorResult<Uint8Array>> {
+  async next(): Promise<IteratorResult<T>> {
     if (this.queue.length > 0) return { value: this.queue.shift()!, done: false }
     if (this.done) return { value: undefined as any, done: true }
     return new Promise((resolve) => this.resolvers.push(resolve))
@@ -50,6 +50,12 @@ export class AsyncAudioQueue implements AsyncIterable<Uint8Array> {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// AsyncAudioQueue — async iterable queue for raw audio data
+// ---------------------------------------------------------------------------
+
+export class AsyncAudioQueue extends AsyncQueue<Uint8Array> {}
 
 // ---------------------------------------------------------------------------
 // Inlined audio utilities — thin OpenAI API wrappers
@@ -453,6 +459,13 @@ export interface VoiceSession {
   input: AsyncAudioQueue
   /** Read synthesized speech audio from here. Each Uint8Array is one chunk of PCM audio (streamed incrementally). */
   output: AsyncAudioQueue
+  /**
+   * Text transcript of the audio output. Emits sanitized text segments as
+   * they become available — one per sentence for TTS-based systems, or the
+   * full model transcript for native-audio systems like GPT-Audio. Always
+   * present; simply don't iterate if not needed.
+   */
+  transcript: AsyncQueue<string>
   /** The underlying session ID. */
   sessionID: string
   /** Abort current processing without closing the session. */
@@ -541,6 +554,7 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
 
   const input = new AsyncAudioQueue()
   const output = new AsyncAudioQueue()
+  const transcript = new AsyncQueue<string>()
   let aborted = false
 
   // Track current generation to support abort
@@ -549,6 +563,7 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
 
   // ---- Output loop: SSE events -> sentence splitting -> TTS -> output queue ----
   let buffer = ""
+  let tbuf = "" // transcript buffer for native-audio models
   let active = "" // messageID of the current assistant response
 
   async function speakText(text: string, expected: number) {
@@ -576,6 +591,7 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
       if (generation !== expected) return
       const cleaned = sanitize(sentence)
       if (!cleaned) continue
+      transcript.push(cleaned)
       await speakText(cleaned, expected)
     }
   }
@@ -588,6 +604,7 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
       if (generation !== expected) return
       const cleaned = sanitize(sentence)
       if (!cleaned) continue
+      transcript.push(cleaned)
       await speakText(cleaned, expected)
     }
   }
@@ -599,16 +616,24 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
         if (aborted) break
         const evt = event as Event
         if (evt.type === "message.part.delta") {
-          if (receiveAudio) continue // skip text→TTS when model produces native audio
           if (evt.properties.sessionID !== sessionID) continue
           if (evt.properties.field !== "text") continue
           if (!active) active = evt.properties.messageID
           if (evt.properties.messageID !== active) continue
+          if (receiveAudio) {
+            tbuf += evt.properties.delta
+            continue
+          }
           await handleDelta(evt.properties.delta, generation)
         } else if (evt.type === "session.status") {
           if (evt.properties.sessionID !== sessionID) continue
           if (evt.properties.status.type === "idle") {
-            if (!receiveAudio) await flushBuffer(generation)
+            if (receiveAudio) {
+              if (tbuf.trim()) transcript.push(tbuf.trim())
+              tbuf = ""
+            } else {
+              await flushBuffer(generation)
+            }
             active = ""
           }
         } else if (evt.type === "permission.asked" && !isDangerous) {
@@ -628,11 +653,11 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
                 typeof Buffer !== "undefined"
                   ? new Uint8Array(Buffer.from(b64, "base64"))
                   : (() => {
-                    const s = atob(b64)
-                    const a = new Uint8Array(s.length)
-                    for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i)
-                    return a
-                  })()
+                      const s = atob(b64)
+                      const a = new Uint8Array(s.length)
+                      for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i)
+                      return a
+                    })()
               output.push(pcm)
             }
           }
@@ -643,12 +668,18 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
           const state = part.state
           if (state.status === "running") {
             const label = state.title ?? part.tool
-            await speakText(`Running ${label}.`, generation)
+            const text = `Running ${label}.`
+            transcript.push(text)
+            await speakText(text, generation)
           } else if (state.status === "completed") {
             const label = state.title ?? part.tool
-            await speakText(`Completed ${label}.`, generation)
+            const text = `Completed ${label}.`
+            transcript.push(text)
+            await speakText(text, generation)
           } else if (state.status === "error") {
-            await speakText(`Error in ${part.tool}.`, generation)
+            const text = `Error in ${part.tool}.`
+            transcript.push(text)
+            await speakText(text, generation)
           }
         }
       }
@@ -671,10 +702,10 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
             typeof Buffer !== "undefined"
               ? Buffer.from(audio).toString("base64")
               : (() => {
-                let s = ""
-                for (let i = 0; i < audio.length; i++) s += String.fromCharCode(audio[i])
-                return btoa(s)
-              })()
+                  let s = ""
+                  for (let i = 0; i < audio.length; i++) s += String.fromCharCode(audio[i])
+                  return btoa(s)
+                })()
           parts.push({
             type: "file",
             mime: "audio/wav",
@@ -695,6 +726,7 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
         }
         // Reset output state for new prompt
         buffer = ""
+        tbuf = ""
         active = ""
         await client.session.prompt({
           sessionID,
@@ -713,13 +745,14 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
     }
   })()
 
-  const done = Promise.all([sseLoop, inputLoop]).then(() => { })
+  const done = Promise.all([sseLoop, inputLoop]).then(() => {})
 
   function abort() {
     generation++
     buffer = ""
+    tbuf = ""
     active = ""
-    client.session.abort({ sessionID }).catch(() => { })
+    client.session.abort({ sessionID }).catch(() => {})
   }
 
   function close() {
@@ -728,7 +761,8 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
     ctrl.abort()
     input.close()
     output.close()
+    transcript.close()
   }
 
-  return { input, output, sessionID, abort, close, done }
+  return { input, output, transcript, sessionID, abort, close, done }
 }

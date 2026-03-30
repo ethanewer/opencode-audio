@@ -712,6 +712,18 @@ export namespace MessageV2 {
               type: "step-start",
             })
           if (part.type === "tool") {
+            // Skip abandoned tool calls - model started generating the tool call
+            // (tool-input-start event) but never completed it (no tool-call event).
+            // The cleanup code in processor.ts sets these to error with empty input.
+            // Including them would create a tool_use that the model never actually sent,
+            // which can cause "tool_use without tool_result" API errors.
+            if (
+              part.state.status === "error" &&
+              Object.keys(part.state.input).length === 0 &&
+              part.state.error === "Tool execution aborted"
+            ) {
+              continue
+            }
             toolNames.add(part.tool)
             if (part.state.status === "completed") {
               const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output

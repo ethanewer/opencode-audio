@@ -27,6 +27,8 @@ import { Log } from "@/util/log"
 import { LspTool } from "./lsp"
 import { Truncate } from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
+import { TranscribeTool } from "./transcribe"
+import { ReadAudioTool } from "./read_audio"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 import { Effect, Layer, ServiceMap } from "effect"
@@ -44,7 +46,7 @@ export namespace ToolRegistry {
     readonly register: (tool: Tool.Info) => Effect.Effect<void>
     readonly ids: () => Effect.Effect<string[]>
     readonly tools: (
-      model: { providerID: ProviderID; modelID: ModelID },
+      model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean },
       agent?: Agent.Info,
     ) => Effect.Effect<(Awaited<ReturnType<Tool.Info["init"]>> & { id: string })[]>
   }
@@ -131,6 +133,8 @@ export namespace ToolRegistry {
           CodeSearchTool,
           SkillTool,
           ApplyPatchTool,
+          TranscribeTool,
+          ReadAudioTool,
           ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...(cfg.experimental?.batch_tool === true ? [BatchTool] : []),
           ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
@@ -155,7 +159,7 @@ export namespace ToolRegistry {
       })
 
       const tools = Effect.fn("ToolRegistry.tools")(function* (
-        model: { providerID: ProviderID; modelID: ModelID },
+        model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean },
         agent?: Agent.Info,
       ) {
         const state = yield* InstanceState.get(cache)
@@ -169,6 +173,9 @@ export namespace ToolRegistry {
             model.modelID.includes("gpt-") && !model.modelID.includes("oss") && !model.modelID.includes("gpt-4")
           if (tool.id === "apply_patch") return usePatch
           if (tool.id === "edit" || tool.id === "write") return !usePatch
+
+          if (tool.id === "read_audio") return model.audioInput === true
+          if (tool.id === "transcribe") return model.audioInput !== true
 
           return true
         })
@@ -215,6 +222,7 @@ export namespace ToolRegistry {
     model: {
       providerID: ProviderID
       modelID: ModelID
+      audioInput?: boolean
     },
     agent?: Agent.Info,
   ): Promise<(Awaited<ReturnType<Tool.Info["init"]>> & { id: string })[]> {
