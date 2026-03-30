@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
 import { Portal, useKeyboard, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
@@ -214,7 +214,7 @@ function PermissionTriVoicePrompt(props: {
   const promptRef = usePromptRef()
   const sdk = useSDK()
   const local = useLocal()
-  const voiced = createMemo(() => promptRef.mode === "voice")
+  const [voiced, setVoiced] = createSignal(promptRef.mode === "voice")
   const [classifying, setClassifying] = createSignal(false)
   const [voiceTrace, setVoiceTrace] = createSignal<{
     transcript: string
@@ -279,13 +279,10 @@ function PermissionTriVoicePrompt(props: {
     if (dialog.stack.length > 0) return
 
     if (voiced()) {
-      if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+      if (evt.name === "escape") {
         evt.preventDefault()
-        if (voice.recording()) {
-          voice.cancel()
-          return
-        }
-        props.onNo()
+        voice.cancel()
+        setVoiced(false)
         return
       }
       if (evt.name === "space") {
@@ -440,6 +437,9 @@ function PermissionTriVoicePrompt(props: {
               enter <span style={{ fg: theme.textMuted }}>confirm</span>
             </text>
           </Show>
+          <text fg={theme.text}>
+            esc <span style={{ fg: theme.textMuted }}>{voiced() ? "exit voice" : "reject"}</span>
+          </text>
         </box>
       </box>
     </box>
@@ -795,12 +795,19 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
   const promptRef = usePromptRef()
-  const voiced = createMemo(() => promptRef.mode === "voice")
+  const [voiced, setVoiced] = createSignal(promptRef.mode === "voice")
+  const [pending, setPending] = createSignal("")
 
   const voice = useVoice({
     onResult(text) {
       if (!text.trim()) return
       props.onConfirm(text)
+    },
+    onFinish(text) {
+      batch(() => {
+        setPending(text.trim())
+        setVoiced(false)
+      })
     },
     color: theme.warning,
   })
@@ -809,13 +816,14 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
     if (dialog.stack.length > 0) return
 
     if (voiced()) {
-      if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+      if (evt.name === "escape") {
         evt.preventDefault()
         if (voice.recording()) {
-          voice.cancel()
+          voice.finish()
           return
         }
-        props.onCancel()
+        voice.cancel()
+        setVoiced(false)
         return
       }
       if (evt.name === "space") {
@@ -869,7 +877,17 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         </Show>
         <Show when={!voiced()}>
           <textarea
-            ref={(val: TextareaRenderable) => (input = val)}
+            ref={(val: TextareaRenderable) => {
+              input = val
+              const text = pending()
+              if (text) {
+                setPending("")
+                queueMicrotask(() => {
+                  val.setText(text)
+                  val.gotoLineEnd()
+                })
+              }
+            }}
             focused
             textColor={theme.text}
             focusedTextColor={theme.text}
@@ -892,7 +910,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
             </text>
           </Show>
           <text fg={theme.text}>
-            esc <span style={{ fg: theme.textMuted }}>cancel</span>
+            esc <span style={{ fg: theme.textMuted }}>{voiced() ? "exit voice" : "cancel"}</span>
           </text>
         </box>
       </box>

@@ -1,5 +1,17 @@
 import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, decodePasteBytes, t, dim, fg } from "@opentui/core"
-import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
+import {
+  batch,
+  createEffect,
+  createMemo,
+  type JSX,
+  onMount,
+  createSignal,
+  onCleanup,
+  on,
+  Show,
+  Switch,
+  Match,
+} from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
 import { Filesystem } from "@/util/filesystem"
@@ -161,6 +173,15 @@ export function Prompt(props: PromptProps) {
       setStore("prompt", "input", text)
       submit().finally(() => {
         submitting = false
+      })
+    },
+    onFinish(text) {
+      batch(() => {
+        setStore("mode", "normal")
+        if (text.trim()) {
+          input.setText(text)
+          setStore("prompt", "input", text)
+        }
       })
     },
     audioInput: () => !!local.system.info().hasAudioInput,
@@ -1091,8 +1112,12 @@ export function Prompt(props: PromptProps) {
                 if (store.mode === "voice") {
                   if (e.name === "escape") {
                     e.preventDefault()
-                    voice.cancel()
-                    setStore("mode", "normal")
+                    if (voice.recording()) {
+                      voice.finish()
+                    } else {
+                      voice.cancel()
+                      setStore("mode", "normal")
+                    }
                     return
                   }
                   if (e.name === "s" && props.speaking?.()) {

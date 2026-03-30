@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
@@ -23,7 +23,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   const questions = createMemo(() => props.request.questions)
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
   const promptRef = usePromptRef()
-  const voiced = createMemo(() => promptRef.mode === "voice")
+  const [voiced, setVoiced] = createSignal(promptRef.mode === "voice")
   const tabs = createMemo(() => (voiced() ? questions().length : single() ? 1 : questions().length + 1))
   const [tabHover, setTabHover] = createSignal<number | "confirm" | null>(null)
   const [store, setStore] = createStore({
@@ -230,7 +230,20 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     }
   }
 
-  const voice = useVoice({ onResult: handleVoiceResult, color: theme.warning })
+  function handleVoiceFinish(text: string) {
+    batch(() => {
+      setVoiced(false)
+      if (text.trim() && custom()) {
+        const inputs = [...store.custom]
+        inputs[store.tab] = text.trim()
+        setStore("custom", inputs)
+        setStore("selected", options().length)
+        setStore("editing", true)
+      }
+    })
+  }
+
+  const voice = useVoice({ onResult: handleVoiceResult, onFinish: handleVoiceFinish, color: theme.warning })
 
   createEffect(() => {
     if (voice.recording()) setVoiceTrace(null)
@@ -251,14 +264,11 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
       if (evt.name === "escape") {
         evt.preventDefault()
         if (voice.recording()) {
-          voice.cancel()
+          voice.finish()
           return
         }
-        if (store.editing) {
-          setStore("editing", false)
-          return
-        }
-        reject()
+        voice.cancel()
+        setVoiced(false)
         return
       }
       if (evt.name === "space") {
@@ -653,7 +663,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
           </text>
 
           <text fg={theme.text}>
-            esc <span style={{ fg: theme.textMuted }}>dismiss</span>
+            esc <span style={{ fg: theme.textMuted }}>{voiced() ? "exit voice" : "dismiss"}</span>
           </text>
         </box>
       </box>

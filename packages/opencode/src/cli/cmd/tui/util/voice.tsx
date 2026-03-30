@@ -11,6 +11,7 @@ const transcribeTimeoutMs = 120_000
 
 export function useVoice(opts: {
   onResult: (text: string) => void
+  onFinish?: (text: string) => void
   audioInput?: () => boolean
   onAudio?: (audio: Uint8Array) => void
   color: ColorInput
@@ -25,6 +26,7 @@ export function useVoice(opts: {
   let active = true
   let transcribeAbort: AbortController | undefined
 
+  let finishing = false
   const busy = createMemo(() => transcribing() || !!rec())
   const recording = createMemo(() => !!rec())
 
@@ -56,7 +58,7 @@ export function useVoice(opts: {
 
   function stop(r: ReturnType<typeof record>) {
     setRec(null)
-    if (opts.audioInput?.() && opts.onAudio) {
+    if (!finishing && opts.audioInput?.() && opts.onAudio) {
       r.stop()
         .then((audio) => {
           if (!active) return
@@ -92,6 +94,11 @@ export function useVoice(opts: {
             }),
           ])
           if (!active) return
+          if (finishing) {
+            finishing = false
+            opts.onFinish?.(text)
+            return
+          }
           if (!text.trim()) return
           opts.onResult(text)
         })
@@ -103,6 +110,10 @@ export function useVoice(opts: {
             message: err instanceof Error ? err.message : "An unknown error occurred",
             duration: 5000,
           })
+          if (finishing) {
+            finishing = false
+            opts.onFinish?.("")
+          }
         })
         .finally(() => {
           setTranscribing(false)
@@ -135,6 +146,7 @@ export function useVoice(opts: {
   }
 
   function cancel() {
+    finishing = false
     if (transcribeAbort) {
       transcribeAbort.abort()
       transcribeAbort = undefined
@@ -145,6 +157,14 @@ export function useVoice(opts: {
       r.stop()
       setRec(null)
     }
+  }
+
+  function finish() {
+    if (transcribing()) return
+    const r = rec()
+    if (!r) return
+    finishing = true
+    stop(r)
   }
 
   function placeholder() {
@@ -184,5 +204,5 @@ export function useVoice(opts: {
     )
   }
 
-  return { recording, transcribing, busy, toggle, cancel, placeholder, Indicator }
+  return { recording, transcribing, busy, toggle, cancel, finish, placeholder, Indicator }
 }
