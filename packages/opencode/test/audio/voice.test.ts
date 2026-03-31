@@ -3011,7 +3011,7 @@ describe("voiceSystems", () => {
       "gpt-audio-voice",
       "gemini-flash-voice",
       "gemini-pro-voice",
-      "minimax-m2.5-voice",
+      "minimax-m2-voice",
     ]
     expect(names.length).toBe(Object.keys(voiceSystems).length)
   })
