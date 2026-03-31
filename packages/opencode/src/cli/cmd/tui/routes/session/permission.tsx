@@ -1052,6 +1052,11 @@ function Prompt<const T extends Record<string, string>>(props: {
           <text fg={theme.text}>
             enter <span style={{ fg: theme.textMuted }}>confirm</span>
           </text>
+          <Show when={props.escapeKey}>
+            <text fg={theme.text}>
+              esc <span style={{ fg: theme.textMuted }}>{props.options[props.escapeKey!].toLowerCase()}</span>
+            </text>
+          </Show>
         </box>
       </box>
     </box>

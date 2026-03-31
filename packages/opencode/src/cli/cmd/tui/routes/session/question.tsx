@@ -663,7 +663,8 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
           </text>
 
           <text fg={theme.text}>
-            esc <span style={{ fg: theme.textMuted }}>{voiced() ? "exit voice" : "dismiss"}</span>
+            esc{" "}
+            <span style={{ fg: theme.textMuted }}>{voiced() ? "exit voice" : store.editing ? "back" : "reject"}</span>
           </text>
         </box>
       </box>
