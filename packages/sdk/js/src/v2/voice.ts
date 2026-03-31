@@ -364,8 +364,8 @@ export const voiceSystems = {
     transcription: STT_DEFAULT,
     tts: TTS_DEFAULT,
   },
-  "minimax-m2.5-voice": {
-    model: "opencode/minimax-m2.5",
+  "minimax-m2-voice": {
+    model: "openrouter/minimax/minimax-m2.7",
     transcription: STT_DEFAULT,
     tts: TTS_DEFAULT,
   },
