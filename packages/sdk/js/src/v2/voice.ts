@@ -304,6 +304,11 @@ export interface VoiceSystem {
   apiKey?: string
   /** OpenAI base URL for STT/TTS requests. Falls back to OPENAI_BASE_URL env var. */
   baseUrl?: string
+  /**
+   * When true, buffer the entire assistant turn and produce one TTS call per
+   * turn instead of streaming sentence-by-sentence. Default: false.
+   */
+  batchTurns?: boolean
 }
 
 const TTS_DEFAULT = { model: "gpt-4o-mini-tts", voice: "echo", speed: 1.25 }
@@ -452,6 +457,14 @@ export interface VoiceSessionOptions {
    * to true if the model supports audio output, false otherwise.
    */
   nativeAudioOutput?: boolean
+
+  /**
+   * When true, buffer the entire assistant turn and produce one TTS call per
+   * turn instead of streaming sentence-by-sentence. Produces fewer, longer
+   * audio segments at the cost of higher latency (no audio until the turn
+   * completes). Default: false.
+   */
+  batchTurns?: boolean
 }
 
 export interface VoiceSession {
@@ -489,6 +502,7 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
   const perm = options.permission ?? "safe"
   const minLen = options.minSentenceLength ?? DEFAULT_MIN_SENTENCE_LENGTH
   const speakStatus = options.toolStatus ?? false
+  const batch = options.batchTurns ?? sys.batchTurns ?? false
 
   // Resolve system fields
   const model = parseModel(sys.model)
@@ -585,6 +599,7 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
 
   async function handleDelta(delta: string, expected: number) {
     buffer += delta
+    if (batch) return
     const result = splitSentences(buffer, false, minLen)
     buffer = result.remaining
     for (const sentence of result.complete) {
@@ -597,6 +612,14 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
   }
 
   async function flushBuffer(expected: number) {
+    if (batch) {
+      const cleaned = sanitize(buffer)
+      buffer = ""
+      if (!cleaned) return
+      transcript.push(cleaned)
+      await speakText(cleaned, expected)
+      return
+    }
     if (!buffer.trim()) return
     const result = splitSentences(buffer, true, minLen)
     buffer = result.remaining
@@ -666,20 +689,23 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
           const part = evt.properties.part
           if (part.type !== "tool") continue
           const state = part.state
+          let text: string | undefined
           if (state.status === "running") {
             const label = state.title ?? part.tool
-            const text = `Running ${label}.`
-            transcript.push(text)
-            await speakText(text, generation)
+            text = `Running ${label}.`
           } else if (state.status === "completed") {
             const label = state.title ?? part.tool
-            const text = `Completed ${label}.`
-            transcript.push(text)
-            await speakText(text, generation)
+            text = `Completed ${label}.`
           } else if (state.status === "error") {
-            const text = `Error in ${part.tool}.`
-            transcript.push(text)
-            await speakText(text, generation)
+            text = `Error in ${part.tool}.`
+          }
+          if (text) {
+            if (batch) {
+              buffer += (buffer ? " " : "") + text
+            } else {
+              transcript.push(text)
+              await speakText(text, generation)
+            }
           }
         }
       }
