@@ -55,7 +55,7 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
 // AsyncAudioQueue — async iterable queue for raw audio data
 // ---------------------------------------------------------------------------
 
-export class AsyncAudioQueue extends AsyncQueue<Uint8Array> {}
+export class AsyncAudioQueue extends AsyncQueue<Uint8Array> { }
 
 // ---------------------------------------------------------------------------
 // Inlined audio utilities — thin OpenAI API wrappers
@@ -653,11 +653,11 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
                 typeof Buffer !== "undefined"
                   ? new Uint8Array(Buffer.from(b64, "base64"))
                   : (() => {
-                      const s = atob(b64)
-                      const a = new Uint8Array(s.length)
-                      for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i)
-                      return a
-                    })()
+                    const s = atob(b64)
+                    const a = new Uint8Array(s.length)
+                    for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i)
+                    return a
+                  })()
               output.push(pcm)
             }
           }
@@ -702,10 +702,10 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
             typeof Buffer !== "undefined"
               ? Buffer.from(audio).toString("base64")
               : (() => {
-                  let s = ""
-                  for (let i = 0; i < audio.length; i++) s += String.fromCharCode(audio[i])
-                  return btoa(s)
-                })()
+                let s = ""
+                for (let i = 0; i < audio.length; i++) s += String.fromCharCode(audio[i])
+                return btoa(s)
+              })()
           parts.push({
             type: "file",
             mime: "audio/wav",
@@ -745,14 +745,14 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
     }
   })()
 
-  const done = Promise.all([sseLoop, inputLoop]).then(() => {})
+  const done = Promise.all([sseLoop, inputLoop]).then(() => { })
 
   function abort() {
     generation++
     buffer = ""
     tbuf = ""
     active = ""
-    client.session.abort({ sessionID }).catch(() => {})
+    client.session.abort({ sessionID }).catch(() => { })
   }
 
   function close() {
