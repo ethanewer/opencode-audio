@@ -186,7 +186,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         const provider = sync.data.provider.find((x) => x.id === parsed.providerID)
         const model = provider?.models[parsed.modelID]
         const hasAudioOutput = model?.capabilities?.output?.audio ?? false
-        const hasAudioInput = model?.capabilities?.input?.audio ?? false
+        const hasAudioInput = entry.transcription ? false : (model?.capabilities?.input?.audio ?? false)
         const hasTts = !!entry.tts
         const hasVoice = hasTts || hasAudioOutput
         return {
