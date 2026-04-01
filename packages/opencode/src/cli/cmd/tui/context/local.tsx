@@ -481,7 +481,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             const m = currentModel()
             if (!m) return undefined
             const key = `${m.providerID}/${m.modelID}`
-            return modelStore.variant[key]
+            const v = modelStore.variant[key]
+            if (!v) return undefined
+            if (!this.list().includes(v)) return undefined
+            return v
           },
           list() {
             const m = currentModel()
@@ -495,7 +498,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             const m = currentModel()
             if (!m) return
             const key = `${m.providerID}/${m.modelID}`
-            setModelStore("variant", key, value)
+            setModelStore("variant", key, value ?? "default")
             save()
           },
           cycle() {

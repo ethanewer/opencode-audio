@@ -1,5 +1,5 @@
 import { generateObject } from "ai"
-import type { LanguageModelV2 } from "@ai-sdk/provider"
+import type { LanguageModelV3 } from "@ai-sdk/provider"
 import z from "zod"
 
 const schema = z.object({
@@ -9,7 +9,7 @@ const schema = z.object({
     .describe("How confident you are: 0 = completely unsure, 1 = very confident"),
 })
 
-export async function classify(model: LanguageModelV2, transcript: string, options: string[], question?: string) {
+export async function classify(model: LanguageModelV3, transcript: string, options: string[], question?: string) {
   const result = await generateObject({
     model,
     schema,
