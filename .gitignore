@@ -30,3 +30,4 @@ logs/
 *.bun-build
 tsconfig.tsbuildinfo
 scratch
+packages/opencode/bin/.opencode
