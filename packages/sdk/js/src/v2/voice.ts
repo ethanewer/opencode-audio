@@ -55,7 +55,7 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
 // AsyncAudioQueue — async iterable queue for raw audio data
 // ---------------------------------------------------------------------------
 
-export class AsyncAudioQueue extends AsyncQueue<Uint8Array> { }
+export class AsyncAudioQueue extends AsyncQueue<Uint8Array> {}
 
 // ---------------------------------------------------------------------------
 // Inlined audio utilities — thin OpenAI API wrappers
@@ -305,8 +305,9 @@ export interface VoiceSystem {
   /** OpenAI base URL for STT/TTS requests. Falls back to OPENAI_BASE_URL env var. */
   baseUrl?: string
   /**
-   * When true, buffer the entire assistant turn and produce one TTS call per
-   * turn instead of streaming sentence-by-sentence. Default: false.
+   * When true and toolStatus is enabled, buffer tool status messages and
+   * produce one TTS call per turn instead of speaking each status
+   * individually. Default: false.
    */
   batchTurns?: boolean
 }
@@ -424,13 +425,6 @@ export interface VoiceSessionOptions {
   // ---- Audio behavior ----
 
   /**
-   * Minimum character count before a sentence is emitted for TTS.
-   * Lower values reduce latency for short responses; higher values
-   * produce more natural-sounding speech. Defaults to 40.
-   */
-  minSentenceLength?: number
-
-  /**
    * When true, tool execution status is spoken on the output queue
    * (e.g. "Running bash" / "Completed edit"). Mirrors the TUI's
    * StatusSpeaker behavior. Defaults to false.
@@ -459,10 +453,9 @@ export interface VoiceSessionOptions {
   nativeAudioOutput?: boolean
 
   /**
-   * When true, buffer the entire assistant turn and produce one TTS call per
-   * turn instead of streaming sentence-by-sentence. Produces fewer, longer
-   * audio segments at the cost of higher latency (no audio until the turn
-   * completes). Default: false.
+   * When true and toolStatus is enabled, buffer tool status messages and
+   * produce one TTS call per turn instead of speaking each status
+   * individually. Default: false.
    */
   batchTurns?: boolean
 }
@@ -500,7 +493,6 @@ function parseModel(id: string) {
 export async function createVoiceSession(client: OpencodeClient, options: VoiceSessionOptions): Promise<VoiceSession> {
   const sys: VoiceSystem = typeof options.system === "string" ? voiceSystems[options.system] : options.system
   const perm = options.permission ?? "safe"
-  const minLen = options.minSentenceLength ?? DEFAULT_MIN_SENTENCE_LENGTH
   const speakStatus = options.toolStatus ?? false
   const batch = options.batchTurns ?? sys.batchTurns ?? false
 
@@ -577,6 +569,7 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
 
   // ---- Output loop: SSE events -> sentence splitting -> TTS -> output queue ----
   let buffer = ""
+  let sbuf = "" // batched tool-status buffer (TTS'd on idle)
   let tbuf = "" // transcript buffer for native-audio models
   let active = "" // messageID of the current assistant response
 
@@ -597,41 +590,6 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
     }
   }
 
-  async function handleDelta(delta: string, expected: number) {
-    buffer += delta
-    if (batch) return
-    const result = splitSentences(buffer, false, minLen)
-    buffer = result.remaining
-    for (const sentence of result.complete) {
-      if (generation !== expected) return
-      const cleaned = sanitize(sentence)
-      if (!cleaned) continue
-      transcript.push(cleaned)
-      await speakText(cleaned, expected)
-    }
-  }
-
-  async function flushBuffer(expected: number) {
-    if (batch) {
-      const cleaned = sanitize(buffer)
-      buffer = ""
-      if (!cleaned) return
-      transcript.push(cleaned)
-      await speakText(cleaned, expected)
-      return
-    }
-    if (!buffer.trim()) return
-    const result = splitSentences(buffer, true, minLen)
-    buffer = result.remaining
-    for (const sentence of result.complete) {
-      if (generation !== expected) return
-      const cleaned = sanitize(sentence)
-      if (!cleaned) continue
-      transcript.push(cleaned)
-      await speakText(cleaned, expected)
-    }
-  }
-
   // Start the SSE consumer loop in the background
   const sseLoop = (async () => {
     try {
@@ -647,7 +605,8 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
             tbuf += evt.properties.delta
             continue
           }
-          await handleDelta(evt.properties.delta, generation)
+          // Accumulate for transcript only — TTS is driven by speak tool
+          buffer += evt.properties.delta
         } else if (evt.type === "session.status") {
           if (evt.properties.sessionID !== sessionID) continue
           if (evt.properties.status.type === "idle") {
@@ -655,7 +614,19 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
               if (tbuf.trim()) transcript.push(tbuf.trim())
               tbuf = ""
             } else {
-              await flushBuffer(generation)
+              if (buffer.trim()) {
+                const text = sanitize(buffer)
+                buffer = ""
+                if (text) transcript.push(text)
+              }
+              if (sbuf.trim()) {
+                const text = sanitize(sbuf)
+                sbuf = ""
+                if (text) {
+                  transcript.push(text)
+                  await speakText(text, generation)
+                }
+              }
             }
             active = ""
           }
@@ -665,46 +636,59 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
             requestID: evt.properties.id,
             reply: "reject",
           })
-        } else if (evt.type === "message.part.updated" && receiveAudio) {
+        } else if (evt.type === "message.part.updated") {
           if (evt.properties.sessionID !== sessionID) continue
           const part = evt.properties.part
-          if (part.type === "file" && part.mime.startsWith("audio/")) {
-            // Model produced native audio — push PCM directly to output queue
+
+          // Native audio (gpt-audio) — push PCM directly to output queue
+          if (receiveAudio && part.type === "file" && part.mime.startsWith("audio/")) {
             const b64 = part.url.split(",")[1]
             if (b64) {
               const pcm =
                 typeof Buffer !== "undefined"
                   ? new Uint8Array(Buffer.from(b64, "base64"))
                   : (() => {
-                    const s = atob(b64)
-                    const a = new Uint8Array(s.length)
-                    for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i)
-                    return a
-                  })()
+                      const s = atob(b64)
+                      const a = new Uint8Array(s.length)
+                      for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i)
+                      return a
+                    })()
               output.push(pcm)
             }
           }
-        } else if (evt.type === "message.part.updated" && speakStatus) {
-          if (evt.properties.sessionID !== sessionID) continue
-          const part = evt.properties.part
-          if (part.type !== "tool") continue
-          const state = part.state
-          let text: string | undefined
-          if (state.status === "running") {
-            const label = state.title ?? part.tool
-            text = `Running ${label}.`
-          } else if (state.status === "completed") {
-            const label = state.title ?? part.tool
-            text = `Completed ${label}.`
-          } else if (state.status === "error") {
-            text = `Error in ${part.tool}.`
+
+          // Speak tool completed — TTS the text
+          if (
+            part.type === "tool" &&
+            part.tool === "speak" &&
+            part.state.status === "completed" &&
+            part.state.input?.text
+          ) {
+            const text = String(part.state.input.text)
+            transcript.push(text)
+            await speakText(text, generation)
           }
-          if (text) {
-            if (batch) {
-              buffer += (buffer ? " " : "") + text
-            } else {
-              transcript.push(text)
-              await speakText(text, generation)
+
+          // Tool status speech (opt-in, excludes speak tool itself)
+          if (speakStatus && part.type === "tool" && part.tool !== "speak") {
+            const state = part.state
+            let text: string | undefined
+            if (state.status === "running") {
+              const label = state.title ?? part.tool
+              text = `Running ${label}.`
+            } else if (state.status === "completed") {
+              const label = state.title ?? part.tool
+              text = `Completed ${label}.`
+            } else if (state.status === "error") {
+              text = `Error in ${part.tool}.`
+            }
+            if (text) {
+              if (batch) {
+                sbuf += (sbuf ? " " : "") + text
+              } else {
+                transcript.push(text)
+                await speakText(text, generation)
+              }
             }
           }
         }
@@ -728,10 +712,10 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
             typeof Buffer !== "undefined"
               ? Buffer.from(audio).toString("base64")
               : (() => {
-                let s = ""
-                for (let i = 0; i < audio.length; i++) s += String.fromCharCode(audio[i])
-                return btoa(s)
-              })()
+                  let s = ""
+                  for (let i = 0; i < audio.length; i++) s += String.fromCharCode(audio[i])
+                  return btoa(s)
+                })()
           parts.push({
             type: "file",
             mime: "audio/wav",
@@ -752,6 +736,7 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
         }
         // Reset output state for new prompt
         buffer = ""
+        sbuf = ""
         tbuf = ""
         active = ""
         await client.session.prompt({
@@ -771,14 +756,15 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
     }
   })()
 
-  const done = Promise.all([sseLoop, inputLoop]).then(() => { })
+  const done = Promise.all([sseLoop, inputLoop]).then(() => {})
 
   function abort() {
     generation++
     buffer = ""
+    sbuf = ""
     tbuf = ""
     active = ""
-    client.session.abort({ sessionID }).catch(() => { })
+    client.session.abort({ sessionID }).catch(() => {})
   }
 
   function close() {

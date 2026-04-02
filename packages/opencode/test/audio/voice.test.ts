@@ -872,28 +872,39 @@ describe("createVoiceSession", () => {
     sse.end()
   })
 
-  test("message.part.delta events produce TTS audio on output queue", async () => {
+  test("speak tool event produces TTS audio on output queue", async () => {
     const sse = createMockEventStream()
     const { client } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
-      sessionID: "ses_delta",
+      sessionID: "ses_speak",
       system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
-    // Push enough text as deltas to trigger sentence splitting (>= 40 chars)
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
-        sessionID: "ses_delta",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "This is a sentence that is long enough to trigger TTS. ",
+        sessionID: "ses_speak",
+        part: {
+          id: "p1",
+          sessionID: "ses_speak",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Hello world" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
-    // Wait for the async pipeline to process
     await new Promise((r) => setTimeout(r, 200))
 
     const result = await session.output.next()
@@ -905,7 +916,7 @@ describe("createVoiceSession", () => {
     sse.end()
   })
 
-  test("session idle flushes remaining text buffer", async () => {
+  test("session idle flushes remaining text buffer to transcript only", async () => {
     const sse = createMockEventStream()
     const { client } = createMockClient(sse)
 
@@ -939,9 +950,9 @@ describe("createVoiceSession", () => {
 
     await new Promise((r) => setTimeout(r, 200))
 
-    const result = await session.output.next()
+    const result = await session.transcript.next()
     expect(result.done).toBe(false)
-    expect(result.value).toBeInstanceOf(Uint8Array)
+    expect(result.value).toBe("Short text")
 
     session.close()
     sse.end()
@@ -1299,37 +1310,55 @@ describe("createVoiceSession", () => {
       system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
-    // First sentence will fail TTS
+    // First speak tool event will fail TTS
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_tts_err",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "First sentence that will fail during text to speech conversion. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_tts_err",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "First text that will fail TTS" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
     await new Promise((r) => setTimeout(r, 200))
 
-    // Reset messageID tracking for next message by sending idle then new delta
+    // Second speak tool event should succeed
     sse.push({
-      type: "session.status",
-      properties: { sessionID: "ses_tts_err", status: { type: "idle" } },
-    })
-
-    await new Promise((r) => setTimeout(r, 50))
-
-    // Second sentence should succeed (new message)
-    sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_tts_err",
-        messageID: "msg2",
-        partID: "part2",
-        field: "text",
-        delta: "Second sentence that should succeed and produce some audio output. ",
+        part: {
+          id: "p2",
+          sessionID: "ses_tts_err",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call2",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Second text that should succeed" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
@@ -1567,11 +1596,9 @@ describe("createVoiceSession", () => {
     const { client } = createMockClient(sse)
 
     // Mock TTS to return a multi-chunk stream
-    let ttsCount = 0
     globalThis.fetch = (async (input: any, init: any) => {
       const req = input instanceof Request ? input : new Request(input, init)
       if (req.url.includes("/audio/speech")) {
-        ttsCount++
         const stream = new ReadableStream<Uint8Array>({
           start(ctrl) {
             ctrl.enqueue(new Uint8Array([0x01, 0x02]))
@@ -1594,13 +1621,26 @@ describe("createVoiceSession", () => {
     })
 
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_stream",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "This is a sentence that is long enough to trigger text to speech. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_stream",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Hello world" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
@@ -1621,53 +1661,6 @@ describe("createVoiceSession", () => {
     expect(chunks[0]).toEqual(new Uint8Array([0x01, 0x02]))
     expect(chunks[1]).toEqual(new Uint8Array([0x03, 0x04]))
     expect(chunks[2]).toEqual(new Uint8Array([0x05, 0x06]))
-
-    session.close()
-    sse.end()
-  })
-
-  test("minSentenceLength option reduces sentence threshold", async () => {
-    const sse = createMockEventStream()
-    const { client } = createMockClient(sse)
-
-    let ttsCalled = false
-    let ttsInput = ""
-    globalThis.fetch = (async (input: any, init: any) => {
-      const req = input instanceof Request ? input : new Request(input, init)
-      if (req.url.includes("/audio/speech")) {
-        ttsCalled = true
-        ttsInput = (await req.json()).input
-        return new Response(new Uint8Array([0xaa]), { status: 200 })
-      }
-      return new Response(JSON.stringify({ text: "ok" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    }) as any
-
-    const session = await createVoiceSession(client, {
-      sessionID: "ses_minlen",
-      minSentenceLength: 1,
-      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
-    })
-
-    // "Got it. " is only 7 chars — would be buffered with default 40,
-    // but should be emitted immediately with minSentenceLength=1
-    sse.push({
-      type: "message.part.delta",
-      properties: {
-        sessionID: "ses_minlen",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "Got it. ",
-      },
-    })
-
-    await new Promise((r) => setTimeout(r, 200))
-
-    expect(ttsCalled).toBe(true)
-    expect(ttsInput).toBe("Got it.")
 
     session.close()
     sse.end()
@@ -1919,13 +1912,26 @@ describe("createVoiceSession", () => {
     })
 
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_speed",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "This is a sentence that is long enough to trigger text to speech. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_speed",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Hello world" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
@@ -2108,13 +2114,26 @@ describe("createVoiceSession", () => {
     })
 
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_tts_cfg",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "This is a sentence that is long enough to trigger text to speech. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_tts_cfg",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Hello world" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
@@ -2219,15 +2238,28 @@ describe("createVoiceSession", () => {
     session.input.close()
     await new Promise((r) => setTimeout(r, 100))
 
-    // Trigger TTS
+    // Trigger TTS via speak tool
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_keys",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "This is a sentence that is long enough to trigger text to speech. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_keys",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Hello world" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
     await new Promise((r) => setTimeout(r, 200))
@@ -2266,7 +2298,7 @@ describe("createVoiceSession", () => {
     sse.end()
   })
 
-  test("TTS path emits sanitized transcript alongside audio", async () => {
+  test("speak tool emits transcript alongside audio", async () => {
     const sse = createMockEventStream()
     const { client } = createMockClient(sse)
 
@@ -2276,13 +2308,26 @@ describe("createVoiceSession", () => {
     })
 
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_transcript",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "This is a **bold** sentence that is long enough to trigger TTS. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_transcript",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Hello world" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
@@ -2290,8 +2335,7 @@ describe("createVoiceSession", () => {
 
     const result = await session.transcript.next()
     expect(result.done).toBe(false)
-    // Should be sanitized (bold markers stripped)
-    expect(result.value).toBe("This is a bold sentence that is long enough to trigger TTS.")
+    expect(result.value).toBe("Hello world")
 
     session.close()
     sse.end()
@@ -2534,24 +2578,84 @@ describe("createVoiceSession", () => {
     sse.end()
   })
 
-  test("multiple sentences produce multiple transcript entries", async () => {
+  test("multiple speak tool events produce multiple transcript entries", async () => {
     const sse = createMockEventStream()
     const { client } = createMockClient(sse)
 
     const session = await createVoiceSession(client, {
       sessionID: "ses_multi_t",
-      minSentenceLength: 1,
       system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_multi_t",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "First sentence. Second sentence. Third sentence. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_multi_t",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "First sentence." },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
+      },
+    })
+
+    sse.push({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "ses_multi_t",
+        part: {
+          id: "p2",
+          sessionID: "ses_multi_t",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call2",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Second sentence." },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
+      },
+    })
+
+    sse.push({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "ses_multi_t",
+        part: {
+          id: "p3",
+          sessionID: "ses_multi_t",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call3",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Third sentence." },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
@@ -2590,13 +2694,26 @@ describe("createVoiceSession", () => {
     })
 
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_tts_fail_t",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "This sentence should still appear in transcript despite TTS failure. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_tts_fail_t",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "This should appear in transcript despite TTS failure" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
@@ -2605,7 +2722,7 @@ describe("createVoiceSession", () => {
     // Transcript should still have the text even though TTS failed
     const result = await session.transcript.next()
     expect(result.done).toBe(false)
-    expect(result.value).toBe("This sentence should still appear in transcript despite TTS failure.")
+    expect(result.value).toBe("This should appear in transcript despite TTS failure")
 
     session.close()
     sse.end()
@@ -2900,7 +3017,7 @@ describe("createVoiceSession", () => {
     sse.end()
   })
 
-  test("sequential TTS responses produce ordered transcript entries", async () => {
+  test("sequential speak tool events produce ordered transcript entries", async () => {
     const sse = createMockEventStream()
     const { client } = createMockClient(sse)
 
@@ -2909,37 +3026,53 @@ describe("createVoiceSession", () => {
       system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
     })
 
-    // First response
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_seq_t",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "First response sentence that is long enough to trigger. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_seq_t",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "First response" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
     await new Promise((r) => setTimeout(r, 200))
 
-    // Idle between responses
     sse.push({
-      type: "session.status",
-      properties: { sessionID: "ses_seq_t", status: { type: "idle" } },
-    })
-
-    await new Promise((r) => setTimeout(r, 50))
-
-    // Second response (new messageID)
-    sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_seq_t",
-        messageID: "msg2",
-        partID: "part2",
-        field: "text",
-        delta: "Second response sentence that is also long enough to trigger. ",
+        part: {
+          id: "p2",
+          sessionID: "ses_seq_t",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call2",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Second response" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
       },
     })
 
@@ -2965,7 +3098,7 @@ describe("createVoiceSession", () => {
 
   // ---- batchTurns ----
 
-  test("batchTurns true does not produce TTS during delta events", async () => {
+  test("batchTurns true accumulates tool status into buffer", async () => {
     const sse = createMockEventStream()
     const { client } = createMockClient(sse)
 
@@ -2974,159 +3107,6 @@ describe("createVoiceSession", () => {
       const req = input instanceof Request ? input : new Request(input, init)
       if (req.url.includes("/audio/speech")) {
         ttsCalled = true
-        return new Response(new Uint8Array([0xaa]), { status: 200 })
-      }
-      return new Response(JSON.stringify({ text: "ok" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    }) as any
-
-    const session = await createVoiceSession(client, {
-      sessionID: "ses_batch_no_tts",
-      batchTurns: true,
-      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
-    })
-
-    sse.push({
-      type: "message.part.delta",
-      properties: {
-        sessionID: "ses_batch_no_tts",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "This is a very long sentence that would normally trigger TTS immediately. ",
-      },
-    })
-
-    await new Promise((r) => setTimeout(r, 200))
-    expect(ttsCalled).toBe(false)
-
-    session.close()
-    sse.end()
-  })
-
-  test("batchTurns true produces single TTS call and transcript on idle", async () => {
-    const sse = createMockEventStream()
-    const { client } = createMockClient(sse)
-
-    const ttsInputs: string[] = []
-    globalThis.fetch = (async (input: any, init: any) => {
-      const req = input instanceof Request ? input : new Request(input, init)
-      if (req.url.includes("/audio/speech")) {
-        ttsInputs.push((await req.json()).input)
-        return new Response(new Uint8Array([0xbb]), { status: 200 })
-      }
-      return new Response(JSON.stringify({ text: "ok" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    }) as any
-
-    const session = await createVoiceSession(client, {
-      sessionID: "ses_batch_idle",
-      batchTurns: true,
-      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
-    })
-
-    sse.push({
-      type: "message.part.delta",
-      properties: {
-        sessionID: "ses_batch_idle",
-        messageID: "msg1",
-        partID: "part1",
-        field: "text",
-        delta: "First sentence. Second sentence. Third sentence.",
-      },
-    })
-
-    await new Promise((r) => setTimeout(r, 50))
-    expect(ttsInputs.length).toBe(0)
-
-    sse.push({
-      type: "session.status",
-      properties: { sessionID: "ses_batch_idle", status: { type: "idle" } },
-    })
-
-    await new Promise((r) => setTimeout(r, 200))
-
-    expect(ttsInputs.length).toBe(1)
-    expect(ttsInputs[0]).toBe("First sentence. Second sentence. Third sentence.")
-
-    const t = await session.transcript.next()
-    expect(t.value).toBe("First sentence. Second sentence. Third sentence.")
-
-    session.close()
-    sse.end()
-  })
-
-  test("batchTurns true concatenates multiple deltas into one output", async () => {
-    const sse = createMockEventStream()
-    const { client } = createMockClient(sse)
-
-    const ttsInputs: string[] = []
-    globalThis.fetch = (async (input: any, init: any) => {
-      const req = input instanceof Request ? input : new Request(input, init)
-      if (req.url.includes("/audio/speech")) {
-        ttsInputs.push((await req.json()).input)
-        return new Response(new Uint8Array([0xcc]), { status: 200 })
-      }
-      return new Response(JSON.stringify({ text: "ok" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    }) as any
-
-    const session = await createVoiceSession(client, {
-      sessionID: "ses_batch_multi",
-      batchTurns: true,
-      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
-    })
-
-    sse.push({
-      type: "message.part.delta",
-      properties: { sessionID: "ses_batch_multi", messageID: "msg1", partID: "p1", field: "text", delta: "Hello " },
-    })
-    sse.push({
-      type: "message.part.delta",
-      properties: { sessionID: "ses_batch_multi", messageID: "msg1", partID: "p1", field: "text", delta: "world. " },
-    })
-    sse.push({
-      type: "message.part.delta",
-      properties: {
-        sessionID: "ses_batch_multi",
-        messageID: "msg1",
-        partID: "p1",
-        field: "text",
-        delta: "How are you?",
-      },
-    })
-
-    await new Promise((r) => setTimeout(r, 50))
-
-    sse.push({
-      type: "session.status",
-      properties: { sessionID: "ses_batch_multi", status: { type: "idle" } },
-    })
-
-    await new Promise((r) => setTimeout(r, 200))
-
-    expect(ttsInputs.length).toBe(1)
-    expect(ttsInputs[0]).toBe("Hello world. How are you?")
-
-    session.close()
-    sse.end()
-  })
-
-  test("batchTurns true accumulates tool status into buffer", async () => {
-    const sse = createMockEventStream()
-    const { client } = createMockClient(sse)
-
-    const ttsInputs: string[] = []
-    globalThis.fetch = (async (input: any, init: any) => {
-      const req = input instanceof Request ? input : new Request(input, init)
-      if (req.url.includes("/audio/speech")) {
-        ttsInputs.push((await req.json()).input)
         return new Response(new Uint8Array([0xdd]), { status: 200 })
       }
       return new Response(JSON.stringify({ text: "ok" }), {
@@ -3143,13 +3123,19 @@ describe("createVoiceSession", () => {
     })
 
     sse.push({
-      type: "message.part.delta",
+      type: "message.part.updated",
       properties: {
         sessionID: "ses_batch_tool",
-        messageID: "msg1",
-        partID: "p1",
-        field: "text",
-        delta: "Let me check. ",
+        part: {
+          id: "p1",
+          sessionID: "ses_batch_tool",
+          messageID: "msg1",
+          type: "tool",
+          callID: "c1",
+          tool: "bash",
+          state: { status: "running", input: { command: "ls" }, title: "listing files", time: { start: Date.now() } },
+        },
+        time: Date.now(),
       },
     })
 
@@ -3164,16 +3150,18 @@ describe("createVoiceSession", () => {
           sessionID: "ses_batch_tool",
           messageID: "msg1",
           type: "tool",
-          callID: "c1",
-          tool: "bash",
-          state: { status: "running", input: { command: "ls" }, title: "listing files", time: { start: Date.now() } },
+          callID: "c2",
+          tool: "read",
+          state: { status: "running", input: { path: "." }, title: "reading file", time: { start: Date.now() } },
         },
         time: Date.now(),
       },
     })
 
     await new Promise((r) => setTimeout(r, 50))
-    expect(ttsInputs.length).toBe(0)
+
+    // No TTS calls during accumulation
+    expect(ttsCalled).toBe(false)
 
     sse.push({
       type: "session.status",
@@ -3182,8 +3170,18 @@ describe("createVoiceSession", () => {
 
     await new Promise((r) => setTimeout(r, 200))
 
-    expect(ttsInputs.length).toBe(1)
-    expect(ttsInputs[0]).toBe("Let me check. Running listing files.")
+    // TTS called on idle with batched status
+    expect(ttsCalled).toBe(true)
+
+    // Transcript entry produced
+    const result = await session.transcript.next()
+    expect(result.done).toBe(false)
+    expect(result.value).toBe("Running listing files. Running reading file.")
+
+    // Audio output produced
+    const audio = await session.output.next()
+    expect(audio.done).toBe(false)
+    expect(audio.value).toBeInstanceOf(Uint8Array)
 
     session.close()
     sse.end()
@@ -3235,133 +3233,6 @@ describe("createVoiceSession", () => {
 
     const t = await session.transcript.next()
     expect(t.value).toBe("Native audio text.")
-
-    session.close()
-    sse.end()
-  })
-
-  test("VoiceSystem batchTurns is honored as default", async () => {
-    const sse = createMockEventStream()
-    const { client } = createMockClient(sse)
-
-    let ttsCalled = false
-    globalThis.fetch = (async (input: any, init: any) => {
-      const req = input instanceof Request ? input : new Request(input, init)
-      if (req.url.includes("/audio/speech")) {
-        ttsCalled = true
-        return new Response(new Uint8Array([0xff]), { status: 200 })
-      }
-      return new Response(JSON.stringify({ text: "ok" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    }) as any
-
-    const session = await createVoiceSession(client, {
-      sessionID: "ses_sys_batch",
-      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1", batchTurns: true },
-    })
-
-    sse.push({
-      type: "message.part.delta",
-      properties: {
-        sessionID: "ses_sys_batch",
-        messageID: "msg1",
-        partID: "p1",
-        field: "text",
-        delta: "Long enough sentence that would trigger TTS in streaming mode. ",
-      },
-    })
-
-    await new Promise((r) => setTimeout(r, 200))
-    expect(ttsCalled).toBe(false)
-
-    session.close()
-    sse.end()
-  })
-
-  test("options batchTurns overrides VoiceSystem batchTurns", async () => {
-    const sse = createMockEventStream()
-    const { client } = createMockClient(sse)
-
-    const ttsInputs: string[] = []
-    globalThis.fetch = (async (input: any, init: any) => {
-      const req = input instanceof Request ? input : new Request(input, init)
-      if (req.url.includes("/audio/speech")) {
-        ttsInputs.push((await req.json()).input)
-        return new Response(new Uint8Array([0xab]), { status: 200 })
-      }
-      return new Response(JSON.stringify({ text: "ok" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    }) as any
-
-    // System has batchTurns: true but options override to false
-    const session = await createVoiceSession(client, {
-      sessionID: "ses_override",
-      batchTurns: false,
-      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1", batchTurns: true },
-    })
-
-    sse.push({
-      type: "message.part.delta",
-      properties: {
-        sessionID: "ses_override",
-        messageID: "msg1",
-        partID: "p1",
-        field: "text",
-        delta: "This sentence is long enough to trigger streaming TTS output. ",
-      },
-    })
-
-    await new Promise((r) => setTimeout(r, 200))
-
-    // Should have called TTS immediately (streaming mode)
-    expect(ttsInputs.length).toBe(1)
-
-    session.close()
-    sse.end()
-  })
-
-  test("batchTurns false preserves sentence-level streaming", async () => {
-    const sse = createMockEventStream()
-    const { client } = createMockClient(sse)
-
-    const ttsInputs: string[] = []
-    globalThis.fetch = (async (input: any, init: any) => {
-      const req = input instanceof Request ? input : new Request(input, init)
-      if (req.url.includes("/audio/speech")) {
-        ttsInputs.push((await req.json()).input)
-        return new Response(new Uint8Array([0xcd]), { status: 200 })
-      }
-      return new Response(JSON.stringify({ text: "ok" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    }) as any
-
-    const session = await createVoiceSession(client, {
-      sessionID: "ses_no_batch",
-      batchTurns: false,
-      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
-    })
-
-    sse.push({
-      type: "message.part.delta",
-      properties: {
-        sessionID: "ses_no_batch",
-        messageID: "msg1",
-        partID: "p1",
-        field: "text",
-        delta: "First sentence long enough for TTS. Second sentence also long enough. ",
-      },
-    })
-
-    await new Promise((r) => setTimeout(r, 200))
-
-    // Streaming mode: should have split and called TTS per sentence
-    expect(ttsInputs.length).toBeGreaterThanOrEqual(1)
 
     session.close()
     sse.end()

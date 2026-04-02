@@ -256,6 +256,7 @@ export namespace SessionPrompt {
         messages: MessageV2.WithParts[]
         agent: Agent.Info
         session: Session.Info
+        audioOutput?: boolean
       }) {
         const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
         if (!userMessage) return input.messages
@@ -308,6 +309,12 @@ export namespace SessionPrompt {
         const plan = Session.plan(input.session)
         const exists = yield* fsys.existsSafe(plan)
         if (!exists) yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))
+        const voice = input.agent.name.startsWith("voice-")
+        const clarify = voice
+          ? input.audioOutput
+            ? "speak directly to"
+            : "use the speak tool to"
+          : "use the question tool to"
         const part = yield* sessions.updatePart({
           id: PartID.ascending(),
           messageID: userMessage.info.id,
@@ -333,7 +340,7 @@ Goal: Gain a comprehensive understanding of the user's request by reading throug
    - Quality over quantity - 3 agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
    - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
 
-3. After exploring the code, use the question tool to clarify ambiguities in the user request up front.
+3. After exploring the code, ${clarify} clarify ambiguities in the user request up front.
 
 ### Phase 2: Design
 Goal: Design an implementation approach.
@@ -366,7 +373,7 @@ In the agent prompt:
 Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
 1. Read the critical files identified by agents to deepen your understanding
 2. Ensure that the plans align with the user's original request
-3. Use question tool to clarify any remaining questions with the user
+3. ${clarify.charAt(0).toUpperCase() + clarify.slice(1)} clarify any remaining questions with the user
 
 ### Phase 4: Final Plan
 Goal: Write your final plan to the plan file (the only file you can edit).
@@ -379,7 +386,7 @@ Goal: Write your final plan to the plan file (the only file you can edit).
 At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.
 This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.
 
-**Important:** Use question tool to clarify requirements/approach, use plan_exit to request plan approval. Do NOT use question tool to ask "Is this plan okay?" - that's what plan_exit does.
+**Important:** ${clarify.charAt(0).toUpperCase() + clarify.slice(1)} clarify requirements/approach, use plan_exit to request plan approval. Do NOT ${clarify} ask "Is this plan okay?" - that's what plan_exit does.
 
 NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
 </system-reminder>`,
@@ -438,7 +445,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         })
 
         for (const item of yield* registry.tools(
-          { modelID: ModelID.make(input.model.api.id), providerID: input.model.providerID },
+          {
+            modelID: ModelID.make(input.model.api.id),
+            providerID: input.model.providerID,
+            audioOutput: input.model.capabilities?.output?.audio,
+          },
           input.agent,
         )) {
           const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
@@ -1425,7 +1436,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             const maxSteps = agent.steps ?? Infinity
             const isLastStep = step >= maxSteps
-            msgs = yield* insertReminders({ messages: msgs, agent, session })
+            msgs = yield* insertReminders({
+              messages: msgs,
+              agent,
+              session,
+              audioOutput: model.capabilities?.output?.audio,
+            })
 
             const msg: MessageV2.Assistant = {
               id: MessageID.ascending(),

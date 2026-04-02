@@ -29,6 +29,7 @@ import { Truncate } from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
 import { TranscribeTool } from "./transcribe"
 import { ReadAudioTool } from "./read_audio"
+import { SpeakTool } from "./speak"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 import { Effect, Layer, ServiceMap } from "effect"
@@ -46,7 +47,7 @@ export namespace ToolRegistry {
     readonly register: (tool: Tool.Info) => Effect.Effect<void>
     readonly ids: () => Effect.Effect<string[]>
     readonly tools: (
-      model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean },
+      model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean },
       agent?: Agent.Info,
     ) => Effect.Effect<(Tool.Def & { id: string })[]>
   }
@@ -135,6 +136,7 @@ export namespace ToolRegistry {
           ApplyPatchTool,
           TranscribeTool,
           ReadAudioTool,
+          SpeakTool,
           ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...(cfg.experimental?.batch_tool === true ? [BatchTool] : []),
           ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
@@ -159,7 +161,7 @@ export namespace ToolRegistry {
       })
 
       const tools = Effect.fn("ToolRegistry.tools")(function* (
-        model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean },
+        model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean },
         agent?: Agent.Info,
       ) {
         const state = yield* InstanceState.get(cache)
@@ -176,6 +178,10 @@ export namespace ToolRegistry {
 
           if (tool.id === "read_audio") return model.audioInput === true
           if (tool.id === "transcribe") return model.audioInput !== true
+
+          const voice = agent?.name.startsWith("voice-") ?? false
+          if (tool.id === "speak") return voice && model.audioOutput !== true
+          if (tool.id === "question") return !voice
 
           return true
         })
@@ -224,6 +230,7 @@ export namespace ToolRegistry {
       providerID: ProviderID
       modelID: ModelID
       audioInput?: boolean
+      audioOutput?: boolean
     },
     agent?: Agent.Info,
   ): Promise<(Tool.Def & { id: string })[]> {

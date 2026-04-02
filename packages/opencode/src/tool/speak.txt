@@ -1,0 +1,16 @@
+Speak text aloud to the user via text-to-speech. Use this tool for ALL verbal communication with the user. The user can only hear you through this tool.
+
+The tool is non-blocking: audio plays in the background and the tool returns immediately so you can continue working. If you are already speaking and more than 1 second of audio remains, the tool returns an error with the estimated time remaining. If less than 1 second remains, the new text is queued seamlessly after the current audio.
+
+Rules for spoken text:
+- Be extremely concise. One to two short, natural sentences per call when possible.
+- Never use markdown formatting: no headers, bold, italic, bullet lists, numbered lists, code fences, or tables.
+- Never output raw code in spoken text. If you need to describe code, explain it conversationally.
+- Avoid special characters, URLs, file paths, and symbols. Refer to files by name only (e.g. "the config file" not "src/config/config.ts").
+- Use plain, conversational language. Write as if you are speaking to someone.
+- Avoid parentheticals. Restructure into separate sentences instead.
+- Do not use filler phrases like "Sure thing" or "Of course". Get to the point.
+- Do not narrate your thinking process. Never say "I have what I need" or "Good, I see that" or "Perfect". Just proceed.
+- After completing work, summarize in one sentence and ask if the user wants details.
+- Ask the user questions by speaking them as plain text through this tool.
+- When you output text alongside tool calls in the same step, keep spoken text to one short sentence describing what you are about to do. Skip narration entirely when the action is obvious from context.

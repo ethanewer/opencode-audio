@@ -215,6 +215,7 @@ function PermissionTriVoicePrompt(props: {
   const sdk = useSDK()
   const local = useLocal()
   const [voiced, setVoiced] = createSignal(promptRef.mode === "voice")
+  const speaking = () => voiced()
   const [classifying, setClassifying] = createSignal(false)
   const [voiceTrace, setVoiceTrace] = createSignal<{
     transcript: string
@@ -229,10 +230,11 @@ function PermissionTriVoicePrompt(props: {
 
     const quick = classifyPermission(trimmed)
     if (quick) {
-      setVoiceTrace({ transcript: trimmed, matched: permissionVoiceLabel(quick), confidence: 1 })
-      if (quick === "reject") props.onNo()
-      else if (quick === "allow once") props.onYes()
-      else if (quick === "allow always") props.onAlways()
+      const mapped = speaking() && quick === "allow always" ? "allow once" : quick
+      setVoiceTrace({ transcript: trimmed, matched: permissionVoiceLabel(mapped), confidence: 1 })
+      if (mapped === "reject") props.onNo()
+      else if (mapped === "allow once") props.onYes()
+      else if (mapped === "allow always") props.onAlways()
       return
     }
 
@@ -243,12 +245,13 @@ function PermissionTriVoicePrompt(props: {
     }
     setClassifying(true)
     try {
+      const opts = speaking() ? (["reject", "allow once"] as const) : ([...PERMISSION_VOICE] as const)
       const result = await sdk.classify({
         providerID: model.providerID,
         modelID: model.modelID,
         transcript: text,
-        options: [...PERMISSION_VOICE],
-        question: "Permission: allow once, allow always, or reject.",
+        options: [...opts],
+        question: speaking() ? "Permission: allow or reject." : "Permission: allow once, allow always, or reject.",
       })
       setClassifying(false)
       if (!voiced()) return
@@ -257,11 +260,12 @@ function PermissionTriVoicePrompt(props: {
         setVoiceTrace({ transcript: trimmed, matched: "Didn't catch that, try again", confidence: null })
         return
       }
+      const option = speaking() && result.option === "allow always" ? "allow once" : result.option
       const conf = typeof result.confidence === "number" ? result.confidence : null
-      setVoiceTrace({ transcript: trimmed, matched: permissionVoiceLabel(result.option), confidence: conf })
-      if (result.option === "reject") props.onNo()
-      else if (result.option === "allow once") props.onYes()
-      else if (result.option === "allow always") props.onAlways()
+      setVoiceTrace({ transcript: trimmed, matched: permissionVoiceLabel(option), confidence: conf })
+      if (option === "reject") props.onNo()
+      else if (option === "allow once") props.onYes()
+      else if (option === "allow always") props.onAlways()
     } catch {
       setClassifying(false)
       if (!voiced()) return
