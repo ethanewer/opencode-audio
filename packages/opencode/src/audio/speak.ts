@@ -16,6 +16,10 @@ const SAMPLE_RATE = 24000
 const CHANNELS = 1
 const BITS = 16
 
+// Pre-fill silence so ffplay can initialise its audio device before real
+// samples arrive.  100ms at 24 kHz 16-bit mono = 4800 bytes of zeros.
+const SILENCE = new Uint8Array((SAMPLE_RATE * CHANNELS * (BITS / 8)) / 10)
+
 function apiKey(): string {
   const key = process.env.OPENAI_API_KEY
   if (!key) throw new Error("OPENAI_API_KEY is required for TTS")
@@ -142,6 +146,7 @@ export function play(audio: Uint8Array, options?: { speed?: number }) {
       stdout: "ignore",
       stderr: "ignore",
     })
+    proc.stdin.write(SILENCE)
     proc.stdin.write(audio)
     proc.stdin.end()
 
@@ -197,6 +202,7 @@ export function playStream(stream: ReadableStream<Uint8Array>, options?: { speed
     // Pipe chunks to stdin as they arrive
     const pipe = (async () => {
       const reader = stream.getReader()
+      proc.stdin.write(SILENCE)
       try {
         while (true) {
           const { done, value } = await reader.read()

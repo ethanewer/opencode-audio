@@ -1356,6 +1356,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const ctx = yield* InstanceState.context
           let structured: unknown | undefined
           let step = 0
+          let nudged = false
           const session = yield* sessions.get(sessionID)
 
           while (true) {
@@ -1384,6 +1385,40 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               !["tool-calls"].includes(lastAssistant.finish) &&
               lastUser.id < lastAssistant.id
             ) {
+              // Voice agent fallback: if the model finished without using the
+              // speak tool, give it one more turn to speak its result aloud.
+              if (!nudged && lastUser.agent.startsWith("voice-")) {
+                const model = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
+                if (!model.capabilities?.output?.audio) {
+                  const spoke = msgs.some(
+                    (m) =>
+                      m.info.role === "assistant" &&
+                      m.info.id > lastUser!.id &&
+                      m.parts.some((p) => p.type === "tool" && p.tool === "speak"),
+                  )
+                  if (!spoke) {
+                    nudged = true
+                    const mid = MessageID.ascending()
+                    yield* sessions.updateMessage({
+                      id: mid,
+                      sessionID,
+                      role: "user",
+                      time: { created: Date.now() },
+                      agent: lastUser.agent,
+                      model: lastUser.model,
+                    } satisfies MessageV2.User)
+                    yield* sessions.updatePart({
+                      id: PartID.ascending(),
+                      messageID: mid,
+                      sessionID,
+                      type: "text",
+                      text: "You did not use the speak tool. The user is in voice mode and cannot read text. Use the speak tool now to give the user a brief spoken summary.",
+                      synthetic: true,
+                    } satisfies MessageV2.TextPart)
+                    continue
+                  }
+                }
+              }
               log.info("exiting loop", { sessionID })
               break
             }
