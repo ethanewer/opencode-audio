@@ -38,6 +38,8 @@ export namespace ModelsDev {
       .object({
         input: z.number(),
         output: z.number(),
+        input_audio: z.number().optional(),
+        output_audio: z.number().optional(),
         cache_read: z.number().optional(),
         cache_write: z.number().optional(),
         context_over_200k: z

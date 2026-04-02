@@ -822,6 +822,8 @@ export namespace Provider {
       cost: z.object({
         input: z.number(),
         output: z.number(),
+        input_audio: z.number().optional(),
+        output_audio: z.number().optional(),
         cache: z.object({
           read: z.number(),
           write: z.number(),
@@ -909,6 +911,8 @@ export namespace Provider {
       cost: {
         input: model.cost?.input ?? 0,
         output: model.cost?.output ?? 0,
+        input_audio: model.cost?.input_audio,
+        output_audio: model.cost?.output_audio,
         cache: {
           read: model.cost?.cache_read ?? 0,
           write: model.cost?.cache_write ?? 0,

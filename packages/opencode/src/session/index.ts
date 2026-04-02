@@ -244,7 +244,7 @@ export namespace Session {
 
   export const getUsage = (input: {
     model: Provider.Model
-    usage: LanguageModelV2Usage
+    usage: LanguageModelV2Usage & { raw?: Record<string, unknown> }
     metadata?: ProviderMetadata
   }) => {
     const safe = (value: number) => {
@@ -268,10 +268,19 @@ export namespace Session {
         0) as number,
     )
 
+    // Extract audio token counts from the raw provider usage data (OpenAI)
+    const raw = input.usage.raw as Record<string, any> | undefined
+    const audioIn = safe(raw?.prompt_tokens_details?.audio_tokens ?? 0)
+    const audioOut = safe(raw?.completion_tokens_details?.audio_tokens ?? 0)
+
     // AI SDK v6 normalized inputTokens to include cached tokens across all providers
     // (including Anthropic/Bedrock which previously excluded them). Always subtract cache
     // tokens to get the non-cached input count for separate cost calculation.
     const adjustedInputTokens = safe(inputTokens - cacheReadInputTokens - cacheWriteInputTokens)
+
+    // Separate text tokens from audio tokens for correct rate application
+    const textIn = safe(Math.max(0, adjustedInputTokens - audioIn))
+    const textOut = safe(Math.max(0, outputTokens - audioOut))
 
     const total = input.usage.totalTokens
 
@@ -290,18 +299,32 @@ export namespace Session {
       input.model.cost?.experimentalOver200K && tokens.input + tokens.cache.read > 200_000
         ? input.model.cost.experimentalOver200K
         : input.model.cost
+
+    // Use audio-specific rates when available, otherwise fall back to text rates
+    const audioInRate = input.model.cost?.input_audio ?? costInfo?.input ?? 0
+    const audioOutRate = input.model.cost?.output_audio ?? costInfo?.output ?? 0
+
+    const audioInputCost = safe(new Decimal(audioIn).mul(audioInRate).div(1_000_000).toNumber())
+    const audioOutputCost = safe(new Decimal(audioOut).mul(audioOutRate).div(1_000_000).toNumber())
+
     return {
       cost: safe(
         new Decimal(0)
-          .add(new Decimal(tokens.input).mul(costInfo?.input ?? 0).div(1_000_000))
-          .add(new Decimal(tokens.output).mul(costInfo?.output ?? 0).div(1_000_000))
+          .add(new Decimal(textIn).mul(costInfo?.input ?? 0).div(1_000_000))
+          .add(new Decimal(textOut).mul(costInfo?.output ?? 0).div(1_000_000))
           .add(new Decimal(tokens.cache.read).mul(costInfo?.cache?.read ?? 0).div(1_000_000))
           .add(new Decimal(tokens.cache.write).mul(costInfo?.cache?.write ?? 0).div(1_000_000))
           // TODO: update models.dev to have better pricing model, for now:
           // charge reasoning tokens at the same rate as output tokens
           .add(new Decimal(tokens.reasoning).mul(costInfo?.output ?? 0).div(1_000_000))
+          .add(audioInputCost)
+          .add(audioOutputCost)
           .toNumber(),
       ),
+      audioCost: {
+        input: audioInputCost,
+        output: audioOutputCost,
+      },
       tokens,
     }
   }

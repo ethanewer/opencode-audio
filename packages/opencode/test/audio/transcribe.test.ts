@@ -1,14 +1,37 @@
-import { describe, test, expect, mock } from "bun:test"
+import { describe, test, expect, mock, beforeEach, afterAll } from "bun:test"
 import path from "path"
 import { tmpdir } from "../fixture/fixture"
 
 let lastModel: string | undefined
-mock.module("ai", () => ({
-  experimental_transcribe: async (opts: { model: { modelId: string }; audio: Uint8Array }) => {
-    lastModel = opts.model.modelId
-    return { text: `transcribed ${opts.audio.length} bytes` }
-  },
-}))
+
+// Set required env var for the module
+process.env.OPENAI_API_KEY = "test-key"
+
+const origFetch = globalThis.fetch
+afterAll(() => {
+  globalThis.fetch = origFetch
+})
+beforeEach(() => {
+  lastModel = undefined
+  globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+    const body = init?.body as FormData
+    lastModel = body?.get("model") as string
+    const audioFile = body?.get("file") as File
+    const bytes = audioFile ? new Uint8Array(await audioFile.arrayBuffer()) : new Uint8Array()
+    return new Response(
+      JSON.stringify({
+        text: `transcribed ${bytes.length} bytes`,
+        usage: {
+          type: "tokens",
+          input_tokens: 10,
+          output_tokens: 5,
+          total_tokens: 15,
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )
+  }) as unknown as typeof fetch
+})
 
 const { transcribe, transcribeFile } = await import("../../src/audio/transcribe")
 
@@ -72,5 +95,18 @@ describe("audio.transcribe", () => {
     await Bun.write(wav, data)
     const text = await transcribeFile(wav)
     expect(text).toBe("transcribed 1024 bytes")
+  })
+
+  test("transcribe calls onUsage with token counts", async () => {
+    let usage: any
+    await transcribe(new Uint8Array([1, 2, 3]), undefined, {
+      onUsage: (u) => {
+        usage = u
+      },
+    })
+    expect(usage).toBeDefined()
+    expect(usage.input_tokens).toBe(10)
+    expect(usage.output_tokens).toBe(5)
+    expect(usage.total_tokens).toBe(15)
   })
 })

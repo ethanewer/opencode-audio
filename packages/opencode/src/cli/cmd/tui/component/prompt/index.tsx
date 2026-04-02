@@ -216,6 +216,7 @@ export function Prompt(props: PromptProps) {
         }
       })
     },
+    sessionID: () => props.sessionID,
     audioInput: () => !!local.system.info().hasAudioInput,
     async onAudio(audio) {
       if (store.mode !== "voice") return

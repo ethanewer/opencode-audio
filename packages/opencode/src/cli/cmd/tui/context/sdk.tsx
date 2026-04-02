@@ -16,7 +16,10 @@ export type ClassifyFn = (input: {
   question?: string
 }) => Promise<{ option: string | null; confidence: number }>
 
-export type TranscribeFn = (input: { audio: Uint8Array; model?: string }) => Promise<string>
+export type TranscribeFn = (input: {
+  audio: Uint8Array
+  model?: string
+}) => Promise<string | { text: string; usage?: { input_tokens: number; output_tokens: number; total_tokens: number } }>
 
 export type SpeakFn = (input: { text: string; model?: string; voice?: string }) => Promise<string>
 

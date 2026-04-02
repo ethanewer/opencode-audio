@@ -1,13 +1,26 @@
 import { createSignal, onCleanup, createEffect, createMemo, Show } from "solid-js"
 import { t, fg, bold, dim, type ColorInput } from "@opentui/core"
 import { record } from "@/audio/record"
-import { transcribe as transcribeLocal } from "@/audio/transcribe"
+import { transcribe as transcribeLocal, type TranscriptionUsage } from "@/audio/transcribe"
+import * as AudioCost from "@/audio/cost"
 import { useSync } from "@tui/context/sync"
 import { useLocal } from "@tui/context/local"
 import { useToast } from "@tui/ui/toast"
 import { useSDK } from "@tui/context/sdk"
 
 const transcribeTimeoutMs = 120_000
+
+// Transcription model pricing (per 1M tokens)
+const TRANSCRIPTION_RATES = {
+  input: 1.25, // gpt-4o-mini-transcribe audio input tokens
+  output: 5.0, // gpt-4o-mini-transcribe text output tokens
+}
+
+function trackTranscriptionCost(id: string, usage: TranscriptionUsage) {
+  const cost =
+    (usage.input_tokens * TRANSCRIPTION_RATES.input + usage.output_tokens * TRANSCRIPTION_RATES.output) / 1_000_000
+  AudioCost.add(id, "input", cost)
+}
 
 export function useVoice(opts: {
   onResult: (text: string) => void
@@ -16,6 +29,7 @@ export function useVoice(opts: {
   onAudio?: (audio: Uint8Array) => void
   color: ColorInput
   stopDelay?: number
+  sessionID?: () => string | undefined
 }) {
   const sync = useSync()
   const local = useLocal()
@@ -81,8 +95,15 @@ export function useVoice(opts: {
         .then(async (audio) => {
           if (abort.signal.aborted) return
           const model = local.system.current()?.transcription ?? sync.data.config.experimental?.voice?.model
-          const pending = sdk.transcribe?.({ audio, model }) ?? transcribeLocal(audio, model)
-          const text = await Promise.race([
+          let usage: TranscriptionUsage | undefined
+          const pending =
+            sdk.transcribe?.({ audio, model }) ??
+            transcribeLocal(audio, model, {
+              onUsage: (u) => {
+                usage = u
+              },
+            })
+          const result = await Promise.race([
             pending,
             new Promise<never>((_, reject) => {
               const timer = setTimeout(() => reject(new Error("Transcription timed out")), transcribeTimeoutMs)
@@ -93,6 +114,11 @@ export function useVoice(opts: {
               })
             }),
           ])
+          // Normalize result — SDK may return { text, usage } or plain string
+          const text = typeof result === "string" ? result : result.text
+          if (!usage && typeof result === "object" && result.usage) usage = result.usage
+          const sid = opts.sessionID?.()
+          if (usage && sid) trackTranscriptionCost(sid, usage)
           if (!active) return
           if (finishing) {
             finishing = false

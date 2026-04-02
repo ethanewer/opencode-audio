@@ -5,6 +5,11 @@ import { useLocal } from "@tui/context/local"
 import { SpeechQueue } from "@/audio/speech-queue"
 import { warmup, play } from "@/audio/speak"
 import * as Speaker from "@/audio/speaker"
+import * as AudioCost from "@/audio/cost"
+import { TTS_OUTPUT_TOKENS_PER_SEC, PCM_BYTES_PER_SEC } from "@/audio/cost"
+
+// TTS output cost rate estimate (per 1M output tokens) — gpt-4o-mini-tts
+const TTS_OUTPUT_RATE = 2.4
 
 export function useSpeech(sessionID: () => string) {
   const sdk = useSDK()
@@ -33,6 +38,13 @@ export function useSpeech(sessionID: () => string) {
   // Pre-warm the TLS connection so the first TTS request is faster
   if (enabled()) warmup()
 
+  function trackTtsCost(bytes: number) {
+    const duration = bytes / PCM_BYTES_PER_SEC
+    const outputTokens = duration * TTS_OUTPUT_TOKENS_PER_SEC
+    const cost = (outputTokens * TTS_OUTPUT_RATE) / 1_000_000
+    AudioCost.add(sessionID(), "output", cost)
+  }
+
   function getQueue() {
     if (!enabled()) return null
     if (!queue) {
@@ -45,6 +57,7 @@ export function useSpeech(sessionID: () => string) {
           queueIdle = true
           setSpeaking(false)
         },
+        onBytes: trackTtsCost,
       })
     }
     return queue
@@ -57,6 +70,7 @@ export function useSpeech(sessionID: () => string) {
     const part = evt.properties.part
 
     // Model produced native audio (e.g. gpt-audio) — play directly
+    // Native audio costs are tracked via the processor (getUsage), not here.
     if (part.type === "file" && "mime" in part && typeof part.mime === "string" && part.mime.startsWith("audio/")) {
       queue?.cancel()
       const b64 = "url" in part && typeof part.url === "string" ? part.url.split(",")[1] : undefined

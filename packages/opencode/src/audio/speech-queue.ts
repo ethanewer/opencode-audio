@@ -5,6 +5,7 @@ export interface SpeechQueueOptions {
   voice?: string
   speed?: number
   onIdle?: () => void
+  onBytes?: (bytes: number) => void
 }
 
 export class SpeechQueue {
@@ -17,12 +18,14 @@ export class SpeechQueue {
   private voice?: string
   private speed?: number
   private onIdle?: () => void
+  private onBytes?: (bytes: number) => void
 
   constructor(options: SpeechQueueOptions) {
     this.model = options.model
     this.voice = options.voice
     this.speed = options.speed
     this.onIdle = options.onIdle
+    this.onBytes = options.onBytes
   }
 
   push(text: string) {
@@ -84,13 +87,26 @@ export class SpeechQueue {
     const gen = this.generation
     while (this.queue.length > 0 && this.generation === gen) {
       const item = this.queue[0]
-      const stream = await item.stream
+      const raw = await item.stream
       if (this.generation !== gen) break
       this.queue.shift()
       if (item.abort.signal.aborted) continue
-      const player = playStream(stream, { speed: this.speed })
+      // Wrap stream to count PCM bytes for cost tracking
+      let bytes = 0
+      const counted = this.onBytes
+        ? raw.pipeThrough(
+            new TransformStream<Uint8Array, Uint8Array>({
+              transform(chunk, ctrl) {
+                bytes += chunk.length
+                ctrl.enqueue(chunk)
+              },
+            }),
+          )
+        : raw
+      const player = playStream(counted, { speed: this.speed })
       this.playing = player
       await player.done
+      if (bytes > 0) this.onBytes?.(bytes)
       if (this.generation !== gen) break
       this.playing = null
     }

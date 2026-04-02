@@ -14,7 +14,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 import { writeHeapSnapshot } from "node:v8"
 import { WorkspaceID } from "@/control-plane/schema"
 import { classify as classifyAudio } from "@/audio/classify"
-import { transcribe as transcribeBytes } from "@/audio/transcribe"
+import { transcribe as transcribeBytes, type TranscriptionUsage } from "@/audio/transcribe"
 import { Provider } from "@/provider/provider"
 import { ProviderID, ModelID } from "@/provider/schema"
 
@@ -158,7 +158,13 @@ export const rpc = {
   async setWorkspace(input: { workspaceID?: string }) {
     startEventStream({ directory: process.cwd(), workspaceID: input.workspaceID })
   },
-  async classify(input: { providerID: string; modelID: string; transcript: string; options: string[]; question?: string }) {
+  async classify(input: {
+    providerID: string
+    modelID: string
+    transcript: string
+    options: string[]
+    question?: string
+  }) {
     return Instance.provide({
       directory: process.cwd(),
       init: InstanceBootstrap,
@@ -169,9 +175,15 @@ export const rpc = {
       },
     })
   },
-  async transcribe(input: { audio: string; model?: string }) {
+  async transcribe(input: { audio: string; model?: string }): Promise<{ text: string; usage?: TranscriptionUsage }> {
     const bytes = new Uint8Array(Buffer.from(input.audio, "base64"))
-    return transcribeBytes(bytes, input.model)
+    let usage: TranscriptionUsage | undefined
+    const text = await transcribeBytes(bytes, input.model, {
+      onUsage: (u) => {
+        usage = u
+      },
+    })
+    return { text, usage }
   },
   async speak(input: { text: string; model?: string; voice?: string }) {
     const { speak } = await import("@/audio/speak")
