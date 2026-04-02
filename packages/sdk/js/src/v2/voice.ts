@@ -629,6 +629,12 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
               }
             }
             active = ""
+            // Push a zero-length sentinel so consumers waiting on the output
+            // queue can detect that the turn's audio is complete. With speak-tool
+            // TTS, all audio arrives *before* idle fires; without this sentinel,
+            // a `for await (const pcm of output)` loop would block indefinitely
+            // waiting for more data.
+            output.push(new Uint8Array(0))
           }
         } else if (evt.type === "permission.asked" && !isDangerous) {
           if (evt.properties.sessionID !== sessionID) continue

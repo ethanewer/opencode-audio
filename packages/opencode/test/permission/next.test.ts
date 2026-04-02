@@ -476,6 +476,26 @@ test("disabled - specific allow overrides wildcard deny", () => {
   expect(result.has("read")).toBe(true)
 })
 
+test("disabled - speak tool is exempt from wildcard deny", () => {
+  const result = Permission.disabled(["bash", "speak", "read"], [{ permission: "*", pattern: "*", action: "deny" }])
+  expect(result.has("bash")).toBe(true)
+  expect(result.has("read")).toBe(true)
+  expect(result.has("speak")).toBe(false)
+})
+
+test("disabled - speak tool is exempt even with deny-all permission", () => {
+  const result = Permission.disabled(
+    ["speak", "edit", "write"],
+    [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "*", pattern: "*", action: "deny" },
+    ],
+  )
+  expect(result.has("speak")).toBe(false)
+  expect(result.has("edit")).toBe(true)
+  expect(result.has("write")).toBe(true)
+})
+
 // ask tests
 
 test("ask - resolves immediately when action is allow", async () => {
