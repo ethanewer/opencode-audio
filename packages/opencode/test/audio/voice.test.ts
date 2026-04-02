@@ -3237,6 +3237,91 @@ describe("createVoiceSession", () => {
     session.close()
     sse.end()
   })
+
+  test("idle pushes zero-length sentinel to output queue", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_sentinel",
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Trigger a speak tool event so there's audio before idle
+    sse.push({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "ses_sentinel",
+        part: {
+          id: "p1",
+          sessionID: "ses_sentinel",
+          messageID: "msg1",
+          type: "tool",
+          callID: "call1",
+          tool: "speak",
+          state: {
+            status: "completed",
+            input: { text: "Hello" },
+            output: "Speaking.",
+            title: "speak",
+            metadata: { truncated: false },
+            time: { start: Date.now() - 50, end: Date.now() },
+          },
+        },
+        time: Date.now(),
+      },
+    })
+
+    await new Promise((r) => setTimeout(r, 200))
+
+    // Now send idle
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_sentinel", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Drain the TTS audio chunk(s) first
+    let chunk = await session.output.next()
+    while (!chunk.done && chunk.value.length > 0) {
+      chunk = await session.output.next()
+    }
+
+    // The zero-length sentinel should be the last item
+    expect(chunk.done).toBe(false)
+    expect(chunk.value).toBeInstanceOf(Uint8Array)
+    expect(chunk.value.length).toBe(0)
+
+    session.close()
+    sse.end()
+  })
+
+  test("idle sentinel is pushed even without preceding audio", async () => {
+    const sse = createMockEventStream()
+    const { client } = createMockClient(sse)
+
+    const session = await createVoiceSession(client, {
+      sessionID: "ses_sentinel2",
+      system: { model: "test/model", apiKey: "key", baseUrl: "https://test.com/v1" },
+    })
+
+    // Send idle with no prior audio
+    sse.push({
+      type: "session.status",
+      properties: { sessionID: "ses_sentinel2", status: { type: "idle" } },
+    })
+
+    await new Promise((r) => setTimeout(r, 100))
+
+    const result = await session.output.next()
+    expect(result.done).toBe(false)
+    expect(result.value).toBeInstanceOf(Uint8Array)
+    expect(result.value.length).toBe(0)
+
+    session.close()
+    sse.end()
+  })
 })
 
 // ---------------------------------------------------------------------------

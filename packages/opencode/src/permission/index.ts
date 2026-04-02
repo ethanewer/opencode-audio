@@ -294,10 +294,12 @@ export namespace Permission {
   }
 
   const EDIT_TOOLS = ["edit", "write", "apply_patch", "multiedit"]
+  const SAFE_TOOLS = ["speak"]
 
   export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
     const result = new Set<string>()
     for (const tool of tools) {
+      if (SAFE_TOOLS.includes(tool)) continue
       const permission = EDIT_TOOLS.includes(tool) ? "edit" : tool
       const rule = ruleset.findLast((rule) => Wildcard.match(permission, rule.permission))
       if (!rule) continue
