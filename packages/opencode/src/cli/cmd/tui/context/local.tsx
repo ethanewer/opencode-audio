@@ -37,7 +37,7 @@ const DEFAULT_SYSTEMS: SystemEntry[] = [
     model: "anthropic/claude-opus-4-6",
     variant: "medium",
     transcription: "gpt-4o-mini-transcribe",
-    tts: { model: "gpt-4o-mini-tts", voice: "echo", speed: 1.25 },
+    tts: { model: "gpt-4o-mini-tts", voice: "echo", speed: 1.5 },
     agents: ["build", "plan"],
   },
   {

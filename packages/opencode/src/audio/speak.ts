@@ -17,8 +17,12 @@ const CHANNELS = 1
 const BITS = 16
 
 // Pre-fill silence so ffplay can initialise its audio device before real
-// samples arrive.  100ms at 24 kHz 16-bit mono = 4800 bytes of zeros.
-const SILENCE = new Uint8Array((SAMPLE_RATE * CHANNELS * (BITS / 8)) / 10)
+// samples arrive.  200ms * speed — the atempo filter shortens effective
+// silence at speeds > 1x, so scaling by speed keeps ~200ms of actual silence.
+function silence(speed: number) {
+  const ms = 200 * speed
+  return new Uint8Array((SAMPLE_RATE * CHANNELS * (BITS / 8) * ms) / 1000)
+}
 
 function apiKey(): string {
   const key = process.env.OPENAI_API_KEY
@@ -146,7 +150,7 @@ export function play(audio: Uint8Array, options?: { speed?: number }) {
       stdout: "ignore",
       stderr: "ignore",
     })
-    proc.stdin.write(SILENCE)
+    proc.stdin.write(silence(speed))
     proc.stdin.write(audio)
     proc.stdin.end()
 
@@ -202,7 +206,7 @@ export function playStream(stream: ReadableStream<Uint8Array>, options?: { speed
     // Pipe chunks to stdin as they arrive
     const pipe = (async () => {
       const reader = stream.getReader()
-      proc.stdin.write(SILENCE)
+      proc.stdin.write(silence(speed))
       try {
         while (true) {
           const { done, value } = await reader.read()
