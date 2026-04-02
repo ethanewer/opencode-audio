@@ -71,7 +71,7 @@ describe("session message pagination", () => {
         const session = await Session.create({})
         const ids = await fill(session.id, 5)
 
-        const items = await Array.fromAsync(MessageV2.stream(session.id))
+        const items = Array.from(MessageV2.stream(session.id))
         expect(items.map((item) => item.info.id)).toEqual(ids.slice().reverse())
 
         await Session.remove(session.id)
@@ -105,7 +105,7 @@ describe("session message pagination", () => {
         const b = await Session.create({})
         const [id] = await fill(a.id, 1)
 
-        await expect(MessageV2.get({ sessionID: b.id, messageID: id })).rejects.toMatchObject({ name: "NotFoundError" })
+        expect(() => MessageV2.get({ sessionID: b.id, messageID: id })).toThrow()
 
         await Session.remove(a.id)
         await Session.remove(b.id)

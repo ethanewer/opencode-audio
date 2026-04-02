@@ -616,7 +616,7 @@ export const SessionRoutes = lazy(() =>
           return c.json(messages)
         }
 
-        const page = await MessageV2.page({
+        const page = MessageV2.page({
           sessionID,
           limit: query.limit,
           before: query.before,
@@ -664,7 +664,7 @@ export const SessionRoutes = lazy(() =>
       ),
       async (c) => {
         const params = c.req.valid("param")
-        const message = await MessageV2.get({
+        const message = MessageV2.get({
           sessionID: params.sessionID,
           messageID: params.messageID,
         })

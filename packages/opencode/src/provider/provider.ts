@@ -682,6 +682,9 @@ export namespace Provider {
         autoload: !!apiKey,
         options: {
           apiKey,
+          headers: {
+            "User-Agent": `opencode/${Installation.VERSION} cloudflare-workers-ai (${os.platform()} ${os.release()}; ${os.arch()})`,
+          },
         },
         async getModel(sdk: any, modelID: string) {
           return sdk.languageModel(modelID)
@@ -749,7 +752,11 @@ export namespace Provider {
           // Model IDs use Unified API format: provider/model (e.g., "anthropic/claude-sonnet-4-5")
           return aigateway(unified(modelID))
         },
-        options: {},
+        options: {
+          headers: {
+            "User-Agent": `opencode/${Installation.VERSION} cloudflare-ai-gateway (${os.platform()} ${os.release()}; ${os.arch()})`,
+          },
+        },
       }
     },
     cerebras: async () => {
@@ -1224,7 +1231,7 @@ export namespace Provider {
           }
 
           const gitlab = ProviderID.make("gitlab")
-          if (discoveryLoaders[gitlab] && providers[gitlab]) {
+          if (discoveryLoaders[gitlab] && providers[gitlab] && isProviderAllowed(gitlab)) {
             yield* Effect.promise(async () => {
               try {
                 const discovered = await discoveryLoaders[gitlab]()

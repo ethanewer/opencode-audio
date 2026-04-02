@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import path from "path"
-import { InstructionPrompt } from "../../src/session/instruction"
+import { Instruction as InstructionPrompt } from "../../src/session/instruction"
 import { Instance } from "../../src/project/instance"
 import { Global } from "../../src/global"
 import { tmpdir } from "../fixture/fixture"
+import { MessageID } from "../../src/session/schema"
 
 describe("InstructionPrompt.resolve", () => {
   test("returns empty when AGENTS.md is at project root (already in systemPaths)", async () => {
@@ -19,7 +20,11 @@ describe("InstructionPrompt.resolve", () => {
         const system = await InstructionPrompt.systemPaths()
         expect(system.has(path.join(tmp.path, "AGENTS.md"))).toBe(true)
 
-        const results = await InstructionPrompt.resolve([], path.join(tmp.path, "src", "file.ts"), "test-message-1")
+        const results = await InstructionPrompt.resolve(
+          [],
+          path.join(tmp.path, "src", "file.ts"),
+          "test-message-1" as MessageID,
+        )
         expect(results).toEqual([])
       },
     })
@@ -41,7 +46,7 @@ describe("InstructionPrompt.resolve", () => {
         const results = await InstructionPrompt.resolve(
           [],
           path.join(tmp.path, "subdir", "nested", "file.ts"),
-          "test-message-2",
+          "test-message-2" as MessageID,
         )
         expect(results.length).toBe(1)
         expect(results[0].filepath).toBe(path.join(tmp.path, "subdir", "AGENTS.md"))
@@ -63,7 +68,7 @@ describe("InstructionPrompt.resolve", () => {
         const system = await InstructionPrompt.systemPaths()
         expect(system.has(filepath)).toBe(false)
 
-        const results = await InstructionPrompt.resolve([], filepath, "test-message-2")
+        const results = await InstructionPrompt.resolve([], filepath, "test-message-2" as MessageID)
         expect(results).toEqual([])
       },
     })

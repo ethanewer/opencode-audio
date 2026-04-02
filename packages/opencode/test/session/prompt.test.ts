@@ -170,7 +170,7 @@ describe("session.prompt missing file", () => {
 
         if (msg.info.role !== "user") throw new Error("expected user message")
 
-        const stored = await MessageV2.get({
+        const stored = MessageV2.get({
           sessionID: session.id,
           messageID: msg.info.id,
         })
@@ -215,7 +215,7 @@ describe("session.prompt special characters", () => {
           parts,
           noReply: true,
         })
-        const stored = await MessageV2.get({ sessionID: session.id, messageID: message.info.id })
+        const stored = MessageV2.get({ sessionID: session.id, messageID: message.info.id })
         const textParts = stored.parts.filter((part) => part.type === "text")
         const hasContent = textParts.some((part) => part.text.includes("special content"))
         expect(hasContent).toBe(true)

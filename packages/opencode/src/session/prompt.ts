@@ -15,7 +15,7 @@ import { Instance } from "../project/instance"
 import { Bus } from "../bus"
 import { ProviderTransform } from "../provider/transform"
 import { SystemPrompt } from "./system"
-import { InstructionPrompt } from "./instruction"
+import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import PROMPT_PLAN from "../session/prompt/plan.txt"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
@@ -999,7 +999,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           variant,
         }
 
-        yield* Effect.addFinalizer(() => InstanceState.withALS(() => InstructionPrompt.clear(info.id)))
+        yield* Effect.addFinalizer(() => InstanceState.withALS(() => Instruction.clear(info.id)))
 
         type Draft<T> = T extends MessageV2.Part ? Omit<T, "id"> & { id?: string } : never
         const assign = (part: Draft<MessageV2.Part>): MessageV2.Part => ({
@@ -1341,9 +1341,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       )
 
       const lastAssistant = (sessionID: SessionID) =>
-        Effect.promise(async () => {
+        Effect.sync(() => {
           let latest: MessageV2.WithParts | undefined
-          for await (const item of MessageV2.stream(sessionID)) {
+          for (const item of MessageV2.stream(sessionID)) {
             latest ??= item
             if (item.info.role !== "user") return item
           }
@@ -1363,7 +1363,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             yield* status.set(sessionID, { type: "busy" })
             log.info("loop", { step, sessionID })
 
-            let msgs = yield* Effect.promise(() => MessageV2.filterCompacted(MessageV2.stream(sessionID)))
+            let msgs = MessageV2.filterCompacted(MessageV2.stream(sessionID))
 
             let lastUser: MessageV2.User | undefined
             let lastAssistant: MessageV2.Assistant | undefined
@@ -1550,7 +1550,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   Promise.all([
                     SystemPrompt.skills(agent),
                     SystemPrompt.environment(model),
-                    InstructionPrompt.system(),
+                    Instruction.system(),
                     MessageV2.toModelMessages(msgs, model),
                   ]),
                 )
@@ -1602,7 +1602,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }),
               Effect.fnUntraced(function* (exit) {
                 if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) yield* handle.abort()
-                yield* InstanceState.withALS(() => InstructionPrompt.clear(handle.message.id))
+                yield* InstanceState.withALS(() => Instruction.clear(handle.message.id))
               }),
             )
             if (outcome === "break") break
@@ -1917,12 +1917,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   }
 
   const lastModel = Effect.fnUntraced(function* (sessionID: SessionID) {
-    return yield* Effect.promise(async () => {
-      for await (const item of MessageV2.stream(sessionID)) {
+    const model = yield* Effect.sync(() => {
+      for (const item of MessageV2.stream(sessionID)) {
         if (item.info.role === "user" && item.info.model) return item.info.model
       }
-      return Provider.defaultModel()
     })
+    if (model) return model
+    return yield* Effect.promise(() => Provider.defaultModel())
   })
 
   /** @internal Exported for testing */

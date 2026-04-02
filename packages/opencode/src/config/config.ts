@@ -1275,6 +1275,11 @@ export namespace Config {
           const parsed = Info.safeParse(normalized)
           if (parsed.success) {
             const data = parsed.data
+            if (!data.$schema && isFile) {
+              data.$schema = "https://opencode.ai/config.json"
+              const updated = original.replace(/^\s*\{/, '{\n  "$schema": "https://opencode.ai/config.json",')
+              yield* Effect.promise(() => fsNode.writeFile(options.path, updated).catch(() => {}))
+            }
             if (data.plugin && isFile) {
               const list = data.plugin
               for (let i = 0; i < list.length; i++) {

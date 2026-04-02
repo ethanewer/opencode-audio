@@ -15,6 +15,7 @@ import { errorMessage } from "@/util/error"
 import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
+import { Effect } from "effect"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
@@ -547,7 +548,7 @@ export namespace MessageV2 {
       and(eq(MessageTable.time_created, row.time), lt(MessageTable.id, row.id)),
     )
 
-  async function hydrate(rows: (typeof MessageTable.$inferSelect)[]) {
+  function hydrate(rows: (typeof MessageTable.$inferSelect)[]) {
     const ids = rows.map((row) => row.id)
     const partByMessage = new Map<string, MessageV2.Part[]>()
     if (ids.length > 0) {
@@ -573,11 +574,11 @@ export namespace MessageV2 {
     }))
   }
 
-  export async function toModelMessages(
+  export const toModelMessagesEffect = Effect.fnUntraced(function* (
     input: WithParts[],
     model: Provider.Model,
     options?: { stripMedia?: boolean },
-  ): Promise<ModelMessage[]> {
+  ) {
     const result: UIMessage[] = []
     const toolNames = new Set<string>()
     // Track media from tool results that need to be injected as user messages
@@ -812,13 +813,23 @@ export namespace MessageV2 {
 
     const tools = Object.fromEntries(Array.from(toolNames).map((toolName) => [toolName, { toModelOutput }]))
 
-    return await convertToModelMessages(
-      result.filter((msg) => msg.parts.some((part) => part.type !== "step-start")),
-      {
-        //@ts-expect-error (convertToModelMessages expects a ToolSet but only actually needs tools[name]?.toModelOutput)
-        tools,
-      },
+    return yield* Effect.promise(() =>
+      convertToModelMessages(
+        result.filter((msg) => msg.parts.some((part) => part.type !== "step-start")),
+        {
+          //@ts-expect-error (convertToModelMessages expects a ToolSet but only actually needs tools[name]?.toModelOutput)
+          tools,
+        },
+      ),
     )
+  })
+
+  export function toModelMessages(
+    input: WithParts[],
+    model: Provider.Model,
+    options?: { stripMedia?: boolean },
+  ): Promise<ModelMessage[]> {
+    return Effect.runPromise(toModelMessagesEffect(input, model, options))
   }
 
   export const page = fn(
@@ -827,7 +838,7 @@ export namespace MessageV2 {
       limit: z.number().int().positive(),
       before: z.string().optional(),
     }),
-    async (input) => {
+    (input) => {
       const before = input.before ? cursor.decode(input.before) : undefined
       const where = before
         ? and(eq(MessageTable.session_id, input.sessionID), older(before))
@@ -853,10 +864,10 @@ export namespace MessageV2 {
       }
 
       const more = rows.length > input.limit
-      const page = more ? rows.slice(0, input.limit) : rows
-      const items = await hydrate(page)
+      const slice = more ? rows.slice(0, input.limit) : rows
+      const items = hydrate(slice)
       items.reverse()
-      const tail = page.at(-1)
+      const tail = slice.at(-1)
       return {
         items,
         more,
@@ -865,11 +876,11 @@ export namespace MessageV2 {
     },
   )
 
-  export const stream = fn(SessionID.zod, async function* (sessionID) {
+  export const stream = fn(SessionID.zod, function* (sessionID) {
     const size = 50
     let before: string | undefined
     while (true) {
-      const next = await page({ sessionID, limit: size, before })
+      const next = page({ sessionID, limit: size, before })
       if (next.items.length === 0) break
       for (let i = next.items.length - 1; i >= 0; i--) {
         yield next.items[i]
@@ -879,7 +890,7 @@ export namespace MessageV2 {
     }
   })
 
-  export const parts = fn(MessageID.zod, async (message_id) => {
+  export const parts = fn(MessageID.zod, (message_id) => {
     const rows = Database.use((db) =>
       db.select().from(PartTable).where(eq(PartTable.message_id, message_id)).orderBy(PartTable.id).all(),
     )
@@ -899,7 +910,7 @@ export namespace MessageV2 {
       sessionID: SessionID.zod,
       messageID: MessageID.zod,
     }),
-    async (input): Promise<WithParts> => {
+    (input): WithParts => {
       const row = Database.use((db) =>
         db
           .select()
@@ -910,15 +921,15 @@ export namespace MessageV2 {
       if (!row) throw new NotFoundError({ message: `Message not found: ${input.messageID}` })
       return {
         info: info(row),
-        parts: await parts(input.messageID),
+        parts: parts(input.messageID),
       }
     },
   )
 
-  export async function filterCompacted(stream: AsyncIterable<MessageV2.WithParts>) {
+  export function filterCompacted(msgs: Iterable<MessageV2.WithParts>) {
     const result = [] as MessageV2.WithParts[]
     const completed = new Set<string>()
-    for await (const msg of stream) {
+    for (const msg of msgs) {
       result.push(msg)
       if (
         msg.info.role === "user" &&
@@ -932,6 +943,10 @@ export namespace MessageV2 {
     result.reverse()
     return result
   }
+
+  export const filterCompactedEffect = Effect.fnUntraced(function* (sessionID: SessionID) {
+    return filterCompacted(stream(sessionID))
+  })
 
   export function fromError(
     e: unknown,

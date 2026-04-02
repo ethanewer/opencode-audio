@@ -10,7 +10,7 @@ import { type SessionID, MessageID, PartID } from "../session/schema"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
 
 async function getLastModel(sessionID: SessionID) {
-  for await (const item of MessageV2.stream(sessionID)) {
+  for (const item of MessageV2.stream(sessionID)) {
     if (item.info.role === "user" && item.info.model) return item.info.model
   }
   return Provider.defaultModel()
@@ -24,7 +24,7 @@ export const PlanExitTool = Tool.define("plan_exit", {
     const plan = path.relative(Instance.worktree, Session.plan(session))
 
     let voice = false
-    for await (const item of MessageV2.stream(ctx.sessionID)) {
+    for (const item of MessageV2.stream(ctx.sessionID)) {
       if (item.info.role === "user") {
         voice = item.info.agent === "voice-plan"
         break

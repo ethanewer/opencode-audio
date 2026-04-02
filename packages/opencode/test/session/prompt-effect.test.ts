@@ -467,7 +467,7 @@ it.live("failed subtask preserves metadata on error tool state", () =>
       expect(result.info.role).toBe("assistant")
       expect(yield* llm.calls).toBe(2)
 
-      const msgs = yield* Effect.promise(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
+      const msgs = yield* Effect.sync(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
       const taskMsg = msgs.find((item) => item.info.role === "assistant" && item.info.agent === "general")
       expect(taskMsg?.info.role).toBe("assistant")
       if (!taskMsg || taskMsg.info.role !== "assistant") return
@@ -626,7 +626,7 @@ it.live(
           const exit = yield* Fiber.await(fiber)
           expect(Exit.isSuccess(exit)).toBe(true)
 
-          const msgs = yield* Effect.promise(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
+          const msgs = yield* Effect.sync(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
           const taskMsg = msgs.find((item) => item.info.role === "assistant" && item.info.agent === "general")
           expect(taskMsg?.info.role).toBe("assistant")
           if (!taskMsg || taskMsg.info.role !== "assistant") return
@@ -901,7 +901,7 @@ unix(
             yield* Effect.promise(async () => {
               const start = Date.now()
               while (Date.now() - start < 5000) {
-                const msgs = await MessageV2.filterCompacted(MessageV2.stream(chat.id))
+                const msgs = MessageV2.filterCompacted(MessageV2.stream(chat.id))
                 const taskMsg = msgs.find((item) => item.info.role === "assistant")
                 const tool = taskMsg ? toolPart(taskMsg.parts) : undefined
                 if (tool?.state.status === "running" && tool.state.metadata?.output.includes("first")) return

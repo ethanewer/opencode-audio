@@ -593,9 +593,9 @@ export namespace Session {
       })
 
       const messages = Effect.fn("Session.messages")(function* (input: { sessionID: SessionID; limit?: number }) {
-        return yield* Effect.promise(async () => {
+        return yield* Effect.sync(() => {
           const result = [] as MessageV2.WithParts[]
-          for await (const msg of MessageV2.stream(input.sessionID)) {
+          for (const msg of MessageV2.stream(input.sessionID)) {
             if (input.limit && result.length >= input.limit) break
             result.push(msg)
           }
