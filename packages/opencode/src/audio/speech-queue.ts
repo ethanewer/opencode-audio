@@ -149,6 +149,10 @@ function sanitize(text: string): string {
       .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
       // Remove markdown links, keep text
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      // Remove numbered list prefixes
+      .replace(/^\s*\d+[.)]\s+/gm, "")
+      // Remove bullet list prefixes
+      .replace(/^\s*[-*+]\s+/gm, "")
       // Collapse multiple whitespace
       .replace(/\s+/g, " ")
       .trim()
