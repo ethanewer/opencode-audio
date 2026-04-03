@@ -1,13 +1,25 @@
 Use this tool when you have completed the planning phase and are ready to exit plan agent.
 
 This tool will ask the user if they want to switch to build agent to start implementing the plan.
+This is the required way to request plan approval and leave plan mode.
+The approved plan is read from the saved plan file, so make sure that file contains the final plan before calling this tool.
+When you are currently in the plan agent, this tool is available in the session unless the runtime reports a real tool error.
 
 Call this tool:
 - After you have written a complete plan to the plan file
 - After you have clarified any questions with the user
 - When you are confident the plan is ready for implementation
+- Instead of ending your turn with a plain text summary of the plan
 
 Do NOT call this tool:
 - Before you have created or finalized the plan
 - If you still have unanswered questions about the implementation
 - If the user has indicated they want to continue planning
+- If you are about to ask the user a real clarifying question first
+
+In plan mode, your turn must end in exactly one of these ways:
+- Ask the user a clarifying question
+- Call `plan_exit`
+
+Do not end a completed planning turn with plain text like "here is the plan" or "I am ready to implement" without calling `plan_exit`.
+Do not claim that `plan_exit` is unavailable unless you actually attempted the tool call and received a real tool error.

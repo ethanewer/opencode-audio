@@ -17,7 +17,6 @@ import { ProviderTransform } from "../provider/transform"
 import { SystemPrompt } from "./system"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
-import PROMPT_PLAN from "../session/prompt/plan.txt"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
 import { ToolRegistry } from "../tool/registry"
@@ -26,7 +25,6 @@ import { MCP } from "../mcp"
 import { LSP } from "../lsp"
 import { ReadTool } from "../tool/read"
 import { FileTime } from "../file/time"
-import { Flag } from "../flag/flag"
 import { ulid } from "ulid"
 import { spawn } from "child_process"
 import { Command } from "../command"
@@ -38,6 +36,7 @@ import { SessionProcessor } from "./processor"
 import { TaskTool } from "@/tool/task"
 import { Tool } from "@/tool/tool"
 import { Permission } from "@/permission"
+import { Question } from "@/question"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
 import { Shell } from "@/shell/shell"
@@ -97,6 +96,7 @@ export namespace SessionPrompt {
       const plugin = yield* Plugin.Service
       const commands = yield* Command.Service
       const permission = yield* Permission.Service
+      const question = yield* Question.Service
       const fsys = yield* AppFileSystem.Service
       const mcp = yield* MCP.Service
       const lsp = yield* LSP.Service
@@ -261,31 +261,6 @@ export namespace SessionPrompt {
         const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
         if (!userMessage) return input.messages
 
-        if (!Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE) {
-          if (isPlan(input.agent.name)) {
-            userMessage.parts.push({
-              id: PartID.ascending(),
-              messageID: userMessage.info.id,
-              sessionID: userMessage.info.sessionID,
-              type: "text",
-              text: PROMPT_PLAN,
-              synthetic: true,
-            })
-          }
-          const wasPlan = input.messages.some((msg) => msg.info.role === "assistant" && isPlan(msg.info.agent))
-          if (wasPlan && isBuild(input.agent.name)) {
-            userMessage.parts.push({
-              id: PartID.ascending(),
-              messageID: userMessage.info.id,
-              sessionID: userMessage.info.sessionID,
-              type: "text",
-              text: BUILD_SWITCH,
-              synthetic: true,
-            })
-          }
-          return input.messages
-        }
-
         const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
         if (!isPlan(input.agent.name) && assistantMessage && isPlan(assistantMessage.info.agent)) {
           const plan = Session.plan(input.session)
@@ -385,6 +360,8 @@ Goal: Write your final plan to the plan file (the only file you can edit).
 ### Phase 5: Call plan_exit tool
 At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.
 This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.
+Do not end with a plain text plan summary, a plain text approval request, or a plain text statement that you are ready to implement. Once the plan is complete, call plan_exit in the same turn.
+The \`plan_exit\` tool is available in this session while you are in plan mode. Do not claim that it is unavailable unless you actually attempted it and got a real tool error.
 
 **Important:** ${clarify.charAt(0).toUpperCase() + clarify.slice(1)} clarify requirements/approach, use plan_exit to request plan approval. Do NOT ${clarify} ask "Is this plan okay?" - that's what plan_exit does.
 
@@ -1357,6 +1334,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           let structured: unknown | undefined
           let step = 0
           let nudged = false
+          let remind = false
           const session = yield* sessions.get(sessionID)
 
           while (true) {
@@ -1385,6 +1363,50 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               !["tool-calls"].includes(lastAssistant.finish) &&
               lastUser.id < lastAssistant.id
             ) {
+              if (isPlan(lastUser.agent)) {
+                const pending = (yield* question.list()).some((item) => item.sessionID === sessionID)
+                if (!pending) {
+                  const turn = msgs.findLast((msg) => msg.info.id === lastAssistant.id)
+                  const exit = turn?.parts.some((part) => part.type === "tool" && part.tool === "plan_exit")
+                  if (!exit) {
+                    const mid = MessageID.ascending()
+                    yield* sessions.updateMessage({
+                      id: mid,
+                      sessionID,
+                      role: "user",
+                      time: { created: Date.now() },
+                      agent: lastUser.agent,
+                      model: lastUser.model,
+                    } satisfies MessageV2.User)
+                    yield* sessions.updatePart({
+                      id: PartID.ascending(),
+                      messageID: mid,
+                      sessionID,
+                      type: "text",
+                      text: remind
+                        ? [
+                            "<system-reminder>",
+                            "Your previous plan-mode turn ended incorrectly again.",
+                            "Do not restate the plan. If you still need information, ask the user a clarifying question now.",
+                            "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
+                            "</system-reminder>",
+                          ].join("\n")
+                        : [
+                            "<system-reminder>",
+                            "Your previous plan-mode turn ended incorrectly.",
+                            "In plan mode, you must not finish with a plain text plan summary.",
+                            "If you still need information, ask the user a clarifying question now.",
+                            "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
+                            "</system-reminder>",
+                          ].join("\n"),
+                      synthetic: true,
+                    } satisfies MessageV2.TextPart)
+                    remind = true
+                    continue
+                  }
+                }
+              }
+
               // Voice agent fallback: if the model finished without using the
               // speak tool, give it one more turn to speak its result aloud.
               if (!nudged && lastUser.agent.startsWith("voice-")) {
@@ -1766,6 +1788,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         Layer.provide(SessionProcessor.defaultLayer),
         Layer.provide(Command.defaultLayer),
         Layer.provide(Permission.layer),
+        Layer.provide(Question.layer),
         Layer.provide(MCP.defaultLayer),
         Layer.provide(LSP.defaultLayer),
         Layer.provide(FileTime.defaultLayer),
