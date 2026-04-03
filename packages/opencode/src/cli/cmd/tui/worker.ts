@@ -13,7 +13,7 @@ import { Flag } from "@/flag/flag"
 import { setTimeout as sleep } from "node:timers/promises"
 import { writeHeapSnapshot } from "node:v8"
 import { WorkspaceID } from "@/control-plane/schema"
-import { classify as classifyAudio } from "@/audio/classify"
+import { classify as classifyAudio, classifyMulti as classifyAudioMulti } from "@/audio/classify"
 import { transcribe as transcribeBytes } from "@/audio/transcribe"
 import { Provider } from "@/provider/provider"
 import { ProviderID, ModelID } from "@/provider/schema"
@@ -158,7 +158,13 @@ export const rpc = {
   async setWorkspace(input: { workspaceID?: string }) {
     startEventStream({ directory: process.cwd(), workspaceID: input.workspaceID })
   },
-  async classify(input: { providerID: string; modelID: string; transcript: string; options: string[]; question?: string }) {
+  async classify(input: {
+    providerID: string
+    modelID: string
+    transcript: string
+    options: string[]
+    question?: string
+  }) {
     return Instance.provide({
       directory: process.cwd(),
       init: InstanceBootstrap,
@@ -166,6 +172,23 @@ export const rpc = {
         const model = await Provider.getModel(ProviderID.make(input.providerID), ModelID.make(input.modelID))
         const lang = await Provider.getLanguage(model)
         return classifyAudio(lang, input.transcript, input.options, input.question)
+      },
+    })
+  },
+  async classifyMulti(input: {
+    providerID: string
+    modelID: string
+    transcript: string
+    options: string[]
+    question?: string
+  }) {
+    return Instance.provide({
+      directory: process.cwd(),
+      init: InstanceBootstrap,
+      async fn() {
+        const model = await Provider.getModel(ProviderID.make(input.providerID), ModelID.make(input.modelID))
+        const lang = await Provider.getLanguage(model)
+        return classifyAudioMulti(lang, input.transcript, input.options, input.question)
       },
     })
   },

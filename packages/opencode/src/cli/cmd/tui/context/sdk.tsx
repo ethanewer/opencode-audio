@@ -16,6 +16,14 @@ export type ClassifyFn = (input: {
   question?: string
 }) => Promise<{ option: string | null; confidence: number }>
 
+export type ClassifyMultiFn = (input: {
+  providerID: string
+  modelID: string
+  transcript: string
+  options: string[]
+  question?: string
+}) => Promise<{ options: string[]; confidence: number }>
+
 export type TranscribeFn = (input: { audio: Uint8Array; model?: string }) => Promise<string>
 
 export type SpeakFn = (input: { text: string; model?: string; voice?: string }) => Promise<string>
@@ -29,6 +37,7 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     headers?: RequestInit["headers"]
     events?: EventSource
     classify?: ClassifyFn
+    classifyMulti?: ClassifyMultiFn
     transcribe?: TranscribeFn
     speak?: SpeakFn
   }) => {
@@ -128,6 +137,7 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
         return workspaceID
       },
       classify: props.classify,
+      classifyMulti: props.classifyMulti,
       transcribe: props.transcribe,
       speak: props.speak,
       directory: props.directory,

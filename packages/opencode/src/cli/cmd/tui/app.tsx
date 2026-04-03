@@ -171,6 +171,7 @@ export function tui(input: {
   headers?: RequestInit["headers"]
   events?: EventSource
   classify?: import("./context/sdk").ClassifyFn
+  classifyMulti?: import("./context/sdk").ClassifyMultiFn
   transcribe?: import("./context/sdk").TranscribeFn
   speak?: import("./context/sdk").SpeakFn
 }) {
@@ -216,6 +217,7 @@ export function tui(input: {
                         headers={input.headers}
                         events={input.events}
                         classify={input.classify}
+                        classifyMulti={input.classifyMulti}
                         transcribe={input.transcribe}
                         speak={input.speak}
                       >

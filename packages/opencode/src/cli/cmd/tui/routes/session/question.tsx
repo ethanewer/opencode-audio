@@ -199,6 +199,41 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     }
 
     setClassifying(true)
+
+    if (multi() && sdk.classifyMulti) {
+      try {
+        const result = await sdk.classifyMulti({
+          providerID: model.providerID,
+          modelID: model.modelID,
+          transcript: text,
+          options: labels,
+          question: question()?.question,
+        })
+        setClassifying(false)
+        if (!voiced()) return
+
+        const conf = typeof result.confidence === "number" ? result.confidence : null
+
+        if (result.options.length > 0 && result.confidence !== 0) {
+          setVoiceTrace({ transcript: trimmed, matched: result.options.join(", "), confidence: conf })
+          const answers = [...store.answers]
+          answers[store.tab] = result.options
+          setStore("answers", answers)
+          submit()
+          return
+        }
+
+        setVoiceTrace({ transcript: trimmed, matched: "Custom (no match)", confidence: conf })
+        pick(trimmed, true)
+      } catch {
+        setClassifying(false)
+        if (!voiced()) return
+        setVoiceTrace({ transcript: trimmed, matched: "Custom (error)", confidence: null })
+        pick(trimmed, true)
+      }
+      return
+    }
+
     try {
       const result = await sdk.classify({
         providerID: model.providerID,
@@ -215,8 +250,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
       if (ok) {
         setVoiceTrace({ transcript: trimmed, matched: result.option!, confidence: conf })
-        if (multi()) toggle(result.option!)
-        else pick(result.option!)
+        pick(result.option!)
         return
       }
 
@@ -277,11 +311,18 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         voice.toggle()
         return
       }
-      if (!store.editing && evt.name === "return" && evt.shift && multi() && last()) {
+      if (!store.editing && keybind.match("input_newline", evt) && multi() && last()) {
         evt.preventDefault()
         if ((store.answers[store.tab] ?? []).length > 0) submit()
         return
       }
+    }
+
+    // ctrl+enter / alt+enter / ctrl+j submits multi-select questions
+    if (!store.editing && !confirm() && keybind.match("input_newline", evt) && multi()) {
+      evt.preventDefault()
+      if ((store.answers[store.tab] ?? []).length > 0) submit()
+      return
     }
 
     // When editing custom answer textarea
@@ -651,9 +692,9 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
               {"↑↓"} <span style={{ fg: theme.textMuted }}>select</span>
             </text>
           </Show>
-          <Show when={voiced() && multi() && last()}>
+          <Show when={multi()}>
             <text fg={theme.text}>
-              shift+enter <span style={{ fg: theme.textMuted }}>submit</span>
+              alt+enter <span style={{ fg: theme.textMuted }}>submit</span>
             </text>
           </Show>
           <text fg={theme.text}>
