@@ -62,6 +62,7 @@ export const QuestionRoutes = lazy(() =>
         await Question.reply({
           requestID: params.requestID,
           answers: json.answers,
+          context: json.context,
         })
         return c.json(true)
       },

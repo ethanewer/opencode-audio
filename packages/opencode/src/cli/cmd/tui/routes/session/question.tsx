@@ -52,9 +52,11 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
   function submit() {
     const answers = questions().map((_, i) => store.answers[i] ?? [])
+    const ctx = voiceCtx()
     sdk.client.question.reply({
       requestID: props.request.id,
       answers,
+      ...(ctx ? { context: ctx } : {}),
     })
   }
 
@@ -74,9 +76,11 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
       setStore("custom", inputs)
     }
     if (single()) {
+      const ctx = voiceCtx()
       sdk.client.question.reply({
         requestID: props.request.id,
         answers: [[answer]],
+        ...(ctx ? { context: ctx } : {}),
       })
       return
     }
@@ -146,6 +150,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   const local = useLocal()
 
   const [classifying, setClassifying] = createSignal(false)
+  const [voiceCtx, setVoiceCtx] = createSignal<string | undefined>()
   const [voiceTrace, setVoiceTrace] = createSignal<{
     transcript: string
     matched: string
@@ -216,6 +221,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
         if (result.options.length > 0 && result.confidence !== 0) {
           setVoiceTrace({ transcript: trimmed, matched: result.options.join(", "), confidence: conf })
+          if (result.context) setVoiceCtx(result.context)
           const answers = [...store.answers]
           answers[store.tab] = result.options
           setStore("answers", answers)
@@ -250,6 +256,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
       if (ok) {
         setVoiceTrace({ transcript: trimmed, matched: result.option!, confidence: conf })
+        if (result.context) setVoiceCtx(result.context)
         pick(result.option!)
         return
       }
@@ -280,7 +287,10 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   const voice = useVoice({ onResult: handleVoiceResult, onFinish: handleVoiceFinish, color: theme.warning })
 
   createEffect(() => {
-    if (voice.recording()) setVoiceTrace(null)
+    if (voice.recording()) {
+      setVoiceTrace(null)
+      setVoiceCtx(undefined)
+    }
   })
 
   createEffect(() => {

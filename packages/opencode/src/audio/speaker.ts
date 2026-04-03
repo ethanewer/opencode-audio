@@ -12,6 +12,15 @@ interface Entry {
 
 const entries: Entry[] = []
 let cancelled = false
+let busy = false
+
+export function setBusy(val: boolean) {
+  busy = val
+}
+
+export function isBusy(): boolean {
+  return busy
+}
 
 function prune() {
   const now = Date.now()

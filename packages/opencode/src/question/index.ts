@@ -50,10 +50,17 @@ export namespace Question {
   export const Answer = z.array(z.string()).meta({ ref: "QuestionAnswer" })
   export type Answer = z.infer<typeof Answer>
 
+  export const Result = z.object({
+    answers: z.array(Answer),
+    context: z.string().optional(),
+  })
+  export type Result = z.infer<typeof Result>
+
   export const Reply = z.object({
     answers: z
       .array(Answer)
       .describe("User answers in order of questions (each answer is an array of selected labels)"),
+    context: z.string().optional().describe("Additional context from the user beyond their option selection"),
   })
   export type Reply = z.infer<typeof Reply>
 
@@ -65,6 +72,7 @@ export namespace Question {
         sessionID: SessionID.zod,
         requestID: QuestionID.zod,
         answers: z.array(Answer),
+        context: z.string().optional(),
       }),
     ),
     Rejected: BusEvent.define(
@@ -84,7 +92,7 @@ export namespace Question {
 
   interface PendingEntry {
     info: Request
-    deferred: Deferred.Deferred<Answer[], RejectedError>
+    deferred: Deferred.Deferred<Result, RejectedError>
   }
 
   interface State {
@@ -98,8 +106,8 @@ export namespace Question {
       sessionID: SessionID
       questions: Info[]
       tool?: { messageID: MessageID; callID: string }
-    }) => Effect.Effect<Answer[], RejectedError>
-    readonly reply: (input: { requestID: QuestionID; answers: Answer[] }) => Effect.Effect<void>
+    }) => Effect.Effect<Result, RejectedError>
+    readonly reply: (input: { requestID: QuestionID; answers: Answer[]; context?: string }) => Effect.Effect<void>
     readonly reject: (requestID: QuestionID) => Effect.Effect<void>
     readonly list: () => Effect.Effect<Request[]>
   }
@@ -137,7 +145,7 @@ export namespace Question {
         const id = QuestionID.ascending()
         log.info("asking", { id, questions: input.questions.length })
 
-        const deferred = yield* Deferred.make<Answer[], RejectedError>()
+        const deferred = yield* Deferred.make<Result, RejectedError>()
         const info: Request = {
           id,
           sessionID: input.sessionID,
@@ -155,7 +163,11 @@ export namespace Question {
         )
       })
 
-      const reply = Effect.fn("Question.reply")(function* (input: { requestID: QuestionID; answers: Answer[] }) {
+      const reply = Effect.fn("Question.reply")(function* (input: {
+        requestID: QuestionID
+        answers: Answer[]
+        context?: string
+      }) {
         const pending = (yield* InstanceState.get(state)).pending
         const existing = pending.get(input.requestID)
         if (!existing) {
@@ -168,8 +180,9 @@ export namespace Question {
           sessionID: existing.info.sessionID,
           requestID: existing.info.id,
           answers: input.answers,
+          context: input.context,
         })
-        yield* Deferred.succeed(existing.deferred, input.answers)
+        yield* Deferred.succeed(existing.deferred, { answers: input.answers, context: input.context })
       })
 
       const reject = Effect.fn("Question.reject")(function* (requestID: QuestionID) {
@@ -203,11 +216,11 @@ export namespace Question {
     sessionID: SessionID
     questions: Info[]
     tool?: { messageID: MessageID; callID: string }
-  }): Promise<Answer[]> {
+  }): Promise<Result> {
     return runPromise((s) => s.ask(input))
   }
 
-  export async function reply(input: { requestID: QuestionID; answers: Answer[] }) {
+  export async function reply(input: { requestID: QuestionID; answers: Answer[]; context?: string }) {
     return runPromise((s) => s.reply(input))
   }
 

@@ -44,6 +44,7 @@ export function useSpeech(sessionID: () => string) {
         onIdle: () => {
           queueIdle = true
           setSpeaking(false)
+          Speaker.setBusy(false)
         },
       })
     }
@@ -65,9 +66,11 @@ export function useSpeech(sessionID: () => string) {
         const p = play(new Uint8Array(pcm))
         queueIdle = false
         setSpeaking(true)
+        Speaker.setBusy(true)
         p.done.then(() => {
           queueIdle = true
           setSpeaking(false)
+          Speaker.setBusy(false)
         })
       }
       return
@@ -85,6 +88,7 @@ export function useSpeech(sessionID: () => string) {
       if (!q) return
       queueIdle = false
       setSpeaking(true)
+      Speaker.setBusy(true)
       q.push(String(part.state.input.text))
       q.flush()
     }
@@ -105,9 +109,9 @@ export function useSpeech(sessionID: () => string) {
     if (!sysInfo().hasVoice) return
     const q = getQueue()
     if (!q) return
-    q.cancel()
     queueIdle = false
     setSpeaking(true)
+    Speaker.setBusy(true)
     q.push(`Permission needed for ${evt.properties.permission}. `)
     q.flush()
   })
@@ -119,9 +123,9 @@ export function useSpeech(sessionID: () => string) {
     if (!sysInfo().hasVoice) return
     const q = getQueue()
     if (!q) return
-    q.cancel()
     queueIdle = false
     setSpeaking(true)
+    Speaker.setBusy(true)
     const question = evt.properties.questions?.[0]?.question
     if (question) {
       q.push(question + " ")
@@ -132,6 +136,7 @@ export function useSpeech(sessionID: () => string) {
   function cancel() {
     queue?.cancel()
     Speaker.cancel()
+    Speaker.setBusy(false)
     queueIdle = true
     setSpeaking(false)
   }

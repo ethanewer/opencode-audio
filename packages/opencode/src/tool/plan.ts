@@ -92,11 +92,14 @@ export const PlanExitTool = Tool.define("plan_exit", {
     const model = await getLastModel(ctx.sessionID)
 
     if (!auto) {
-      const answers = await Question.ask({
+      const result = await Question.ask({
         sessionID: ctx.sessionID,
         questions: [
           {
-            question: `Plan at ${rel} is complete. Would you like to switch to the ${mode} agent and start implementing?`,
+            question:
+              ctx.agent === "voice-plan"
+                ? `Plan is complete. Would you like to start implementing?`
+                : `Plan at ${rel} is complete. Would you like to switch to the ${mode} agent and start implementing?`,
             header: "Build Agent",
             options: [
               { label: "Yes", description: `Switch to ${mode} agent and start implementing the plan` },
@@ -107,12 +110,18 @@ export const PlanExitTool = Tool.define("plan_exit", {
         tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
       })
 
-      const answer = answers[0]?.[0]?.trim()
+      const answer = result.answers[0]?.[0]?.trim()
       if (answer !== "Yes") {
-        const text =
-          !answer || answer === "Keep planning"
-            ? "The user wants to stay in plan mode. Continue refining the plan."
-            : ["The user wants to stay in plan mode and provided this feedback:", answer].join("\n\n")
+        const parts: string[] = []
+        if (!answer || answer === "Keep planning") {
+          parts.push("The user wants to stay in plan mode. Continue refining the plan.")
+        } else {
+          parts.push("The user wants to stay in plan mode and provided this feedback:", answer)
+        }
+        if (result.context) {
+          parts.push("\nAdditional context from the user: " + result.context)
+        }
+        const text = parts.join("\n\n")
         await followup(ctx, model, text)
         return {
           title: "Continuing in plan mode",

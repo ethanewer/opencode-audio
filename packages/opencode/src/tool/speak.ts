@@ -12,9 +12,9 @@ export const SpeakTool = Tool.define("speak", {
   async execute(params) {
     const cfg = await Config.get()
     const speed = cfg.experimental?.voice?.tts?.speed ?? 1
-    const rem = Speaker.remaining(speed)
 
-    if (rem > 1) {
+    if (Speaker.isBusy()) {
+      const rem = Speaker.remaining(speed)
       throw new Error(
         `Already speaking. Approximately ${rem.toFixed(1)} seconds remaining. Wait before calling speak again.`,
       )
@@ -24,7 +24,7 @@ export const SpeakTool = Tool.define("speak", {
 
     return {
       title: "speak",
-      output: rem > 0 ? "Queued." : "Speaking.",
+      output: "Speaking.",
       metadata: { truncated: false },
     }
   },

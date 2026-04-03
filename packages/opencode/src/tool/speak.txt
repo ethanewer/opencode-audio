@@ -1,6 +1,6 @@
 Speak text aloud to the user via text-to-speech. Use this tool for ALL verbal communication with the user. The user can only hear you through this tool.
 
-The tool is non-blocking: audio plays in the background and the tool returns immediately so you can continue working. If you are already speaking and more than 1 second of audio remains, the tool returns an error with the estimated time remaining. If less than 1 second remains, the new text is queued seamlessly after the current audio.
+The tool is non-blocking: audio plays in the background and the tool returns immediately so you can continue working. If you are already speaking, the tool returns an error with the estimated time remaining. Wait for the current speech to finish before calling speak again.
 
 Rules for spoken text:
 - Keep each call to one or two short sentences. Be concise and direct.

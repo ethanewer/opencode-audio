@@ -264,7 +264,7 @@ describe("tool.plan_exit", () => {
   })
 
   test("asks before switching to build in interactive mode", async () => {
-    const ask = spyOn(QuestionModule.Question, "ask").mockResolvedValue([["Yes"]])
+    const ask = spyOn(QuestionModule.Question, "ask").mockResolvedValue({ answers: [["Yes"]] })
 
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
@@ -293,7 +293,7 @@ describe("tool.plan_exit", () => {
   })
 
   test("auto-approves and switches plan sessions to build", async () => {
-    const ask = spyOn(QuestionModule.Question, "ask").mockResolvedValue([["Yes"]])
+    const ask = spyOn(QuestionModule.Question, "ask").mockResolvedValue({ answers: [["Yes"]] })
     process.env.OPENCODE_CLI_PLAN_AUTO_BUILD = "1"
 
     await using tmp = await tmpdir({ git: true })
@@ -320,7 +320,7 @@ describe("tool.plan_exit", () => {
   })
 
   test("auto-approves and switches voice-plan sessions to voice-build", async () => {
-    const ask = spyOn(QuestionModule.Question, "ask").mockResolvedValue([["Yes"]])
+    const ask = spyOn(QuestionModule.Question, "ask").mockResolvedValue({ answers: [["Yes"]] })
     process.env.OPENCODE_CLI_PLAN_AUTO_BUILD = "1"
 
     await using tmp = await tmpdir({ git: true })
@@ -394,7 +394,7 @@ describe("tool.plan_exit", () => {
   })
 
   test("stays in plan mode when the user keeps planning", async () => {
-    spyOn(QuestionModule.Question, "ask").mockResolvedValue([["Run tests first"]])
+    spyOn(QuestionModule.Question, "ask").mockResolvedValue({ answers: [["Run tests first"]] })
 
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({

@@ -14,7 +14,7 @@ export type ClassifyFn = (input: {
   transcript: string
   options: string[]
   question?: string
-}) => Promise<{ option: string | null; confidence: number }>
+}) => Promise<{ option: string | null; context: string | null; confidence: number }>
 
 export type ClassifyMultiFn = (input: {
   providerID: string
@@ -22,7 +22,7 @@ export type ClassifyMultiFn = (input: {
   transcript: string
   options: string[]
   question?: string
-}) => Promise<{ options: string[]; confidence: number }>
+}) => Promise<{ options: string[]; context: string | null; confidence: number }>
 
 export type TranscribeFn = (input: { audio: Uint8Array; model?: string }) => Promise<string>
 

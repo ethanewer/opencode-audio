@@ -238,20 +238,22 @@ export function splitSentences(
 }
 
 export function sanitize(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, "code block")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")
-    .replace(/_{1,3}([^_]+)_{1,3}/g, "$1")
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    // Remove numbered list prefixes
-    .replace(/^\s*\d+[.)]\s+/gm, "")
-    // Remove bullet list prefixes
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/\s+/g, " ")
-    .trim()
+  return (
+    text
+      .replace(/```[\s\S]*?```/g, "code block")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")
+      .replace(/_{1,3}([^_]+)_{1,3}/g, "$1")
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      // Remove numbered list prefixes
+      .replace(/^\s*\d+[.)]\s+/gm, "")
+      // Remove bullet list prefixes
+      .replace(/^\s*[-*+]\s+/gm, "")
+      .replace(/\s+/g, " ")
+      .trim()
+  )
 }
 
 // ---------------------------------------------------------------------------
