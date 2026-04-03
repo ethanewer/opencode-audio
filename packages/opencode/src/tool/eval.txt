@@ -1,0 +1,6 @@
+Report the result of your evaluation. You MUST call this tool exactly once when your evaluation is complete.
+
+Set pass to true if the work is correct and complete — all requirements are met and no significant issues were found.
+Set pass to false if there are problems that need to be fixed.
+
+Provide a brief summary of your findings. If pass is false, include specific issues in the issues array with file paths and descriptions.

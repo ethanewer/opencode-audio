@@ -231,6 +231,47 @@ export function Session() {
     }
   })
 
+  // Eval agent trigger: when build goes idle, offer to run eval.
+  // Track the last assistant message ID we offered eval for so we don't re-trigger.
+  let evalRunning = false
+  let evalOffered = ""
+  sdk.event.on("session.status", (evt) => {
+    if (evt.properties.sessionID !== route.sessionID) return
+    if (evt.properties.status.type !== "idle") return
+    if (evalRunning) return
+
+    // Check if the last assistant used build agent
+    const msgs = messages()
+    const last = msgs.findLast((m): m is AssistantMessage => m.role === "assistant")
+    if (!last) return
+    if (last.agent !== "build" && last.agent !== "voice-build") return
+    // Don't re-offer eval for the same assistant turn
+    if (last.id === evalOffered) return
+
+    // Check this isn't a child session (subagent)
+    if (session()?.parentID) return
+
+    // Trigger eval via server endpoint
+    evalRunning = true
+    evalOffered = last.id
+    const model = local.model.current()
+    const body = {
+      ...(model ? { model: { providerID: model.providerID, modelID: model.modelID } } : {}),
+    }
+    sdk
+      .fetch(`${sdk.url}/session/${route.sessionID}/eval`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      .then(() => {
+        evalRunning = false
+      })
+      .catch(() => {
+        evalRunning = false
+      })
+  })
+
   let scroll: ScrollBoxRenderable
   let prompt: PromptRef
   const keybind = useKeybind()

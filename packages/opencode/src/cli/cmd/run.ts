@@ -30,6 +30,7 @@ import { Locale } from "../../util/locale"
 import { transcribeFile } from "../../audio/transcribe"
 import { Session } from "../../session"
 import { SessionID } from "../../session/schema"
+import { Eval } from "../../session/eval"
 
 type ToolProps<T extends Tool.Info> = {
   input: Tool.InferParameters<T>
@@ -313,6 +314,15 @@ export const RunCommand = cmd({
         type: "string",
         describe: "path to a .wav file to transcribe as the prompt",
       })
+      .option("eval", {
+        type: "boolean",
+        describe: "run eval agent after build completes (default: true when no --agent specified)",
+      })
+      .option("eval-iterations", {
+        type: "number",
+        default: 5,
+        describe: "max number of build-eval iterations",
+      })
   },
   handler: async (args) => {
     let message = [...args.message, ...(args["--"] || [])]
@@ -483,25 +493,50 @@ export const RunCommand = cmd({
       const events = await sdk.event.subscribe()
       let error: string | undefined
 
-      async function loop(sessionID: string, auto: boolean) {
+      // Track sessions we're actively listening for
+      const active = new Set<string>()
+      const waiters = new Map<string, { resolve: () => void; auto: boolean }>()
+
+      function listen(sessionID: string, auto: boolean): Promise<void> {
+        active.add(sessionID)
+        return new Promise<void>((resolve) => {
+          waiters.set(sessionID, { resolve, auto })
+        })
+      }
+
+      function unlisten(sessionID: string) {
+        active.delete(sessionID)
+        const waiter = waiters.get(sessionID)
+        waiters.delete(sessionID)
+        waiter?.resolve()
+      }
+
+      // Background event processor — runs for the lifetime of the execute() call
+      const processor = (async () => {
         const toggles = new Map<string, boolean>()
 
         for await (const event of events.stream) {
+          if (active.size === 0) continue
+
           if (
             event.type === "message.updated" &&
             event.properties.info.role === "assistant" &&
-            args.format !== "json" &&
-            toggles.get("start") !== true
+            args.format !== "json"
           ) {
-            UI.empty()
-            UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
-            UI.empty()
-            toggles.set("start", true)
+            const sid = event.properties.info.sessionID
+            if (!active.has(sid)) continue
+            const key = `start:${sid}`
+            if (toggles.get(key) !== true) {
+              UI.empty()
+              UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
+              UI.empty()
+              toggles.set(key, true)
+            }
           }
 
           if (event.type === "message.part.updated") {
             const part = event.properties.part
-            if (part.sessionID !== sessionID) continue
+            if (!active.has(part.sessionID)) continue
 
             if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
               if (emit("tool_use", { part })) continue
@@ -565,7 +600,7 @@ export const RunCommand = cmd({
 
           if (event.type === "session.error") {
             const props = event.properties
-            if (props.sessionID !== sessionID || !props.error) continue
+            if (!props.sessionID || !active.has(props.sessionID) || !props.error) continue
             let err = String(props.error.name)
             if ("data" in props.error && props.error.data && "message" in props.error.data) {
               err = String(props.error.data.message)
@@ -577,15 +612,16 @@ export const RunCommand = cmd({
 
           if (
             event.type === "session.status" &&
-            event.properties.sessionID === sessionID &&
+            active.has(event.properties.sessionID) &&
             event.properties.status.type === "idle"
           ) {
-            break
+            toggles.delete(`start:${event.properties.sessionID}`)
+            unlisten(event.properties.sessionID)
           }
 
           if (event.type === "permission.asked") {
             const permission = event.properties
-            if (permission.sessionID !== sessionID) continue
+            if (!active.has(permission.sessionID)) continue
             UI.println(
               UI.Style.TEXT_WARNING_BOLD + "!",
               UI.Style.TEXT_NORMAL +
@@ -599,8 +635,9 @@ export const RunCommand = cmd({
 
           if (event.type === "question.asked") {
             const question = event.properties
-            if (question.sessionID !== sessionID) continue
-            if (!auto) continue
+            if (!active.has(question.sessionID)) continue
+            const waiter = waiters.get(question.sessionID)
+            if (!waiter?.auto) continue
             if (question.questions[0]?.header !== "Build Agent") continue
             await sdk.question.reply({
               requestID: question.id,
@@ -608,7 +645,12 @@ export const RunCommand = cmd({
             })
           }
         }
-      }
+      })()
+
+      processor.catch((e) => {
+        console.error(e)
+        process.exit(1)
+      })
 
       // Validate agent if specified
       const validated = await (async () => {
@@ -680,10 +722,8 @@ export const RunCommand = cmd({
       await share(sdk, sessionID)
       const auto = Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(validated ?? "")
 
-      loop(sessionID, auto).catch((e) => {
-        console.error(e)
-        process.exit(1)
-      })
+      // Start listening for the build session
+      const idle = listen(sessionID, auto)
 
       if (args.command) {
         await sdk.session.command({
@@ -703,6 +743,63 @@ export const RunCommand = cmd({
           variant: args.variant,
           parts: [...files, { type: "text", text: message }],
         })
+      }
+
+      // Wait for build to finish
+      await idle
+
+      // Run eval if enabled
+      // Eval is on by default when implicit plan mode is active and no --agent was specified.
+      // It can be explicitly enabled/disabled with --eval.
+      const doEval = args.eval ?? (implicit && !args.agent)
+      if (doEval && !error && !args.attach) {
+        const maxIter = args.evalIterations ?? 5
+        const model = args.model ? Provider.parseModel(args.model) : undefined
+
+        UI.empty()
+        UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Running eval...")
+
+        const result = await Eval.run({
+          sessionID: SessionID.make(sessionID),
+          instruction: await Eval.extract(SessionID.make(sessionID), model),
+          model,
+          max: maxIter,
+          onSession(sid) {
+            // Register eval/build sessions so events are displayed
+            active.add(sid)
+            // Re-register the build session in case it was unlistened after idle
+            active.add(sessionID)
+          },
+          onAttempt(attempt, max) {
+            UI.empty()
+            UI.println(UI.Style.TEXT_INFO_BOLD + `~  ` + UI.Style.TEXT_NORMAL + `Eval attempt ${attempt}/${max}`)
+          },
+          onResult(result) {
+            if (result.pass) {
+              UI.println(UI.Style.TEXT_INFO_BOLD + "✓  " + UI.Style.TEXT_NORMAL + "Eval passed: " + result.summary)
+            } else {
+              UI.println(
+                UI.Style.TEXT_WARNING_BOLD + "✗  " + UI.Style.TEXT_NORMAL + "Eval found issues: " + result.summary,
+              )
+              if (result.issues?.length) {
+                for (const issue of result.issues) {
+                  const loc = issue.file ? ` (${issue.file})` : ""
+                  UI.println(UI.Style.TEXT_DIM + `   [${issue.severity}]${loc}: ${issue.description}`)
+                }
+              }
+            }
+          },
+        })
+
+        if (!result.pass) {
+          UI.empty()
+          UI.println(
+            UI.Style.TEXT_WARNING_BOLD +
+              "!  " +
+              UI.Style.TEXT_NORMAL +
+              `Eval did not pass after ${result.attempt} attempt(s)`,
+          )
+        }
       }
     }
 
