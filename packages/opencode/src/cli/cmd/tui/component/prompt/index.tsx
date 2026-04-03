@@ -82,6 +82,8 @@ const money = new Intl.NumberFormat("en-US", {
   currency: "USD",
 })
 
+const zed = process.env.TERM_PROGRAM?.toLowerCase() === "zed"
+
 function randomIndex(count: number) {
   if (count <= 0) return 0
   return Math.floor(Math.random() * count)
@@ -106,6 +108,7 @@ export function Prompt(props: PromptProps) {
   const renderer = useRenderer()
   const { theme, syntax } = useTheme()
   const kv = useKV()
+  const [cols, setCols] = createSignal(0)
   const list = createMemo(() => props.placeholders?.normal ?? [])
   const shell = createMemo(() => props.placeholders?.shell ?? [])
 
@@ -966,6 +969,8 @@ export function Prompt(props: PromptProps) {
     return local.model.parsed().model
   })
 
+  const fill = createMemo(() => "▄".repeat(Math.max(0, cols())))
+
   const systemProviders = createMemo(() => {
     const info = local.system.info()
     const parts: string[] = []
@@ -1039,7 +1044,23 @@ export function Prompt(props: PromptProps) {
           setStore("mode", "voice")
         }}
       />
-      <box ref={(r) => (anchor = r)} visible={props.visible !== false}>
+      <box
+        ref={(r) => {
+          anchor = r
+          if (!zed) return
+          setTimeout(() => {
+            if (r.isDestroyed) return
+            setCols(Math.max(0, r.width - 1))
+            renderer.requestRender()
+          }, 0)
+        }}
+        onSizeChange={() => {
+          if (!zed || !anchor || anchor.isDestroyed) return
+          setCols(Math.max(0, anchor.width - 1))
+          renderer.requestRender()
+        }}
+        visible={props.visible !== false}
+      >
         <box
           border={["left"]}
           borderColor={highlight()}
@@ -1318,32 +1339,42 @@ export function Prompt(props: PromptProps) {
             </box>
           </box>
         </box>
-        <box
-          height={1}
-          border={["left"]}
-          borderColor={highlight()}
-          customBorderChars={{
-            ...EmptyBorder,
-            vertical: theme.backgroundElement.a !== 0 ? "╹" : " ",
-          }}
-        >
+        <Show when={!zed}>
           <box
             height={1}
-            border={["bottom"]}
-            borderColor={theme.backgroundElement}
-            customBorderChars={
-              theme.backgroundElement.a !== 0
-                ? {
-                    ...EmptyBorder,
-                    horizontal: "▀",
-                  }
-                : {
-                    ...EmptyBorder,
-                    horizontal: " ",
-                  }
-            }
-          />
-        </box>
+            border={["left"]}
+            borderColor={highlight()}
+            customBorderChars={{
+              ...EmptyBorder,
+              vertical: theme.backgroundElement.a !== 0 ? "╹" : " ",
+            }}
+          >
+            <box
+              height={1}
+              border={["bottom"]}
+              borderColor={theme.backgroundElement}
+              customBorderChars={
+                theme.backgroundElement.a !== 0
+                  ? {
+                      ...EmptyBorder,
+                      horizontal: "▀",
+                    }
+                  : {
+                      ...EmptyBorder,
+                      horizontal: " ",
+                    }
+              }
+            />
+          </box>
+        </Show>
+        <Show when={zed}>
+          <box height={1} flexDirection="row">
+            <text fg={highlight()}>╹</text>
+            <text fg={theme.background} bg={theme.backgroundElement} selectable={false}>
+              {theme.backgroundElement.a !== 0 ? fill() : " ".repeat(Math.max(0, cols()))}
+            </text>
+          </box>
+        </Show>
         <box flexDirection="row" justifyContent="space-between">
           <Show when={status().type !== "idle"} fallback={props.hint ?? <text />}>
             <box
