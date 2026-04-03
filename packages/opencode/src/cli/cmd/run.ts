@@ -28,6 +28,8 @@ import { BashTool } from "../../tool/bash"
 import { TodoWriteTool } from "../../tool/todo"
 import { Locale } from "../../util/locale"
 import { transcribeFile } from "../../audio/transcribe"
+import { Session } from "../../session"
+import { SessionID } from "../../session/schema"
 
 type ToolProps<T extends Tool.Info> = {
   input: Tool.InferParameters<T>
@@ -219,6 +221,10 @@ function normalizePath(input?: string) {
   return input
 }
 
+function isPlan(agent?: string) {
+  return agent === "plan" || agent === "voice-plan"
+}
+
 export const RunCommand = cmd({
   command: "run [message..]",
   describe: "run opencode with a message",
@@ -371,6 +377,10 @@ export const RunCommand = cmd({
       process.exit(1)
     }
 
+    const implicit =
+      Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && !args.attach && !args.command && !args.continue && !args.session
+    const agent = args.agent ?? (implicit ? "plan" : undefined)
+
     const rules: Permission.Ruleset = [
       {
         permission: "question",
@@ -382,12 +392,14 @@ export const RunCommand = cmd({
         action: "deny",
         pattern: "*",
       },
-      {
+    ]
+    if (!(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(agent))) {
+      rules.push({
         permission: "plan_exit",
         action: "deny",
         pattern: "*",
-      },
-    ]
+      })
+    }
 
     function title() {
       if (args.title === undefined) return
@@ -398,12 +410,25 @@ export const RunCommand = cmd({
     async function session(sdk: OpencodeClient) {
       const baseID = args.continue ? (await sdk.session.list()).data?.find((s) => !s.parentID)?.id : args.session
 
+      const apply = async (sessionID: string) => {
+        if (args.attach) return
+        if (!(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(agent))) return
+        await Session.setPermission({
+          sessionID: SessionID.make(sessionID),
+          permission: rules,
+        })
+      }
+
       if (baseID && args.fork) {
         const forked = await sdk.session.fork({ sessionID: baseID })
+        if (forked.data?.id) await apply(forked.data.id)
         return forked.data?.id
       }
 
-      if (baseID) return baseID
+      if (baseID) {
+        await apply(baseID)
+        return baseID
+      }
 
       const name = title()
       const result = await sdk.session.create({ title: name, permission: rules })
@@ -458,7 +483,7 @@ export const RunCommand = cmd({
       const events = await sdk.event.subscribe()
       let error: string | undefined
 
-      async function loop() {
+      async function loop(sessionID: string, auto: boolean) {
         const toggles = new Map<string, boolean>()
 
         for await (const event of events.stream) {
@@ -571,12 +596,23 @@ export const RunCommand = cmd({
               reply: "reject",
             })
           }
+
+          if (event.type === "question.asked") {
+            const question = event.properties
+            if (question.sessionID !== sessionID) continue
+            if (!auto) continue
+            if (question.questions[0]?.header !== "Build Agent") continue
+            await sdk.question.reply({
+              requestID: question.id,
+              answers: [["Yes"]],
+            })
+          }
         }
       }
 
       // Validate agent if specified
-      const agent = await (async () => {
-        if (!args.agent) return undefined
+      const validated = await (async () => {
+        if (!agent) return undefined
 
         // When attaching, validate against the running server instead of local Instance state.
         if (args.attach) {
@@ -594,34 +630,34 @@ export const RunCommand = cmd({
             return undefined
           }
 
-          const agent = modes.find((a) => a.name === args.agent)
-          if (!agent) {
+          const entry = modes.find((item) => item.name === agent)
+          if (!entry) {
             UI.println(
               UI.Style.TEXT_WARNING_BOLD + "!",
               UI.Style.TEXT_NORMAL,
-              `agent "${args.agent}" not found. Falling back to default agent`,
+              `agent "${agent}" not found. Falling back to default agent`,
             )
             return undefined
           }
 
-          if (agent.mode === "subagent") {
+          if (entry.mode === "subagent") {
             UI.println(
               UI.Style.TEXT_WARNING_BOLD + "!",
               UI.Style.TEXT_NORMAL,
-              `agent "${args.agent}" is a subagent, not a primary agent. Falling back to default agent`,
+              `agent "${agent}" is a subagent, not a primary agent. Falling back to default agent`,
             )
             return undefined
           }
 
-          return args.agent
+          return agent
         }
 
-        const entry = await Agent.get(args.agent)
+        const entry = await Agent.get(agent)
         if (!entry) {
           UI.println(
             UI.Style.TEXT_WARNING_BOLD + "!",
             UI.Style.TEXT_NORMAL,
-            `agent "${args.agent}" not found. Falling back to default agent`,
+            `agent "${agent}" not found. Falling back to default agent`,
           )
           return undefined
         }
@@ -629,11 +665,11 @@ export const RunCommand = cmd({
           UI.println(
             UI.Style.TEXT_WARNING_BOLD + "!",
             UI.Style.TEXT_NORMAL,
-            `agent "${args.agent}" is a subagent, not a primary agent. Falling back to default agent`,
+            `agent "${agent}" is a subagent, not a primary agent. Falling back to default agent`,
           )
           return undefined
         }
-        return args.agent
+        return agent
       })()
 
       const sessionID = await session(sdk)
@@ -642,8 +678,9 @@ export const RunCommand = cmd({
         process.exit(1)
       }
       await share(sdk, sessionID)
+      const auto = Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(validated ?? "")
 
-      loop().catch((e) => {
+      loop(sessionID, auto).catch((e) => {
         console.error(e)
         process.exit(1)
       })
@@ -651,7 +688,7 @@ export const RunCommand = cmd({
       if (args.command) {
         await sdk.session.command({
           sessionID,
-          agent,
+          agent: validated,
           model: args.model,
           command: args.command,
           arguments: message,
@@ -661,7 +698,7 @@ export const RunCommand = cmd({
         const model = args.model ? Provider.parseModel(args.model) : undefined
         await sdk.session.prompt({
           sessionID,
-          agent,
+          agent: validated,
           model,
           variant: args.variant,
           parts: [...files, { type: "text", text: message }],
@@ -681,13 +718,21 @@ export const RunCommand = cmd({
       return await execute(sdk)
     }
 
-    await bootstrap(process.cwd(), async () => {
-      const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
-        const request = new Request(input, init)
-        return Server.Default().fetch(request)
-      }) as typeof globalThis.fetch
-      const sdk = createOpencodeClient({ baseUrl: "http://opencode.internal", fetch: fetchFn })
-      await execute(sdk)
-    })
+    if (Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(agent)) {
+      process.env.OPENCODE_CLI_PLAN_AUTO_BUILD = "1"
+    }
+
+    try {
+      await bootstrap(process.cwd(), async () => {
+        const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = new Request(input, init)
+          return Server.Default().fetch(request)
+        }) as typeof globalThis.fetch
+        const sdk = createOpencodeClient({ baseUrl: "http://opencode.internal", fetch: fetchFn })
+        await execute(sdk)
+      })
+    } finally {
+      delete process.env.OPENCODE_CLI_PLAN_AUTO_BUILD
+    }
   },
 })

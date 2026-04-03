@@ -48,6 +48,10 @@ export namespace SessionProcessor {
   interface ProcessorContext extends Input {
     toolcalls: Record<string, MessageV2.ToolPart>
     shouldBreak: boolean
+    handoff: boolean
+    followup: boolean
+    done: boolean
+    ended: boolean
     snapshot: string | undefined
     blocked: boolean
     needsCompaction: boolean
@@ -95,6 +99,10 @@ export namespace SessionProcessor {
           model: input.model,
           toolcalls: {},
           shouldBreak: false,
+          handoff: false,
+          followup: false,
+          done: false,
+          ended: false,
           snapshot: initialSnapshot,
           blocked: false,
           needsCompaction: false,
@@ -228,6 +236,14 @@ export namespace SessionProcessor {
                   attachments: value.output.attachments,
                 },
               })
+              if (value.output.metadata?.handoff === true) {
+                ctx.handoff = true
+                if (ctx.ended) ctx.done = true
+              }
+              if (value.output.metadata?.followup === true) {
+                ctx.followup = true
+                if (ctx.ended) ctx.done = true
+              }
               delete ctx.toolcalls[value.toolCallId]
               return
             }
@@ -255,6 +271,7 @@ export namespace SessionProcessor {
               throw value.error
 
             case "start-step":
+              ctx.ended = false
               if (!ctx.snapshot) ctx.snapshot = yield* snapshot.track()
               yield* session.updatePart({
                 id: PartID.ascending(),
@@ -303,6 +320,8 @@ export namespace SessionProcessor {
                 sessionID: ctx.sessionID,
                 messageID: ctx.assistantMessage.parentID,
               })
+              ctx.ended = true
+              if (ctx.handoff || ctx.followup) ctx.done = true
               if (
                 !ctx.assistantMessage.summary &&
                 isOverflow({ cfg: yield* config.get(), tokens: usage.tokens, model: ctx.model })
@@ -446,6 +465,10 @@ export namespace SessionProcessor {
         const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
           log.info("process")
           ctx.needsCompaction = false
+          ctx.handoff = false
+          ctx.followup = false
+          ctx.done = false
+          ctx.ended = false
           ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
           return yield* Effect.gen(function* () {
@@ -456,7 +479,7 @@ export namespace SessionProcessor {
 
               yield* stream.pipe(
                 Stream.tap((event) => handleEvent(event)),
-                Stream.takeUntil(() => ctx.needsCompaction),
+                Stream.takeUntil(() => ctx.needsCompaction || ctx.done),
                 Stream.runDrain,
               )
 
@@ -499,6 +522,7 @@ export namespace SessionProcessor {
               yield* abort()
             }
             if (ctx.needsCompaction) return "compact"
+            if (ctx.handoff || ctx.followup) return "continue"
             if (ctx.blocked || ctx.assistantMessage.error || aborted) return "stop"
             return "continue"
           }).pipe(Effect.onInterrupt(() => abort().pipe(Effect.asVoid)))

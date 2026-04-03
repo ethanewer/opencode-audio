@@ -139,7 +139,7 @@ export namespace ToolRegistry {
           SpeakTool,
           ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...(cfg.experimental?.batch_tool === true ? [BatchTool] : []),
-          ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
+          ...(Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
           ...custom,
         ]
       })
@@ -167,6 +167,10 @@ export namespace ToolRegistry {
         const state = yield* InstanceState.get(cache)
         const allTools = yield* all(state.custom)
         const filtered = allTools.filter((tool) => {
+          if (tool.id === "plan_exit") {
+            return Flag.OPENCODE_CLIENT === "cli" && (agent?.name === "plan" || agent?.name === "voice-plan")
+          }
+
           if (tool.id === "codesearch" || tool.id === "websearch") {
             return model.providerID === ProviderID.opencode || Flag.OPENCODE_ENABLE_EXA
           }

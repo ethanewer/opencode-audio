@@ -12,6 +12,7 @@ import { LSP } from "../../src/lsp"
 import { MCP } from "../../src/mcp"
 import { Permission } from "../../src/permission"
 import { Plugin } from "../../src/plugin"
+import { Question } from "../../src/question"
 import type { Provider } from "../../src/provider/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
@@ -149,6 +150,7 @@ function makeHttp() {
     AgentSvc.defaultLayer,
     Command.defaultLayer,
     Permission.layer,
+    Question.layer,
     Plugin.defaultLayer,
     Config.defaultLayer,
     filetime,
