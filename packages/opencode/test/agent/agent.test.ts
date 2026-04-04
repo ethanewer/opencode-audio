@@ -721,6 +721,7 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
       agent: {
         build: { disable: true },
         plan: { disable: true },
+        auto: { disable: true },
         "voice-build": { disable: true },
         "voice-plan": { disable: true },
       },
