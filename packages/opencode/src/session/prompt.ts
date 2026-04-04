@@ -611,10 +611,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           let single = ""
           for (const m of allMsgs) {
             if (m.info.role !== "user") continue
+            // Skip messages that are eval subtask commands or eval results
+            if (m.parts.some((p) => p.type === "subtask" && p.command === Command.Default.EVAL)) continue
             for (const p of m.parts) {
               if (p.type !== "text") continue
               if ("synthetic" in p && p.synthetic) continue
               if ("ignored" in p && p.ignored) continue
+              if ("eval" in p && p.eval) continue
               const t = p.text.trim()
               if (!t) continue
               count++
@@ -768,7 +771,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           } satisfies MessageV2.ToolPart)
         }
 
-        if (!task.command) return
+        if (!task.command || task.command === Command.Default.EVAL) return
 
         const summaryUserMsg: MessageV2.User = {
           id: MessageID.ascending(),
@@ -1585,8 +1588,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     feedback = lines.join("\n")
                   }
                 }
-                // If eval passed, stop — don't give build agent another turn
-                if (passed) break
+                // If eval passed, show a result message (ignored by build agent) and stop
+                if (passed) {
+                  const summary = evalResult?.summary ?? "All requirements fulfilled"
+                  const mid = MessageID.ascending()
+                  yield* sessions.updateMessage({
+                    id: mid,
+                    sessionID,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: lastUser.agent,
+                    model: lastUser.model,
+                  })
+                  yield* sessions.updatePart({
+                    id: PartID.ascending(),
+                    messageID: mid,
+                    sessionID,
+                    type: "text",
+                    text: `✓ Eval passed — ${summary}`,
+                    eval: true,
+                  } as MessageV2.TextPart)
+                  break
+                }
                 // If eval failed, send feedback to the build agent
                 const mid = MessageID.ascending()
                 yield* sessions.updateMessage({

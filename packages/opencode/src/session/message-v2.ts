@@ -113,6 +113,7 @@ export namespace MessageV2 {
     text: z.string(),
     synthetic: z.boolean().optional(),
     ignored: z.boolean().optional(),
+    eval: z.boolean().optional(),
     time: z
       .object({
         start: z.number(),
@@ -647,7 +648,7 @@ export namespace MessageV2 {
         }
         result.push(userMessage)
         for (const part of msg.parts) {
-          if (part.type === "text" && !part.ignored)
+          if (part.type === "text" && !part.ignored && !part.eval)
             userMessage.parts.push({
               type: "text",
               text: part.text,
@@ -721,6 +722,17 @@ export namespace MessageV2 {
               type: "step-start",
             })
           if (part.type === "tool") {
+            // Skip eval task tool calls — eval should be invisible to the build agent
+            if (
+              part.tool === "task" &&
+              part.state.status === "completed" &&
+              typeof part.state.input === "object" &&
+              part.state.input &&
+              "command" in part.state.input &&
+              part.state.input.command === "eval"
+            ) {
+              continue
+            }
             // Skip abandoned tool calls - model started generating the tool call
             // (tool-input-start event) but never completed it (no tool-call event).
             // The cleanup code in processor.ts sets these to error with empty input.
