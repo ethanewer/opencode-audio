@@ -3,7 +3,6 @@ import fs from "fs/promises"
 import http from "node:http"
 import path from "path"
 import * as QuestionModule from "../../src/question"
-import { Flag } from "../../src/flag/flag"
 import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -16,7 +15,7 @@ import { ToolRegistry } from "../../src/tool/registry"
 import { PlanExitTool } from "../../src/tool/plan"
 import { tmpdir } from "../fixture/fixture"
 
-const original = Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE
+const env = process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
 
 function providerCfg(url: string) {
   return {
@@ -227,8 +226,8 @@ async function latest(sessionID: SessionID) {
 
 afterEach(async () => {
   delete process.env.OPENCODE_CLI_PLAN_AUTO_BUILD
-  // @ts-expect-error tests overwrite static flag values
-  Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = original
+  if (env === undefined) delete process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
+  else process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = env
   mock.restore()
   await Instance.disposeAll()
 })
@@ -242,8 +241,7 @@ describe("tool.plan_exit", () => {
   })
 
   test("is available for the plan agent even when the experimental flag is off", async () => {
-    // @ts-expect-error tests overwrite static flag values
-    Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = false
+    process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = "0"
 
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
@@ -422,8 +420,6 @@ describe("tool.plan_exit", () => {
 
   test("loop auto-handoffs a fresh plan run into build", async () => {
     process.env.OPENCODE_CLI_PLAN_AUTO_BUILD = "1"
-    // @ts-expect-error tests overwrite static flag values
-    Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = true
 
     const server = await llm([
       { type: "tool", tool: "plan_exit", input: {} },
@@ -480,8 +476,6 @@ describe("tool.plan_exit", () => {
 
   test("loop retries plan mode when the model stops without plan_exit", async () => {
     process.env.OPENCODE_CLI_PLAN_AUTO_BUILD = "1"
-    // @ts-expect-error tests overwrite static flag values
-    Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = true
 
     const server = await llm([
       { type: "text", text: "Plan:\n1. Run bun typecheck.\n2. Run bun test." },

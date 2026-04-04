@@ -5,13 +5,12 @@ import * as AgentModule from "../../src/agent/agent"
 import * as Audio from "../../src/audio/transcribe"
 import * as Bootstrap from "../../src/cli/bootstrap"
 import { UI } from "../../src/cli/ui"
-import { Flag } from "../../src/flag/flag"
 import * as EvalModule from "../../src/session/eval"
 import * as SessionModule from "../../src/session"
 import { tmpdir } from "../fixture/fixture"
 
-const original = Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE
 const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
+const plan = process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
 
 class ExitErr extends Error {
   constructor(readonly code: number | undefined) {
@@ -160,8 +159,7 @@ async function call(
 }
 
 beforeEach(() => {
-  // @ts-expect-error tests overwrite static flag values
-  Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = true
+  delete process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
   Object.defineProperty(process.stdin, "isTTY", {
     configurable: true,
     value: true,
@@ -172,8 +170,8 @@ afterEach(() => {
   mock.restore()
   delete process.env.OPENCODE_CLI_PLAN_AUTO_BUILD
   process.exitCode = undefined
-  // @ts-expect-error tests overwrite static flag values
-  Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = original
+  if (plan === undefined) delete process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
+  else process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = plan
   if (tty) Object.defineProperty(process.stdin, "isTTY", tty)
   else delete (process.stdin as { isTTY?: boolean }).isTTY
 })
@@ -188,9 +186,8 @@ describe("cli.run", () => {
     expect(seen.rules.some((item) => item.permission === "plan_exit")).toBe(false)
   })
 
-  test("keeps the default build flow when experimental plan mode is off", async () => {
-    // @ts-expect-error tests overwrite static flag values
-    Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = false
+  test("keeps the default build flow when plan mode is explicitly disabled", async () => {
+    process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = "0"
 
     const seen = await call()
 
@@ -259,8 +256,7 @@ describe("cli.run", () => {
   })
 
   test("auto-answers headless questions before waiting for idle", async () => {
-    // @ts-expect-error tests overwrite static flag values
-    Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = false
+    process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = "0"
 
     const seen = await call(
       {},
