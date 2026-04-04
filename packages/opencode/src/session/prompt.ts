@@ -550,7 +550,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         session: Session.Info
         msgs: MessageV2.WithParts[]
       }) {
-        const { task, model, lastUser, sessionID, session, msgs } = input
+        let { task, model, lastUser, sessionID, session, msgs } = input
         const ctx = yield* InstanceState.context
         const taskTool = yield* Effect.promise(() => TaskTool.init())
         const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID) : model
@@ -602,6 +602,63 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const error = new NamedError.Unknown({ message: `Agent not found: "${task.agent}".${hint}` })
           yield* bus.publish(Session.Event.Error, { sessionID, error: error.toObject() })
           throw error
+        }
+
+        // /eval: deferred instruction extraction — runs after the subtask UI is visible
+        if (task.command === Command.Default.EVAL && task.prompt.includes("__EVAL_EXTRACT__")) {
+          const allMsgs = msgs
+          let count = 0
+          let single = ""
+          for (const m of allMsgs) {
+            if (m.info.role !== "user") continue
+            for (const p of m.parts) {
+              if (p.type !== "text") continue
+              if ("synthetic" in p && p.synthetic) continue
+              if ("ignored" in p && p.ignored) continue
+              const t = p.text.trim()
+              if (!t) continue
+              count++
+              if (count === 1) single = t
+            }
+          }
+          let instruction: string
+          if (count <= 1) {
+            instruction = single || "No user instruction found"
+          } else {
+            const mdl = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
+            const history = yield* Effect.promise(() => MessageV2.toModelMessages(allMsgs, mdl, { stripMedia: true }))
+            const extract = yield* agents.get("extract")
+            if (extract) {
+              const ac = new AbortController()
+              instruction = yield* Effect.promise(async () => {
+                const result = await LLM.stream({
+                  agent: extract,
+                  user: lastUser,
+                  system: extract.prompt ? [extract.prompt] : [],
+                  small: true,
+                  tools: {},
+                  model: mdl,
+                  abort: ac.signal,
+                  sessionID,
+                  retries: 1,
+                  messages: [
+                    ...history,
+                    { role: "user" as const, content: "Extract the user's instructions from the conversation above." },
+                  ],
+                })
+                return result.text ?? single
+              })
+            } else {
+              instruction = single
+            }
+          }
+          // Replace the marker with the extracted instruction
+          const extra = task.prompt.replace("__EVAL_EXTRACT__", "").trim()
+          const resolved = extra
+            ? `## User Instruction\n\n${instruction}\n\n## Additional Context\n\n${extra}`
+            : `## User Instruction\n\n${instruction}`
+          task = { ...task, prompt: task.prompt.replace(/__EVAL_EXTRACT__[^\n]*/, resolved) }
+          taskArgs.prompt = task.prompt
         }
 
         let error: Error | undefined
@@ -1763,106 +1820,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
           throw error
         }
-        // /eval: extract the user instruction from session history
+        // /eval: mark for deferred extraction (happens inside handleSubtask)
         if (input.command === Command.Default.EVAL) {
-          const allMsgs = yield* sessions.messages({ sessionID: input.sessionID })
-          // Count non-synthetic user text parts
-          let count = 0
-          let single = ""
-          for (const m of allMsgs) {
-            if (m.info.role !== "user") continue
-            for (const p of m.parts) {
-              if (p.type !== "text") continue
-              if ("synthetic" in p && p.synthetic) continue
-              if ("ignored" in p && p.ignored) continue
-              const t = p.text.trim()
-              if (!t) continue
-              count++
-              if (count === 1) single = t
-            }
-          }
-
-          let instruction: string
-          if (count <= 1) {
-            instruction = single || "No user instruction found"
-          } else {
-            // Show a placeholder message while extracting
-            const ctx = yield* InstanceState.context
-            const placeholderModel = input.model ? Provider.parseModel(input.model) : yield* lastModel(input.sessionID)
-            const placeholderMsg: MessageV2.Assistant = {
-              id: MessageID.ascending(),
-              sessionID: input.sessionID,
-              role: "assistant",
-              parentID: MessageID.make(""),
-              agent: "eval",
-              mode: "eval",
-              modelID: ModelID.make(placeholderModel.modelID),
-              providerID: ProviderID.make(placeholderModel.providerID),
-              path: { cwd: ctx.directory, root: ctx.worktree },
-              cost: 0,
-              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-              time: { created: Date.now() },
-            }
-            yield* sessions.updateMessage(placeholderMsg)
-            const placeholderPart: MessageV2.ToolPart = {
-              id: PartID.ascending(),
-              messageID: placeholderMsg.id,
-              sessionID: input.sessionID,
-              type: "tool",
-              callID: "eval-extract",
-              tool: "task",
-              state: {
-                status: "running",
-                input: {
-                  description: cmd.description ?? "evaluate the current session's work for correctness",
-                },
-                time: { start: Date.now() },
-              },
-            }
-            yield* sessions.updatePart(placeholderPart)
-
-            // Run extraction LLM call
-            const mdl = yield* Effect.promise(async () => {
-              const resolved = input.model ? Provider.parseModel(input.model) : await Provider.defaultModel()
-              return Provider.getModel(resolved.providerID, resolved.modelID)
-            })
-            const history = yield* Effect.promise(() => MessageV2.toModelMessages(allMsgs, mdl, { stripMedia: true }))
-            const extract = yield* agents.get("extract")
-            if (extract) {
-              const firstUser = allMsgs.find((m) => m.info.role === "user")?.info as MessageV2.User
-              const ac = new AbortController()
-              instruction = yield* Effect.promise(async () => {
-                const result = await LLM.stream({
-                  agent: extract,
-                  user: firstUser,
-                  system: extract.prompt ? [extract.prompt] : [],
-                  small: true,
-                  tools: {},
-                  model: mdl,
-                  abort: ac.signal,
-                  sessionID: input.sessionID,
-                  retries: 1,
-                  messages: [
-                    ...history,
-                    { role: "user" as const, content: "Extract the user's instructions from the conversation above." },
-                  ],
-                })
-                return result.text ?? single
-              })
-            } else {
-              instruction = single
-            }
-
-            // Remove the placeholder message
-            yield* sessions.removeMessage({ sessionID: input.sessionID, messageID: placeholderMsg.id })
-          }
-
-          const extra = input.arguments.trim()
+          // Pass a marker in arguments — extraction happens after the subtask UI is visible
           input = {
             ...input,
-            arguments: extra
-              ? `## User Instruction\n\n${instruction}\n\n## Additional Context\n\n${extra}`
-              : `## User Instruction\n\n${instruction}`,
+            arguments: "__EVAL_EXTRACT__" + (input.arguments.trim() ? "\n" + input.arguments.trim() : ""),
           }
         }
 
