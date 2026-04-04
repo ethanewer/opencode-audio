@@ -1590,7 +1590,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 }
                 // If eval passed, show a result message (ignored by build agent) and stop
                 if (passed) {
-                  const summary = evalResult?.summary ?? "All requirements fulfilled"
                   const mid = MessageID.ascending()
                   yield* sessions.updateMessage({
                     id: mid,
@@ -1605,7 +1604,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     messageID: mid,
                     sessionID,
                     type: "text",
-                    text: `✓ Eval passed — ${summary}`,
+                    text: "Eval passed.",
                     eval: true,
                   } as MessageV2.TextPart)
                   break
