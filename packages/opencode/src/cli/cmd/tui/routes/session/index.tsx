@@ -405,6 +405,24 @@ export function Session() {
       },
     },
     {
+      title: "Run eval",
+      value: "session.eval",
+      category: "Session",
+      slash: {
+        name: "eval",
+      },
+      onSelect: (dialog) => {
+        dialog.clear()
+        const model = local.model.current()
+        sdk.client.session.command({
+          sessionID: route.sessionID,
+          command: "eval",
+          arguments: "",
+          ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
+        })
+      },
+    },
+    {
       title: "Jump to message",
       value: "session.timeline",
       keybind: "session_timeline",

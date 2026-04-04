@@ -28,7 +28,6 @@ import { FileTime } from "../file/time"
 import { ulid } from "ulid"
 import { spawn } from "child_process"
 import { Command } from "../command"
-import { Eval } from "./eval"
 import { pathToFileURL, fileURLToPath } from "url"
 import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
@@ -1354,8 +1353,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               if (!lastAssistant && msg.info.role === "assistant") lastAssistant = msg.info
               if (!lastFinished && msg.info.role === "assistant" && msg.info.finish) lastFinished = msg.info
               if (lastUser && lastFinished) break
-              const task = msg.parts.filter((part) => part.type === "compaction" || part.type === "subtask")
-              if (task && !lastFinished) tasks.push(...task)
+              const task = msg.parts.filter(
+                (part): part is MessageV2.CompactionPart | MessageV2.SubtaskPart =>
+                  part.type === "compaction" || part.type === "subtask",
+              )
+              // Skip eval subtasks from older messages — they've already been processed
+              if (task.length && !lastFinished) {
+                for (const t of task) {
+                  if (t.type === "subtask" && t.command === Command.Default.EVAL && msg.info.id !== lastUser?.id)
+                    continue
+                  tasks.push(t)
+                }
+              }
             }
 
             if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
@@ -1631,6 +1640,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }),
             )
             if (outcome === "break") break
+            // eval_result tool: stop the loop immediately after the tool executes
+            if (
+              handle.message.finish === "tool-calls" &&
+              MessageV2.stream(sessionID)
+                .next()
+                .value?.parts.some(
+                  (p) => p.type === "tool" && p.tool === "eval_result" && p.state.status === "completed",
+                )
+            )
+              break
             continue
           }
 
@@ -1665,10 +1684,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
           throw error
         }
-        // /eval: extract the user instruction and prepend to arguments
+        // /eval: extract the user instruction from session messages
         if (input.command === Command.Default.EVAL) {
-          const model = input.model ? Provider.parseModel(input.model) : yield* lastModel(input.sessionID)
-          const instruction = yield* Effect.promise(() => Eval.extract(input.sessionID, model))
+          const msgs = yield* sessions.messages({ sessionID: input.sessionID })
+          const parts: string[] = []
+          for (const msg of msgs) {
+            if (msg.info.role !== "user") continue
+            for (const part of msg.parts) {
+              if (part.type !== "text") continue
+              if ("synthetic" in part && part.synthetic) continue
+              if ("ignored" in part && part.ignored) continue
+              const text = part.text.trim()
+              if (text) parts.push(text)
+            }
+          }
+          const instruction = parts.join("\n\n") || "No user instruction found"
           const extra = input.arguments.trim()
           input = {
             ...input,
