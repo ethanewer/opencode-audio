@@ -600,7 +600,15 @@ export const RunCommand = cmd({
           if (event.type === "question.asked") {
             const question = event.properties
             if (question.sessionID !== sessionID) continue
-            if (!auto) continue
+            // In headless mode, auto-answer all questions so the session
+            // can reach idle instead of hanging forever.
+            if (!auto) {
+              await sdk.question.reply({
+                requestID: question.id,
+                answers: [["Yes"]],
+              })
+              continue
+            }
             if (question.questions[0]?.header !== "Build Agent") continue
             await sdk.question.reply({
               requestID: question.id,
@@ -680,7 +688,7 @@ export const RunCommand = cmd({
       await share(sdk, sessionID)
       const auto = Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(validated ?? "")
 
-      loop(sessionID, auto).catch((e) => {
+      const done = loop(sessionID, auto).catch((e) => {
         console.error(e)
         process.exit(1)
       })
@@ -704,6 +712,25 @@ export const RunCommand = cmd({
           parts: [...files, { type: "text", text: message }],
         })
       }
+
+      // Wait for the SSE event loop to finish (breaks on session idle).
+      // This ensures the event stream is cleanly closed before execute()
+      // returns and bootstrap() runs Instance.dispose(), preventing a
+      // deadlock where disposal hangs waiting for resources still held by
+      // the unawaited loop.
+      await done
+
+      // The SSE loop has finished and all agent work is complete.
+      // Instance.dispose() in bootstrap's finally block can deadlock
+      // because Effect finalizers depend on resources (Bus PubSub,
+      // ManagedRuntime scopes) that form circular shutdown dependencies.
+      // Since the run command is headless and all work is done, exit
+      // immediately rather than risk hanging on disposal.
+      if (error) {
+        process.stderr.write(error + "\n")
+        process.exit(1)
+      }
+      process.exit(0)
     }
 
     if (args.attach) {
