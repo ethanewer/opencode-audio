@@ -845,6 +845,9 @@ export function Prompt(props: PromptProps) {
         })
         .catch(() => {})
     }
+    if (local.agent.current()?.name === "auto") {
+      local.agent.auto.start()
+    }
     history.append({
       ...store.prompt,
       mode: currentMode,
@@ -954,6 +957,18 @@ export function Prompt(props: PromptProps) {
     if (keybind.leader) return theme.border
     if (store.mode === "shell") return theme.primary
     return local.agent.color(local.agent.current().name)
+  })
+
+  const label = createMemo(() => {
+    if (store.mode === "shell") return "Shell"
+    const cur = local.agent.current()
+    if (cur?.name === "auto") {
+      const phase = local.agent.auto.phase()
+      if (phase === "plan") return "Auto [Plan]"
+      if (phase === "build") return "Auto [Build]"
+      return "Auto"
+    }
+    return Locale.titlecase(cur?.name ?? "build")
   })
 
   const showVariant = createMemo(() => {
@@ -1322,9 +1337,7 @@ export function Prompt(props: PromptProps) {
               syntaxStyle={syntax()}
             />
             <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1}>
-              <text fg={highlight()}>
-                {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
-              </text>
+              <text fg={highlight()}>{label()} </text>
               <Show when={store.mode !== "shell"}>
                 <box flexDirection="row" gap={1}>
                   <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>

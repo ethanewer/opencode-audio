@@ -215,7 +215,12 @@ export function Session() {
     }
   })
 
+  const local = useLocal()
+
   let lastSwitch: string | undefined = undefined
+  const auto = createMemo(() => local.agent.current()?.name === "auto")
+  const status = createMemo(() => sync.data.session_status?.[route.sessionID] ?? { type: "idle" as const })
+
   sdk.event.on("message.part.updated", (evt) => {
     const part = evt.properties.part
     if (part.type !== "tool") return
@@ -224,13 +229,102 @@ export function Session() {
     if (part.id === lastSwitch) return
 
     if (part.tool === "plan_exit" && part.state.metadata?.handoff === true) {
-      local.agent.set("build")
+      if (auto()) {
+        local.agent.auto.setPhase("build")
+      } else {
+        local.agent.set("build")
+      }
       lastSwitch = part.id
     } else if (part.tool === "plan_enter") {
-      local.agent.set("plan")
+      if (!auto()) local.agent.set("plan")
       lastSwitch = part.id
     }
   })
+
+  // ── Auto mode orchestration ──────────────────────────────────────
+
+  // Auto-answer plan_exit question
+  createEffect(() => {
+    if (!auto()) return
+    if (local.agent.auto.phase() !== "plan") return
+    const qs = questions()
+    if (!qs.length) return
+    const q = qs[0]
+    // Only auto-answer plan_exit questions
+    if (!q.tool) return
+    const parts = sync.data.part[q.tool.messageID] ?? []
+    const exit = parts.some(
+      (p: Part) => p.type === "tool" && "callID" in p && p.callID === q.tool!.callID && p.tool === "plan_exit",
+    )
+    if (!exit) return
+    sdk.client.question.reply({
+      requestID: q.id,
+      answers: [["Yes"]],
+    })
+  })
+
+  // Trigger eval when build goes idle in auto mode, and handle eval iterations
+  let armed = false
+  createEffect(() => {
+    if (!auto()) return
+    if (local.agent.auto.phase() !== "build") {
+      armed = false
+      return
+    }
+    if (status().type !== "idle") {
+      armed = true
+      return
+    }
+    if (!armed) return
+    armed = false
+
+    const iter = local.agent.auto.iter()
+
+    // If eval already ran, check if it passed
+    if (iter > 0) {
+      const msgs = messages()
+      const passed = msgs.some((m) => {
+        if (m.role !== "user") return false
+        const parts = sync.data.part[m.id] ?? []
+        return parts.some((p: Part) => p.type === "text" && (p as TextPart & { eval?: boolean }).eval === true)
+      })
+      if (passed || iter >= local.agent.auto.MAX) {
+        local.agent.auto.reset()
+        return
+      }
+    }
+
+    // Trigger eval
+    local.agent.auto.setIter(iter + 1)
+    const model = local.model.current()
+    sdk.client.session.command({
+      sessionID: route.sessionID,
+      command: "eval",
+      arguments: "",
+      ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
+    })
+  })
+
+  // Reset auto mode on interruption
+  sdk.event.on("message.updated", (evt) => {
+    if (evt.properties.info.sessionID !== route.sessionID) return
+    if (evt.properties.info.role !== "assistant") return
+    if (!auto()) return
+    if (local.agent.auto.phase() === "idle") return
+    if (evt.properties.info.error?.name === "MessageAbortedError") {
+      local.agent.auto.reset()
+    }
+  })
+
+  // Reset auto state on session navigation
+  createEffect(
+    on(
+      () => route.sessionID,
+      () => {
+        local.agent.auto.reset()
+      },
+    ),
+  )
 
   let scroll: ScrollBoxRenderable
   let prompt: PromptRef
@@ -319,8 +413,6 @@ export function Session() {
       scroll.scrollTo(scroll.scrollHeight)
     }, 50)
   }
-
-  const local = useLocal()
 
   function moveFirstChild() {
     if (children().length === 1) return
