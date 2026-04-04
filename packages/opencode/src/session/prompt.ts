@@ -70,6 +70,10 @@ function isBuild(name: string) {
   return name === "build" || name === "voice-build"
 }
 
+function buildFromPlan(name: string) {
+  return name === "voice-plan" ? "voice-build" : "build"
+}
+
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
 
@@ -286,11 +290,39 @@ export namespace SessionPrompt {
         const exists = yield* fsys.existsSafe(plan)
         if (!exists) yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))
         const voice = input.agent.name.startsWith("voice-")
+        const rules = Permission.merge(input.agent.permission, input.session.permission ?? [])
+        const autonomous = Permission.evaluate("question", "*", rules).action === "deny"
+        const exit = Permission.evaluate("plan_exit", "*", rules).action !== "deny"
         const clarify = voice
           ? input.audioOutput
             ? "speak directly to"
             : "use the speak tool to"
           : "use the question tool to"
+        const phase1 = autonomous
+          ? "3. After exploring the code, do not ask the user questions. If information is missing, make the best reasonable assumptions and continue."
+          : `3. After exploring the code, ${clarify} clarify ambiguities in the user request up front.`
+        const phase3 = autonomous
+          ? "3. Resolve any remaining ambiguities yourself using reasonable assumptions. Do not ask the user questions."
+          : `3. ${clarify.charAt(0).toUpperCase() + clarify.slice(1)} clarify any remaining questions with the user`
+        const important = autonomous
+          ? exit
+            ? "**Important:** Do not ask the user questions in this mode. If something is ambiguous, make the best reasonable assumption, write the plan, and call plan_exit when the plan is complete."
+            : "**Important:** Do not ask the user questions in this mode. If something is ambiguous, make the best reasonable assumption and continue planning. When the plan is complete, finish your turn normally without calling plan_exit. The build phase will begin automatically."
+          : `**Important:** ${clarify.charAt(0).toUpperCase() + clarify.slice(1)} clarify requirements/approach, use plan_exit to request plan approval. Do NOT ${clarify} ask \"Is this plan okay?\" - that's what plan_exit does.`
+        const phase5 = exit
+          ? [
+              "### Phase 5: Call plan_exit tool",
+              "At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.",
+              "This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.",
+              "Do not end with a plain text plan summary, a plain text approval request, or a plain text statement that you are ready to implement. Once the plan is complete, call plan_exit in the same turn.",
+              "The `plan_exit` tool is available in this session while you are in plan mode. Do not claim that it is unavailable unless you actually attempted it and got a real tool error.",
+            ].join("\n")
+          : [
+              "### Phase 5: Finish Planning",
+              "When the plan is complete, end your turn normally with the finalized plan already written to the plan file.",
+              "Do not ask the user for approval, and do not call plan_exit in this mode.",
+              "The build phase will start automatically after your plan turn finishes.",
+            ].join("\n")
         const part = yield* sessions.updatePart({
           id: PartID.ascending(),
           messageID: userMessage.info.id,
@@ -316,7 +348,7 @@ Goal: Gain a comprehensive understanding of the user's request by reading throug
    - Quality over quantity - 3 agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
    - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
 
-3. After exploring the code, ${clarify} clarify ambiguities in the user request up front.
+${phase1}
 
 ### Phase 2: Design
 Goal: Design an implementation approach.
@@ -349,7 +381,7 @@ In the agent prompt:
 Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
 1. Read the critical files identified by agents to deepen your understanding
 2. Ensure that the plans align with the user's original request
-3. ${clarify.charAt(0).toUpperCase() + clarify.slice(1)} clarify any remaining questions with the user
+${phase3}
 
 ### Phase 4: Final Plan
 Goal: Write your final plan to the plan file (the only file you can edit).
@@ -358,13 +390,9 @@ Goal: Write your final plan to the plan file (the only file you can edit).
 - Include the paths of critical files to be modified
 - Include a verification section describing how to test the changes end-to-end (run the code, use MCP tools, run tests)
 
-### Phase 5: Call plan_exit tool
-At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.
-This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.
-Do not end with a plain text plan summary, a plain text approval request, or a plain text statement that you are ready to implement. Once the plan is complete, call plan_exit in the same turn.
-The \`plan_exit\` tool is available in this session while you are in plan mode. Do not claim that it is unavailable unless you actually attempted it and got a real tool error.
+${phase5}
 
-**Important:** ${clarify.charAt(0).toUpperCase() + clarify.slice(1)} clarify requirements/approach, use plan_exit to request plan approval. Do NOT ${clarify} ask "Is this plan okay?" - that's what plan_exit does.
+${important}
 
 NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
 </system-reminder>`,
@@ -1441,6 +1469,41 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   const turn = msgs.findLast((msg) => msg.info.id === lastAssistant.id)
                   const exit = turn?.parts.some((part) => part.type === "tool" && part.tool === "plan_exit")
                   if (!exit) {
+                    const auto = Permission.evaluate("plan_exit", "*", session.permission ?? []).action === "deny"
+                    const file = Session.plan(session)
+                    const rel = path.relative(Instance.worktree, file)
+                    const body = yield* Effect.promise(() =>
+                      Bun.file(file)
+                        .text()
+                        .then((x) => x.trim())
+                        .catch(() => ""),
+                    )
+                    if (auto && body) {
+                      const mid = MessageID.ascending()
+                      yield* sessions.updateMessage({
+                        id: mid,
+                        sessionID,
+                        role: "user",
+                        time: { created: Date.now() },
+                        agent: buildFromPlan(lastUser.agent),
+                        model: lastUser.model,
+                      } satisfies MessageV2.User)
+                      yield* sessions.updatePart({
+                        id: PartID.ascending(),
+                        messageID: mid,
+                        sessionID,
+                        type: "text",
+                        text: [
+                          `Auto mode approved the plan at ${rel}. Switch to the ${buildFromPlan(lastUser.agent)} agent and execute the approved plan.`,
+                          `Plan file: ${file}`,
+                          ["## Approved Plan:", body].join("\n"),
+                        ].join("\n\n"),
+                        synthetic: true,
+                        metadata: { plan: { handoff: true } },
+                      } satisfies MessageV2.TextPart)
+                      remind = false
+                      continue
+                    }
                     const mid = MessageID.ascending()
                     yield* sessions.updateMessage({
                       id: mid,
@@ -1459,16 +1522,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                         ? [
                             "<system-reminder>",
                             "Your previous plan-mode turn ended incorrectly again.",
-                            "Do not restate the plan. If you still need information, ask the user a clarifying question now.",
-                            "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
+                            auto
+                              ? "Do not restate the plan. Ensure the finalized plan is written to the plan file, then finish your turn normally so build can start automatically."
+                              : "Do not restate the plan. If you still need information, ask the user a clarifying question now.",
+                            auto
+                              ? "Do not call plan_exit in this mode."
+                              : "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
                             "</system-reminder>",
                           ].join("\n")
                         : [
                             "<system-reminder>",
                             "Your previous plan-mode turn ended incorrectly.",
-                            "In plan mode, you must not finish with a plain text plan summary.",
-                            "If you still need information, ask the user a clarifying question now.",
-                            "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
+                            auto
+                              ? "In this autonomous planning mode, you must finish with the finalized plan written to the plan file."
+                              : "In plan mode, you must not finish with a plain text plan summary.",
+                            auto
+                              ? "Do not ask the user questions in this mode. Make the best reasonable assumptions and continue planning if needed."
+                              : "If you still need information, ask the user a clarifying question now.",
+                            auto
+                              ? "Once the plan file is finalized, finish your turn normally so build can start automatically."
+                              : "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
                             "</system-reminder>",
                           ].join("\n"),
                       synthetic: true,
@@ -1678,6 +1751,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     if (m.info.role !== "user" || m.info.id <= lastFinished.id) continue
                     for (const p of m.parts) {
                       if (p.type !== "text" || p.ignored || p.synthetic) continue
+                      if (Eval.state(p)) continue
                       if (!p.text.trim()) continue
                       p.text = [
                         "<system-reminder>",
@@ -1702,6 +1776,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ]),
                 )
                 const system = [...env, ...(skills ? [skills] : []), ...instructions]
+                const evalPart = msgs
+                  .findLast((msg) => msg.info.id === lastUser.id)
+                  ?.parts.findLast(
+                    (part): part is MessageV2.TextPart =>
+                      part.type === "text" && !part.ignored && Eval.state(part)?.mode === "interactive",
+                  )
+                const evalState = Eval.state(evalPart)
+                if (evalState?.phase === "failed") {
+                  system.push(Eval.reminder(evalState.round <= Eval.MAX_REBUT))
+                }
                 const format = lastUser.format ?? { type: "text" as const }
                 if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
                 const result = yield* handle.process({

@@ -11,6 +11,7 @@ import {
   Show,
   Switch,
   Match,
+  For,
 } from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
@@ -22,6 +23,8 @@ import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
 import { MessageID, PartID } from "@/session/schema"
+import { Session } from "@/session"
+import { SessionID } from "@/session/schema"
 import { createStore, produce } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
@@ -61,10 +64,27 @@ export type PromptProps = {
   showPlaceholder?: boolean
   speaking?: () => boolean
   cancelSpeech?: () => void
+  shouldDefer?: () => boolean
+  onDefer?: (draft: DeferredDraft) => void
+  deferred?: () => DeferredDraft[]
+  appendMode?: () => boolean
   placeholders?: {
     normal?: string[]
     shell?: string[]
   }
+}
+
+export type DeferredDraft = {
+  id: string
+  sessionID?: string
+  input: string
+  parts: PromptInfo["parts"]
+  type: "normal" | "shell" | "command"
+  command?: string
+  args?: string
+  model: { providerID: string; modelID: string }
+  agent: string
+  variant?: string
 }
 
 export type PromptRef = {
@@ -75,6 +95,86 @@ export type PromptRef = {
   blur(): void
   focus(): void
   submit(): void
+}
+
+function parseSlash(input: string) {
+  if (!input.startsWith("/")) return
+  const end = input.indexOf("\n")
+  const line = end === -1 ? input : input.slice(0, end)
+  const [head, ...rest] = line.split(" ")
+  return {
+    name: head.slice(1),
+    args: rest.join(" ") + (end === -1 ? "" : input.slice(end + 1) ? "\n" + input.slice(end + 1) : ""),
+  }
+}
+
+function autoTools(local: ReturnType<typeof useLocal>) {
+  return Object.fromEntries(local.agent.auto.rules("plan").map((item) => [item.permission, false]))
+}
+
+export async function dispatchDraft(opts: {
+  sdk: ReturnType<typeof useSDK>
+  local: ReturnType<typeof useLocal>
+  draft: DeferredDraft & { sessionID: string }
+}) {
+  if (opts.draft.agent === "auto" && opts.local.agent.current()?.name !== "auto") {
+    opts.local.agent.set("auto")
+  }
+  if (opts.draft.agent === "auto") {
+    await Session.setPermission({
+      sessionID: SessionID.make(opts.draft.sessionID),
+      permission: opts.local.agent.auto.rules("plan"),
+    })
+  }
+  const agent = opts.local.agent.resolve(opts.draft.agent)
+  const draft = opts.draft
+  if (draft.type === "shell") {
+    const result = opts.sdk.client.session.shell({
+      sessionID: draft.sessionID,
+      agent,
+      model: draft.model,
+      command: draft.input,
+    })
+    if (draft.agent === "auto") opts.local.agent.auto.start()
+    return result
+  }
+  if (draft.type === "command") {
+    const result = opts.sdk.client.session.command({
+      sessionID: draft.sessionID,
+      command: draft.command!,
+      arguments: draft.args ?? "",
+      agent,
+      model: `${draft.model.providerID}/${draft.model.modelID}`,
+      variant: draft.variant,
+      parts: draft.parts
+        .filter((x): x is FilePart => x.type === "file")
+        .map(({ id: _, ...x }) => ({
+          id: PartID.ascending(),
+          ...x,
+        })),
+    })
+    if (draft.agent === "auto") opts.local.agent.auto.start()
+    return result
+  }
+  const result = opts.sdk.client.session.prompt({
+    sessionID: draft.sessionID,
+    ...draft.model,
+    messageID: MessageID.ascending(),
+    agent,
+    model: draft.model,
+    variant: draft.variant,
+    ...(draft.agent === "auto" ? { tools: autoTools(opts.local) } : {}),
+    parts: [
+      {
+        id: PartID.ascending(),
+        type: "text",
+        text: draft.input,
+      },
+      ...draft.parts.map(assign),
+    ],
+  })
+  if (draft.agent === "auto") opts.local.agent.auto.start()
+  return result
 }
 
 const money = new Intl.NumberFormat("en-US", {
@@ -111,6 +211,7 @@ export function Prompt(props: PromptProps) {
   const [cols, setCols] = createSignal(0)
   const list = createMemo(() => props.placeholders?.normal ?? [])
   const shell = createMemo(() => props.placeholders?.shell ?? [])
+  const deferred = createMemo(() => props.deferred?.() ?? [])
 
   function promptModelWarning() {
     toast.show({
@@ -199,9 +300,25 @@ export function Prompt(props: PromptProps) {
   createEffect(() => promptRef.setMode(store.mode))
 
   let submitting = false
+
+  function prepend(text: string) {
+    const val = text.trim()
+    if (!val) return
+    const gap = input.plainText ? " " : ""
+    input.cursorOffset = 0
+    input.insertText(val + gap)
+    const next = input.plainText
+    setStore("prompt", "input", next)
+    syncExtmarksWithPromptParts()
+    input.cursorOffset = Bun.stringWidth(next)
+  }
+
   const voice = useVoice({
     onResult(text) {
-      if (store.mode !== "voice") return
+      if (store.mode !== "voice") {
+        prepend(text)
+        return
+      }
       if (!text.trim()) return
       submitting = true
       input.setText(text)
@@ -211,13 +328,13 @@ export function Prompt(props: PromptProps) {
       })
     },
     onFinish(text) {
-      batch(() => {
-        setStore("mode", "normal")
-        if (text.trim()) {
-          input.setText(text)
-          setStore("prompt", "input", text)
-        }
-      })
+      if (store.mode === "voice") {
+        batch(() => {
+          setStore("returnToVoice", true)
+          setStore("mode", "normal")
+        })
+      }
+      prepend(text)
     },
     audioInput: () => !!local.system.info().hasAudioInput,
     async onAudio(audio) {
@@ -231,6 +348,13 @@ export function Prompt(props: PromptProps) {
         })
         if (res.error) return
         sessionID = res.data.id
+        if (local.agent.current()?.name === "auto") local.agent.auto.arm(sessionID)
+      }
+      if (local.agent.current()?.name === "auto") {
+        await Session.setPermission({
+          sessionID: SessionID.make(sessionID),
+          permission: local.agent.auto.rules("plan"),
+        })
       }
       const url = `data:audio/wav;base64,${Buffer.from(audio).toString("base64")}`
       sdk.client.session
@@ -241,6 +365,7 @@ export function Prompt(props: PromptProps) {
           agent: local.agent.resolved(),
           model: selected,
           variant: local.model.variant.current(),
+          ...(local.agent.current()?.name === "auto" ? { tools: autoTools(local) } : {}),
           parts: [
             {
               id: PartID.ascending(),
@@ -257,6 +382,9 @@ export function Prompt(props: PromptProps) {
           ],
         })
         .catch(() => {})
+      if (local.agent.current()?.name === "auto") {
+        local.agent.auto.start()
+      }
       props.onSubmit?.()
       if (!props.sessionID)
         setTimeout(() => {
@@ -273,7 +401,7 @@ export function Prompt(props: PromptProps) {
     on(
       () => store.mode,
       (mode) => {
-        if (mode !== "voice") voice.cancel()
+        if (mode !== "voice" && !voice.busy()) voice.cancel()
       },
     ),
   )
@@ -328,8 +456,9 @@ export function Prompt(props: PromptProps) {
         }
         // Set agent (strip voice- prefix for user-facing agent)
         const base = msg.agent.replace(/^voice-/, "")
+        const keepAuto = local.agent.current()?.name === "auto" && local.agent.auto.claim(sessionID, base)
         const isPrimaryAgent = local.agent.list().some((x) => x.name === base || x.name === msg.agent)
-        if (isPrimaryAgent) local.agent.set(base)
+        if (isPrimaryAgent && !keepAuto) local.agent.set(base)
         if (msg.variant) local.model.variant.set(msg.variant)
       }
     }
@@ -723,6 +852,29 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
+  function clear(opts?: { keepMode?: boolean }) {
+    input.extmarks.clear()
+    setStore("prompt", {
+      input: "",
+      parts: [],
+    })
+    setStore("extmarkToPartIndex", new Map())
+    if (!opts?.keepMode && store.returnToVoice) {
+      setStore("returnToVoice", false)
+      setStore("mode", "voice")
+    }
+    input.clear()
+  }
+
+  function finish(mode: PromptMode) {
+    history.append({
+      ...store.prompt,
+      mode,
+    })
+    clear()
+    props.onSubmit?.()
+  }
+
   async function submit() {
     if (props.disabled) return
     if (autocomplete?.visible) return
@@ -732,33 +884,6 @@ export function Prompt(props: PromptProps) {
       exit()
       return
     }
-    const selectedModel = local.model.current()
-    if (!selectedModel) {
-      promptModelWarning()
-      return
-    }
-
-    let sessionID = props.sessionID
-    if (sessionID == null) {
-      const res = await sdk.client.session.create({
-        workspaceID: props.workspaceID,
-      })
-
-      if (res.error) {
-        console.log("Creating a session failed:", res.error)
-
-        toast.show({
-          message: "Creating a session failed. Open console for more details.",
-          variant: "error",
-        })
-
-        return
-      }
-
-      sessionID = res.data.id
-    }
-
-    const messageID = MessageID.ascending()
     let inputText = store.prompt.input
 
     // Expand pasted text inline before submitting
@@ -782,84 +907,86 @@ export function Prompt(props: PromptProps) {
 
     // Capture mode before it gets reset
     const currentMode = store.mode
+    const slash = parseSlash(inputText)
+
+    if (slash?.name === "append") {
+      command.trigger("session.append")
+      clear({ keepMode: true })
+      if (store.returnToVoice) {
+        setStore("returnToVoice", false)
+        setStore("mode", "voice")
+      }
+      return
+    }
+
+    const selectedModel = local.model.current()
+    if (!selectedModel) {
+      promptModelWarning()
+      return
+    }
+
     const variant = local.model.variant.current()
 
-    if (store.mode === "shell") {
-      sdk.client.session.shell({
-        sessionID,
-        agent: local.agent.resolved(),
-        model: {
-          providerID: selectedModel.providerID,
-          modelID: selectedModel.modelID,
-        },
-        command: inputText,
-      })
-      setStore("mode", "normal")
-    } else if (
-      inputText.startsWith("/") &&
-      iife(() => {
-        const firstLine = inputText.split("\n")[0]
-        const command = firstLine.split(" ")[0].slice(1)
-        return sync.data.command.some((x) => x.name === command)
-      })
-    ) {
-      // Parse command from first line, preserve multi-line content in arguments
-      const firstLineEnd = inputText.indexOf("\n")
-      const firstLine = firstLineEnd === -1 ? inputText : inputText.slice(0, firstLineEnd)
-      const [command, ...firstLineArgs] = firstLine.split(" ")
-      const restOfInput = firstLineEnd === -1 ? "" : inputText.slice(firstLineEnd + 1)
-      const args = firstLineArgs.join(" ") + (restOfInput ? "\n" + restOfInput : "")
+    const type =
+      store.mode === "shell"
+        ? "shell"
+        : slash && sync.data.command.some((x) => x.name === slash.name)
+          ? "command"
+          : "normal"
+    const draft: DeferredDraft = {
+      id: MessageID.ascending(),
+      sessionID: props.sessionID,
+      input: inputText,
+      parts: store.mode === "shell" ? [] : nonTextParts,
+      type,
+      command: type === "command" ? slash?.name : undefined,
+      args: type === "command" ? slash?.args : undefined,
+      model: {
+        providerID: selectedModel.providerID,
+        modelID: selectedModel.modelID,
+      },
+      agent: local.agent.current()?.name ?? "build",
+      variant,
+    }
 
-      sdk.client.session.command({
-        sessionID,
-        command: command.slice(1),
-        arguments: args,
-        agent: local.agent.resolved(),
-        model: `${selectedModel.providerID}/${selectedModel.modelID}`,
-        messageID,
-        variant,
-        parts: nonTextParts
-          .filter((x) => x.type === "file")
-          .map((x) => ({
-            id: PartID.ascending(),
-            ...x,
-          })),
+    if (props.shouldDefer?.() && props.sessionID) {
+      props.onDefer?.(draft)
+      if (store.mode === "shell") setStore("mode", "normal")
+      finish(currentMode)
+      return
+    }
+
+    let sessionID = props.sessionID
+    if (sessionID == null) {
+      const res = await sdk.client.session.create({
+        workspaceID: props.workspaceID,
       })
-    } else {
-      sdk.client.session
-        .prompt({
-          sessionID,
-          ...selectedModel,
-          messageID,
-          agent: local.agent.resolved(),
-          model: selectedModel,
-          variant,
-          parts: [
-            {
-              id: PartID.ascending(),
-              type: "text",
-              text: inputText,
-            },
-            ...nonTextParts.map(assign),
-          ],
+
+      if (res.error) {
+        console.log("Creating a session failed:", res.error)
+
+        toast.show({
+          message: "Creating a session failed. Open console for more details.",
+          variant: "error",
         })
-        .catch(() => {})
+
+        return
+      }
+
+      sessionID = res.data.id
+      if (draft.agent === "auto") local.agent.auto.arm(sessionID)
     }
-    history.append({
-      ...store.prompt,
-      mode: currentMode,
-    })
-    input.extmarks.clear()
-    setStore("prompt", {
-      input: "",
-      parts: [],
-    })
-    setStore("extmarkToPartIndex", new Map())
-    if (store.returnToVoice) {
-      setStore("returnToVoice", false)
-      setStore("mode", "voice")
-    }
-    props.onSubmit?.()
+
+    void dispatchDraft({
+      sdk,
+      local,
+      draft: {
+        ...draft,
+        sessionID,
+      },
+    }).catch(() => {})
+    if (store.mode === "shell") setStore("mode", "normal")
+    finish(currentMode)
 
     // temporary hack to make sure the message is sent
     if (!props.sessionID)
@@ -954,6 +1081,18 @@ export function Prompt(props: PromptProps) {
     if (keybind.leader) return theme.border
     if (store.mode === "shell") return theme.primary
     return local.agent.color(local.agent.current().name)
+  })
+
+  const label = createMemo(() => {
+    if (store.mode === "shell") return "Shell"
+    const cur = local.agent.current()
+    if (cur?.name === "auto") {
+      const phase = local.agent.auto.phase()
+      if (phase === "plan") return "Auto [Plan]"
+      if (phase === "build") return "Auto [Build]"
+      return "Auto"
+    }
+    return Locale.titlecase(cur?.name ?? "build")
   })
 
   const showVariant = createMemo(() => {
@@ -1061,6 +1200,28 @@ export function Prompt(props: PromptProps) {
         }}
         visible={props.visible !== false}
       >
+        <Show when={deferred().length > 0}>
+          <box border={["top"]} borderColor={theme.warning} paddingLeft={2} paddingRight={2} flexDirection="column">
+            <text fg={theme.warning}>
+              <span style={{ fg: theme.warning, bold: true }}>DEFERRED</span>{" "}
+              <span style={{ fg: theme.textMuted }}>{deferred().length}</span>
+            </text>
+            <For each={deferred().slice(0, 5)}>
+              {(item) => (
+                <text fg={theme.textMuted}>
+                  {item.type === "command"
+                    ? `/${item.command}`
+                    : item.input.length > 60
+                      ? item.input.slice(0, 57) + "..."
+                      : item.input}
+                </text>
+              )}
+            </For>
+            <Show when={deferred().length > 5}>
+              <text fg={theme.textMuted}>...and {deferred().length - 5} more</text>
+            </Show>
+          </box>
+        </Show>
         <box
           border={["left"]}
           borderColor={highlight()}
@@ -1102,12 +1263,21 @@ export function Prompt(props: PromptProps) {
                 if (keybind.match("input_paste", e)) {
                   const content = await Clipboard.read()
                   if (content?.mime.startsWith("image/")) {
+                    if (store.mode === "voice") {
+                      if (voice.recording()) voice.finish()
+                      setStore("mode", "normal")
+                    }
                     e.preventDefault()
                     await pasteImage({
                       filename: "clipboard",
                       mime: content.mime,
                       content: content.data,
                     })
+                    return
+                  }
+                  if (store.mode === "voice") {
+                    if (voice.recording()) voice.finish()
+                    setStore("mode", "normal")
                     return
                   }
                   // If no image, let the default paste behavior continue
@@ -1165,16 +1335,7 @@ export function Prompt(props: PromptProps) {
                   return
                 }
                 if (store.mode === "voice") {
-                  if (e.name === "escape") {
-                    e.preventDefault()
-                    if (voice.recording()) {
-                      voice.finish()
-                    } else {
-                      voice.cancel()
-                      setStore("mode", "normal")
-                    }
-                    return
-                  }
+                  if (e.name === "escape") return
                   if (e.name === "s" && props.speaking?.()) {
                     e.preventDefault()
                     props.cancelSpeech?.()
@@ -1187,7 +1348,7 @@ export function Prompt(props: PromptProps) {
                     return
                   }
                   if (e.name === "!" && input.visualCursor.offset === 0) {
-                    voice.cancel()
+                    if (voice.recording()) voice.finish()
                     setStore("returnToVoice", true)
                     setStore("placeholder", randomIndex(shell().length))
                     setStore("mode", "shell")
@@ -1195,10 +1356,15 @@ export function Prompt(props: PromptProps) {
                     return
                   }
                   if (e.name === "/" && input.visualCursor.offset === 0) {
-                    voice.cancel()
+                    if (voice.recording()) voice.finish()
                     setStore("returnToVoice", true)
                     setStore("mode", "normal")
                     // don't preventDefault — let "/" be typed for command autocomplete
+                    return
+                  }
+                  if (e.name.length === 1 && !e.ctrl && !e.meta) {
+                    if (voice.recording()) voice.finish()
+                    setStore("mode", "normal")
                     return
                   }
                   e.preventDefault()
@@ -1236,6 +1402,10 @@ export function Prompt(props: PromptProps) {
                 if (props.disabled) {
                   event.preventDefault()
                   return
+                }
+                if (store.mode === "voice") {
+                  if (voice.recording()) voice.finish()
+                  setStore("mode", "normal")
                 }
 
                 // Normalize line endings at the boundary
@@ -1322,9 +1492,7 @@ export function Prompt(props: PromptProps) {
               syntaxStyle={syntax()}
             />
             <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1}>
-              <text fg={highlight()}>
-                {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
-              </text>
+              <text fg={highlight()}>{label()} </text>
               <Show when={store.mode !== "shell"}>
                 <box flexDirection="row" gap={1}>
                   <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
@@ -1458,6 +1626,14 @@ export function Prompt(props: PromptProps) {
           </Show>
           <Show when={status().type !== "retry"}>
             <box gap={2} flexDirection="row">
+              <Show when={props.appendMode?.()}>
+                <text fg={theme.warning}>
+                  append{" "}
+                  <span style={{ fg: theme.textMuted }}>
+                    {deferred().length > 0 ? `${deferred().length} deferred` : "on"}
+                  </span>
+                </text>
+              </Show>
               <Switch>
                 <Match when={store.mode === "normal"}>
                   <Show when={local.model.variant.list().length > 0}>
@@ -1491,17 +1667,17 @@ export function Prompt(props: PromptProps) {
                   <text fg={theme.text}>
                     space{" "}
                     <span style={{ fg: theme.textMuted }}>
-                      {voice.recording() ? "stop recording" : voice.transcribing() ? "transcribing..." : "record"}
+                      {voice.recording() ? "stop + send" : voice.transcribing() ? "transcribing..." : "record"}
                     </span>
+                  </text>
+                  <text fg={theme.text}>
+                    type <span style={{ fg: theme.textMuted }}>edit</span>
                   </text>
                   <text fg={theme.text}>
                     ! <span style={{ fg: theme.textMuted }}>shell</span>
                   </text>
                   <text fg={theme.text}>
                     / <span style={{ fg: theme.textMuted }}>command</span>
-                  </text>
-                  <text fg={theme.text}>
-                    esc <span style={{ fg: theme.textMuted }}>exit voice mode</span>
                   </text>
                 </Match>
               </Switch>

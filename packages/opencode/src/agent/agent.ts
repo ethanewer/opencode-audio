@@ -120,6 +120,7 @@ export namespace Agent {
               ),
               mode: "primary",
               native: true,
+              color: "info",
             },
             plan: {
               name: "plan",
@@ -145,6 +146,22 @@ export namespace Agent {
               mode: "primary",
               native: true,
               color: "success",
+            },
+            auto: {
+              name: "auto",
+              description: "Autonomous mode. Plans, builds, and evaluates automatically.",
+              options: {},
+              permission: Permission.merge(
+                defaults,
+                Permission.fromConfig({
+                  question: "allow",
+                  plan_enter: "allow",
+                }),
+                user,
+              ),
+              mode: "primary",
+              native: true,
+              color: "secondary",
             },
             "voice-build": {
               name: "voice-build",

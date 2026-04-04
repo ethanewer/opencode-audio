@@ -28,7 +28,7 @@ import {
   TextAttributes,
   RGBA,
 } from "@opentui/core"
-import { Prompt, type PromptRef } from "@tui/component/prompt"
+import { Prompt, dispatchDraft, type DeferredDraft, type PromptRef } from "@tui/component/prompt"
 import type { AssistantMessage, Part, ToolPart, UserMessage, TextPart, ReasoningPart } from "@opencode-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util/locale"
@@ -82,6 +82,8 @@ import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { Eval } from "@/session/eval"
+import { Session as SessionSvc } from "@/session"
+import { SessionID } from "@/session/schema"
 
 addDefaultParsers(parsers.parsers)
 
@@ -215,21 +217,227 @@ export function Session() {
     }
   })
 
+  const local = useLocal()
+
   let lastSwitch: string | undefined = undefined
+  const auto = createMemo(() => local.agent.current()?.name === "auto")
+  const status = createMemo(() => sync.data.session_status?.[route.sessionID] ?? { type: "idle" as const })
+  const [appendMode, setAppendMode] = createSignal(false)
+  const [deferred, setDeferred] = createSignal<DeferredDraft[]>([])
+  const [sending, setSending] = createSignal(false)
+  const [handled, setHandled] = createSignal<string>()
+  const [saved, setSaved] = createSignal<string>()
+  let seen: string | undefined
+  const shouldDefer = createMemo(() => {
+    if (!appendMode()) return false
+    if (local.agent.auto.phase() !== "idle") return true
+    return status().type !== "idle"
+  })
+
   sdk.event.on("message.part.updated", (evt) => {
     const part = evt.properties.part
+    if (part.type === "text") {
+      if (part.sessionID !== route.sessionID) return
+      const meta = part.metadata?.plan
+      if (!meta || typeof meta !== "object") return
+      if ((meta as Record<string, unknown>).handoff !== true) return
+      if (auto()) local.agent.auto.setPhase("build")
+      return
+    }
     if (part.type !== "tool") return
     if (part.sessionID !== route.sessionID) return
     if (part.state.status !== "completed") return
     if (part.id === lastSwitch) return
 
     if (part.tool === "plan_exit" && part.state.metadata?.handoff === true) {
-      local.agent.set("build")
+      if (auto()) {
+        local.agent.auto.setPhase("build")
+      } else {
+        local.agent.set("build")
+      }
       lastSwitch = part.id
     } else if (part.tool === "plan_enter") {
-      local.agent.set("plan")
+      if (!auto()) local.agent.set("plan")
       lastSwitch = part.id
     }
+  })
+
+  // ── Auto mode orchestration ──────────────────────────────────────
+
+  function same(a?: unknown[], b?: unknown[]) {
+    return JSON.stringify(a ?? []) === JSON.stringify(b ?? [])
+  }
+
+  createEffect(() => {
+    const info = session()
+    if (!info || !route.sessionID || info.parentID) return
+    const next = local.agent.auto.rules()
+    if (auto()) {
+      if (saved() === undefined) {
+        setSaved(JSON.stringify(info.permission ?? []))
+      }
+      if (!same(info.permission as unknown[] | undefined, next)) {
+        void SessionSvc.setPermission({
+          sessionID: SessionID.make(route.sessionID),
+          permission: next,
+        })
+      }
+      return
+    }
+    const prev = saved()
+    if (prev === undefined) return
+    const rules = JSON.parse(prev) as typeof next
+    if (!same(info.permission as unknown[] | undefined, rules)) {
+      void SessionSvc.setPermission({
+        sessionID: SessionID.make(route.sessionID),
+        permission: rules,
+      })
+    }
+    setSaved(undefined)
+  })
+
+  // Auto-handle permission and question prompts in auto mode so the loop never blocks.
+  createEffect(() => {
+    if (!auto()) return
+    const permission = permissions()[0]
+    if (permission) {
+      if (handled() === permission.id) return
+      setHandled(permission.id)
+      sdk.client.permission.reply({
+        requestID: permission.id,
+        reply: "reject",
+      })
+      return
+    }
+
+    const q = questions()[0]
+    if (!q) return
+    if (handled() === q.id) return
+    setHandled(q.id)
+    sdk.client.question.reject({
+      requestID: q.id,
+    })
+  })
+
+  // Trigger eval when build goes idle in auto mode, and handle eval iterations
+  let armed = false
+  createEffect(() => {
+    if (!auto()) return
+    if (local.agent.auto.phase() !== "build") {
+      armed = false
+      return
+    }
+    if (status().type !== "idle") {
+      armed = true
+      return
+    }
+    if (!armed) return
+    armed = false
+
+    const iter = local.agent.auto.iter()
+
+    // If eval already ran, check if it passed
+    if (iter > 0) {
+      const msgs = messages()
+      const passed = msgs.some((m) => {
+        if (m.role !== "user") return false
+        const parts = sync.data.part[m.id] ?? []
+        return parts.some((p: Part) => p.type === "text" && (p as TextPart & { eval?: boolean }).eval === true)
+      })
+      if (passed || iter >= local.agent.auto.MAX) {
+        local.agent.auto.reset()
+        return
+      }
+    }
+
+    // Trigger eval
+    local.agent.auto.setIter(iter + 1)
+    const model = local.model.current()
+    sdk.client.session.command({
+      sessionID: route.sessionID,
+      command: "eval",
+      arguments: "",
+      ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
+    })
+  })
+
+  // Reset auto mode on interruption
+  sdk.event.on("message.updated", (evt) => {
+    if (evt.properties.info.sessionID !== route.sessionID) return
+    if (evt.properties.info.role !== "assistant") return
+    if (!auto()) return
+    if (local.agent.auto.phase() === "idle") return
+    if (evt.properties.info.error?.name === "MessageAbortedError") {
+      local.agent.auto.reset()
+    }
+  })
+
+  // Reset auto state on session navigation
+  createEffect(
+    on(
+      () => route.sessionID,
+      (next) => {
+        const reset = seen !== undefined && seen !== next
+        seen = next
+        if (!reset) return
+        local.agent.auto.reset()
+        setDeferred([])
+        setSending(false)
+        setHandled(undefined)
+        setSaved(undefined)
+      },
+    ),
+  )
+
+  async function send(item: DeferredDraft) {
+    const sessionID = item.sessionID ?? route.sessionID
+    if (!sessionID) return
+    setSending(true)
+    let ok = false
+    try {
+      await dispatchDraft({
+        sdk,
+        local,
+        draft: {
+          ...item,
+          sessionID,
+        },
+      })
+      ok = true
+      setDeferred((list) => list.filter((x) => x.id !== item.id))
+      toast.show({
+        message: "Deferred message sent",
+        variant: "success",
+        duration: 2000,
+      })
+    } catch (err) {
+      toast.show({
+        variant: "error",
+        title: "Failed to send deferred message",
+        message: err instanceof Error ? err.message : "Unknown error",
+        duration: 5000,
+      })
+    } finally {
+      if (!ok) setSending(false)
+    }
+  }
+
+  createEffect(() => {
+    if (!sending()) return
+    if (status().type !== "idle" || local.agent.auto.phase() !== "idle") {
+      setSending(false)
+    }
+  })
+
+  createEffect(() => {
+    if (!route.sessionID) return
+    if (status().type !== "idle") return
+    if (local.agent.auto.phase() !== "idle") return
+    if (sending()) return
+    if (permissions().length > 0 || questions().length > 0) return
+    const item = deferred()[0]
+    if (!item) return
+    void send(item)
   })
 
   let scroll: ScrollBoxRenderable
@@ -319,8 +527,6 @@ export function Session() {
       scroll.scrollTo(scroll.scrollHeight)
     }, 50)
   }
-
-  const local = useLocal()
 
   function moveFirstChild() {
     if (children().length === 1) return
@@ -420,6 +626,26 @@ export function Session() {
           command: "eval",
           arguments: "",
           ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
+        })
+      },
+    },
+    {
+      title: "Toggle append mode",
+      value: "session.append",
+      category: "Session",
+      slash: {
+        name: "append",
+      },
+      onSelect: (dialog) => {
+        dialog.clear()
+        const next = !appendMode()
+        setAppendMode(next)
+        toast.show({
+          message: next
+            ? "Append mode enabled - messages deferred until agent finishes"
+            : "Append mode disabled - messages sent immediately",
+          variant: "success",
+          duration: 3000,
         })
       },
     },
@@ -1200,6 +1426,17 @@ export function Session() {
                 onSubmit={() => {
                   toBottom()
                 }}
+                shouldDefer={shouldDefer}
+                onDefer={(draft) => {
+                  setDeferred((list) => [...list, draft])
+                  toast.show({
+                    message: `Message deferred (${deferred().length + 1} pending)`,
+                    variant: "success",
+                    duration: 2000,
+                  })
+                }}
+                deferred={deferred}
+                appendMode={appendMode}
                 sessionID={route.sessionID}
                 speaking={speech.speaking}
                 cancelSpeech={speech.cancel}

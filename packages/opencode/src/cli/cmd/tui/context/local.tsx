@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { batch, createEffect, createMemo } from "solid-js"
+import { batch, createEffect, createMemo, createSignal } from "solid-js"
 import { useSync } from "@tui/context/sync"
 import { useTheme } from "@tui/context/theme"
 import { uniqueBy } from "remeda"
@@ -9,6 +9,7 @@ import { iife } from "@/util/iife"
 import { createSimpleContext } from "./helper"
 import { useToast } from "../ui/toast"
 import { Provider } from "@/provider/provider"
+import { Permission } from "@/permission"
 import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
@@ -38,7 +39,7 @@ const DEFAULT_SYSTEMS: SystemEntry[] = [
     variant: "medium",
     transcription: "gpt-4o-mini-transcribe",
     tts: { model: "gpt-4o-mini-tts", voice: "echo", speed: 1.5 },
-    agents: ["build", "plan"],
+    agents: ["build", "plan", "auto"],
   },
   {
     key: "claude-opus-high",
@@ -46,7 +47,7 @@ const DEFAULT_SYSTEMS: SystemEntry[] = [
     model: "anthropic/claude-opus-4-6",
     variant: "high",
     transcription: "gpt-4o-mini-transcribe",
-    agents: ["build", "plan"],
+    agents: ["build", "plan", "auto"],
   },
   {
     key: "claude-opus-max",
@@ -54,7 +55,7 @@ const DEFAULT_SYSTEMS: SystemEntry[] = [
     model: "anthropic/claude-opus-4-6",
     variant: "max",
     transcription: "gpt-4o-mini-transcribe",
-    agents: ["build", "plan"],
+    agents: ["build", "plan", "auto"],
   },
   {
     key: "gpt-medium",
@@ -62,7 +63,7 @@ const DEFAULT_SYSTEMS: SystemEntry[] = [
     model: "openai/gpt-5.4",
     variant: "medium",
     transcription: "gpt-4o-mini-transcribe",
-    agents: ["build", "plan"],
+    agents: ["build", "plan", "auto"],
   },
   {
     key: "gpt-high",
@@ -70,7 +71,7 @@ const DEFAULT_SYSTEMS: SystemEntry[] = [
     model: "openai/gpt-5.4",
     variant: "high",
     transcription: "gpt-4o-mini-transcribe",
-    agents: ["build", "plan"],
+    agents: ["build", "plan", "auto"],
   },
   {
     key: "gpt-xhigh",
@@ -78,25 +79,25 @@ const DEFAULT_SYSTEMS: SystemEntry[] = [
     model: "openai/gpt-5.4",
     variant: "xhigh",
     transcription: "gpt-4o-mini-transcribe",
-    agents: ["build", "plan"],
+    agents: ["build", "plan", "auto"],
   },
   {
     key: "gpt-audio",
     label: "GPT Audio",
     model: "openai/gpt-audio",
-    agents: ["build", "plan"],
+    agents: ["build", "plan", "auto"],
   },
   {
     key: "gemini-flash",
     label: "Gemini 3.1 Flash Lite",
     model: "openrouter/google/gemini-3.1-flash-lite-preview",
-    agents: ["build", "plan"],
+    agents: ["build", "plan", "auto"],
   },
   {
     key: "gemini-pro",
     label: "Gemini 3.1 Pro",
     model: "openrouter/google/gemini-3.1-pro-preview-customtools",
-    agents: ["build", "plan"],
+    agents: ["build", "plan", "auto"],
   },
 ]
 
@@ -121,7 +122,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         if (cfg.system && Object.keys(cfg.system).length > 0) {
           return Object.entries(cfg.system).map(([key, val]) => ({
             ...val,
-            agents: val.agents ?? ["build", "plan"],
+            agents: val.agents ?? ["build", "plan", "auto"],
             key,
           }))
         }
@@ -145,7 +146,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
                     status: tts.status,
                   }
                 : undefined,
-              agents: ["build", "plan"],
+              agents: ["build", "plan", "auto"],
               options: undefined,
             },
           ]
@@ -237,12 +238,18 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
     // ── Agent ─────────────────────────────────────────────────────────
     const agent = iife(() => {
-      // Visible non-subagent agents scoped to the current system
+      // Visible non-subagent agents scoped to the current system, ordered by system.agents
       const agents = createMemo(() => {
         const cur = system.current()
         if (!cur) return sync.data.agent.filter((x) => x.mode !== "subagent" && !x.hidden)
         const allowed = new Set(cur.agents)
-        return sync.data.agent.filter((x) => x.mode !== "subagent" && !x.hidden && allowed.has(x.name))
+        const filtered = sync.data.agent.filter((x) => x.mode !== "subagent" && !x.hidden && allowed.has(x.name))
+        const order = cur.agents
+        return filtered.toSorted((a, b) => {
+          const ai = order.indexOf(a.name)
+          const bi = order.indexOf(b.name)
+          return (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi)
+        })
       })
       const visibleAgents = createMemo(() => sync.data.agent.filter((x) => !x.hidden))
       const [agentStore, setAgentStore] = createStore<{ current: string }>({
@@ -259,6 +266,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         theme.info,
       ])
 
+      // Auto mode state
+      const [autoPhase, setAutoPhase] = createSignal<"idle" | "plan" | "build">("idle")
+      const [autoIter, setAutoIter] = createSignal(0)
+      const [autoSync, setAutoSync] = createSignal<string>()
+      const AUTO_MAX = 5
+
       // Ensure the current agent is valid for the current system
       createEffect(() => {
         const list = agents()
@@ -270,6 +283,16 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         setAgentStore("current", match?.name ?? list[0].name)
       })
 
+      function resolveVoice(base: string) {
+        if (!sync.data.config.experimental?.voice?.enabled) return base
+        const sysInfo = system.info()
+        if (sysInfo.hasVoice) {
+          const voice = `voice-${base}`
+          if (sync.data.agent.some((a) => a.name === voice)) return voice
+        }
+        return base
+      }
+
       return {
         list() {
           return agents()
@@ -277,19 +300,19 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         current() {
           return agents().find((x) => x.name === agentStore.current) ?? agents()[0]
         },
+        resolve(name: string) {
+          if (name === "auto") {
+            const phase = autoPhase()
+            const base = phase === "build" ? "build" : "plan"
+            return resolveVoice(base)
+          }
+          return resolveVoice(name)
+        },
         /** Returns the agent name to send to the backend — resolves voice agent mapping */
         resolved() {
           const cur = this.current()
           if (!cur) return "build"
-          // Only resolve to voice agents when voice is enabled in config
-          if (!sync.data.config.experimental?.voice?.enabled) return cur.name
-          const sysInfo = system.info()
-          // If system has voice and user-facing agent is build/plan, use voice variant
-          if (sysInfo.hasVoice) {
-            const voiceName = `voice-${cur.name}`
-            if (sync.data.agent.some((a) => a.name === voiceName)) return voiceName
-          }
-          return cur.name
+          return this.resolve(cur.name)
         },
         set(name: string) {
           if (!agents().some((x) => x.name === name))
@@ -298,6 +321,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               message: `Agent not found: ${name}`,
               duration: 3000,
             })
+          if (agentStore.current === "auto" && name !== "auto") {
+            batch(() => {
+              setAutoPhase("idle")
+              setAutoIter(0)
+            })
+          }
           setAgentStore("current", name)
         },
         move(direction: 1 | -1) {
@@ -320,6 +349,43 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             return theme[color as keyof typeof theme] as RGBA
           }
           return colors()[index % colors().length]
+        },
+        auto: {
+          phase: autoPhase,
+          setPhase: setAutoPhase,
+          iter: autoIter,
+          setIter: setAutoIter,
+          MAX: AUTO_MAX,
+          rules(phase: "idle" | "plan" | "build" = autoPhase()) {
+            const rules: Permission.Ruleset = [
+              { permission: "question", action: "deny", pattern: "*" },
+              { permission: "plan_enter", action: "deny", pattern: "*" },
+              { permission: "plan_exit", action: "deny", pattern: "*" },
+            ]
+            return rules
+          },
+          arm(id: string) {
+            setAutoSync(id)
+          },
+          claim(id: string, base: string) {
+            const sync = autoSync()
+            if (sync !== id) return false
+            setAutoSync(undefined)
+            return ["plan", "build"].includes(base)
+          },
+          start() {
+            batch(() => {
+              setAutoPhase("plan")
+              setAutoIter(0)
+            })
+          },
+          reset() {
+            batch(() => {
+              setAutoPhase("idle")
+              setAutoIter(0)
+              setAutoSync(undefined)
+            })
+          },
         },
       }
     })
