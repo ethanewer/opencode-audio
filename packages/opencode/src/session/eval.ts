@@ -7,9 +7,12 @@ import { Provider } from "../provider/provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import { Permission } from "../permission"
 import { Log } from "../util/log"
+import path from "path"
 
 export namespace Eval {
   const log = Log.create({ service: "session.eval" })
+
+  const WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"])
 
   export type Issue = {
     file?: string
@@ -23,6 +26,7 @@ export namespace Eval {
     issues?: Issue[]
     attempt: number
     sessionID: SessionID
+    sessions: SessionID[]
   }
 
   /**
@@ -123,7 +127,7 @@ export namespace Eval {
         if (part.type !== "tool") continue
         if (part.tool !== "eval_result") continue
         if (part.state.status !== "completed") continue
-        const meta = "metadata" in part.state ? part.state.metadata : undefined
+        const meta = part.state.metadata
         if (meta && typeof meta === "object" && "pass" in meta) {
           return {
             pass: Boolean(meta.pass),
@@ -148,20 +152,63 @@ export namespace Eval {
   }
 
   /**
-   * Compose the eval prompt from user instructions and diff.
+   * Extract file paths that the agent wrote to from session message parts.
    */
-  function compose(instruction: string, diff: string, files: string[]): string {
-    const parts = [
-      "## Original User Instructions\n",
-      instruction,
-      "\n\n## Modified Files\n",
-      files.length > 0 ? files.map((f) => `- ${f}`).join("\n") : "(no files modified)",
-      "\n\n## Git Diff of Changes\n",
-      diff || "(no changes detected)",
-      "\n\n---\n",
-      "Please evaluate whether the changes above correctly and completely fulfill the original user instructions.",
-      "Read the modified files to see the full context, run tests if applicable, and then call the eval_result tool with your verdict.",
-    ]
+  async function written(sessionID: SessionID): Promise<string[]> {
+    const msgs = await Session.messages({ sessionID })
+    const files = new Set<string>()
+    for (const msg of msgs) {
+      for (const part of msg.parts) {
+        if (part.type !== "tool") continue
+        if (!WRITE_TOOLS.has(part.tool)) continue
+        if (part.state.status !== "completed") continue
+        const input = ("input" in part.state ? part.state.input : undefined) as Record<string, unknown> | undefined
+        if (!input) continue
+        if (typeof input.filePath === "string") {
+          files.add(input.filePath)
+        }
+        // multiedit has edits array
+        if (Array.isArray(input.edits)) {
+          for (const edit of input.edits) {
+            if (typeof edit === "object" && edit && typeof (edit as Record<string, unknown>).filePath === "string") {
+              files.add((edit as Record<string, unknown>).filePath as string)
+            }
+          }
+        }
+      }
+    }
+    return [...files]
+  }
+
+  /**
+   * Compose the eval prompt from user instructions and diff/file info.
+   */
+  function compose(instruction: string, diff: string, files: string[], hasDiff: boolean): string {
+    const parts = ["## Original User Instructions\n", instruction]
+
+    if (files.length > 0) {
+      parts.push("\n\n## Files Created or Modified\n")
+      parts.push(files.map((f) => `- ${f}`).join("\n"))
+    }
+
+    if (hasDiff) {
+      parts.push("\n\n## Diff of Changes\n")
+      parts.push(diff)
+    } else if (files.length > 0) {
+      parts.push("\n\nNo diff is available. Read the listed files directly to verify their contents.")
+    }
+
+    if (files.length === 0 && !hasDiff) {
+      parts.push(
+        "\n\nNo file modifications were detected. The agent may have performed actions without writing files, or the tracking may be incomplete. Use your tools to investigate whether the task was completed.",
+      )
+    }
+
+    parts.push("\n\n---\n")
+    parts.push("Evaluate whether the original user instructions were fulfilled correctly and completely.")
+    parts.push(
+      "Read the relevant files, run tests if applicable, and then call the eval_result tool with your verdict.",
+    )
     return parts.join("\n")
   }
 
@@ -208,28 +255,38 @@ export namespace Eval {
       { permission: "plan_exit", action: "deny", pattern: "*" },
     ]
 
+    const tracked: SessionID[] = []
+
     let last: Result = {
       pass: false,
       summary: "Eval did not complete",
       attempt: 0,
       sessionID: input.sessionID,
+      sessions: tracked,
     }
 
     for (let attempt = 1; attempt <= max; attempt++) {
       input.onAttempt?.(attempt, max)
       log.info("eval attempt", { attempt, max })
 
-      // Get diff from the build session
+      // Get diff from the build session — fall back to written file tracking
       const diffs = await SessionSummary.diff({ sessionID: input.sessionID }).catch(() => [])
-      const files = diffs.map((d) => d.file)
-      const diffText = diffs
-        .map((d) => {
-          const header = `--- ${d.status === "added" ? "/dev/null" : d.file}\n+++ ${d.status === "deleted" ? "/dev/null" : d.file}`
-          // We don't have a unified diff string, but we have before/after
-          // Construct a basic summary
-          return `${header}\n(${d.additions} additions, ${d.deletions} deletions, status: ${d.status ?? "modified"})`
-        })
-        .join("\n\n")
+      const hasDiff = diffs.length > 0
+      let files: string[]
+      let diffText: string
+
+      if (hasDiff) {
+        files = diffs.map((d) => d.file)
+        diffText = diffs
+          .map((d) => {
+            const header = `--- ${d.status === "added" ? "/dev/null" : d.file}\n+++ ${d.status === "deleted" ? "/dev/null" : d.file}`
+            return `${header}\n(${d.additions} additions, ${d.deletions} deletions, status: ${d.status ?? "modified"})`
+          })
+          .join("\n\n")
+      } else {
+        files = await written(input.sessionID)
+        diffText = ""
+      }
 
       // Create a fresh eval session
       const evalSession = await Session.create({
@@ -238,11 +295,12 @@ export namespace Eval {
         permission: rules,
       })
 
-      // Notify caller about the new eval session
+      // Track and notify caller about the new eval session
+      tracked.push(evalSession.id)
       input.onSession?.(evalSession.id)
 
       // Send eval prompt
-      const prompt = compose(input.instruction, diffText, files)
+      const prompt = compose(input.instruction, diffText, files, hasDiff)
       await SessionPrompt.prompt({
         sessionID: evalSession.id,
         agent: "eval",
@@ -251,7 +309,7 @@ export namespace Eval {
       })
 
       // Parse result from eval session
-      const evalMsgs = await Session.messages({ sessionID: evalSession.id })
+      const evalMsgs = [...MessageV2.stream(evalSession.id)].reverse()
       const result = parse(evalMsgs)
 
       last = {
@@ -260,6 +318,7 @@ export namespace Eval {
         issues: result?.issues,
         attempt,
         sessionID: evalSession.id,
+        sessions: tracked,
       }
 
       input.onResult?.(last)

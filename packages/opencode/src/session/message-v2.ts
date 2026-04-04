@@ -676,11 +676,18 @@ export namespace MessageV2 {
             })
           }
           if (part.type === "subtask") {
+            // Skip eval subtasks — they should be invisible to the agent
+            if (part.command === "eval") continue
             userMessage.parts.push({
               type: "text",
               text: "The following tool was executed by the user",
             })
           }
+        }
+        // Remove user messages that ended up with no model-visible parts
+        if (userMessage.parts.length === 0) {
+          result.pop()
+          continue
         }
       }
 

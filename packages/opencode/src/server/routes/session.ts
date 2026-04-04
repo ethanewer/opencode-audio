@@ -17,8 +17,6 @@ import { Log } from "../../util/log"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { Eval } from "../../session/eval"
-import { Question } from "../../question"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { Bus } from "../../bus"
@@ -894,6 +892,7 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
         const msg = await SessionPrompt.command({ ...body, sessionID })
+
         return c.json(msg)
       },
     )
@@ -1028,103 +1027,6 @@ export const SessionRoutes = lazy(() =>
           reply: c.req.valid("json").response,
         })
         return c.json(true)
-      },
-    )
-    .post(
-      "/:sessionID/eval",
-      describeRoute({
-        summary: "Run eval on session",
-        description:
-          "Ask the user to confirm, then run the eval agent to check the build output. Returns the eval result.",
-        operationId: "session.eval",
-        responses: {
-          200: {
-            description: "Eval result",
-            content: {
-              "application/json": {
-                schema: resolver(
-                  z.object({
-                    pass: z.boolean(),
-                    summary: z.string(),
-                    attempt: z.number(),
-                    issues: z
-                      .array(
-                        z.object({
-                          file: z.string().optional(),
-                          description: z.string(),
-                          severity: z.string(),
-                        }),
-                      )
-                      .optional(),
-                  }),
-                ),
-              },
-            },
-          },
-          ...errors(400, 404),
-        },
-      }),
-      validator(
-        "param",
-        z.object({
-          sessionID: SessionID.zod,
-        }),
-      ),
-      validator(
-        "json",
-        z.object({
-          max: z.number().optional(),
-          model: z
-            .object({
-              providerID: ProviderID.zod,
-              modelID: ModelID.zod,
-            })
-            .optional(),
-        }),
-      ),
-      async (c) => {
-        const params = c.req.valid("param")
-        const body = c.req.valid("json")
-
-        // Ask user for confirmation
-        let ctx: string | undefined
-        try {
-          const answer = await Question.ask({
-            sessionID: params.sessionID,
-            questions: [
-              {
-                question: "Would you like to run eval to check the build output?",
-                header: "Eval Agent",
-                options: [
-                  { label: "Yes", description: "Run the eval agent to verify correctness" },
-                  { label: "No", description: "Skip evaluation" },
-                ],
-              },
-            ],
-          })
-          const picked = answer.answers[0]?.[0]?.trim()
-          if (picked !== "Yes") return c.json({ pass: true, summary: "Eval skipped by user", attempt: 0 })
-          ctx = answer.context
-        } catch {
-          return c.json({ pass: true, summary: "Eval skipped", attempt: 0 })
-        }
-
-        const instruction = await Eval.extract(params.sessionID, body.model)
-        const full = ctx ? `${instruction}\n\nAdditional context from the user: ${ctx}` : instruction
-
-        const result = await Eval.run({
-          sessionID: params.sessionID,
-          instruction: full,
-          model: body.model,
-          max: body.max,
-        })
-
-        return c.json({
-          pass: result.pass,
-          summary: result.summary,
-          attempt: result.attempt,
-          issues: result.issues,
-        })
       },
     ),
 )

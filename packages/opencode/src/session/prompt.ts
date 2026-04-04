@@ -28,6 +28,7 @@ import { FileTime } from "../file/time"
 import { ulid } from "ulid"
 import { spawn } from "child_process"
 import { Command } from "../command"
+import { Eval } from "./eval"
 import { pathToFileURL, fileURLToPath } from "url"
 import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
@@ -1459,6 +1460,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             if (task?.type === "subtask") {
               yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+              // /eval subtask: don't give the build agent another turn
+              if (task.command === Command.Default.EVAL) break
               continue
             }
 
@@ -1662,6 +1665,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
           throw error
         }
+        // /eval: extract the user instruction and prepend to arguments
+        if (input.command === Command.Default.EVAL) {
+          const model = input.model ? Provider.parseModel(input.model) : yield* lastModel(input.sessionID)
+          const instruction = yield* Effect.promise(() => Eval.extract(input.sessionID, model))
+          const extra = input.arguments.trim()
+          input = {
+            ...input,
+            arguments: extra
+              ? `## User Instruction\n\n${instruction}\n\n## Additional Context\n\n${extra}`
+              : `## User Instruction\n\n${instruction}`,
+          }
+        }
+
         const agentName = cmd.agent ?? input.agent ?? (yield* agents.defaultAgent())
 
         const raw = input.arguments.match(argsRegex) ?? []
