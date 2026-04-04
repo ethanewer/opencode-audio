@@ -493,15 +493,161 @@ export const RunCommand = cmd({
       const events = await sdk.event.subscribe()
       let error: string | undefined
 
-      // Track sessions we're actively listening for
       const active = new Set<string>()
-      const waiters = new Map<string, { resolve: () => void; auto: boolean }>()
+      const waiters = new Map<string, { resolve: () => void; auto: boolean; promise: Promise<void> }>()
+
+      let proc: Promise<void> | undefined
+
+      function start() {
+        if (proc) return
+        proc = (async () => {
+          const toggles = new Map<string, boolean>()
+
+          for await (const event of events.stream) {
+            if (
+              event.type === "message.updated" &&
+              event.properties.info.role === "assistant" &&
+              args.format !== "json"
+            ) {
+              const sid = event.properties.info.sessionID
+              if (!active.has(sid)) continue
+              const key = `start:${sid}`
+              if (toggles.get(key) !== true) {
+                UI.empty()
+                UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
+                UI.empty()
+                toggles.set(key, true)
+              }
+            }
+
+            if (event.type === "message.part.updated") {
+              const part = event.properties.part
+              if (!active.has(part.sessionID)) continue
+
+              if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
+                if (emit("tool_use", { part })) continue
+                if (part.state.status === "completed") {
+                  tool(part)
+                  continue
+                }
+                inline({
+                  icon: "✗",
+                  title: `${part.tool} failed`,
+                })
+                UI.error(part.state.error)
+              }
+
+              if (
+                part.type === "tool" &&
+                part.tool === "task" &&
+                part.state.status === "running" &&
+                args.format !== "json"
+              ) {
+                if (toggles.get(part.id) === true) continue
+                task(props<typeof TaskTool>(part))
+                toggles.set(part.id, true)
+              }
+
+              if (part.type === "step-start") {
+                if (emit("step_start", { part })) continue
+              }
+
+              if (part.type === "step-finish") {
+                if (emit("step_finish", { part })) continue
+              }
+
+              if (part.type === "text" && part.time?.end) {
+                if (emit("text", { part })) continue
+                const text = part.text.trim()
+                if (!text) continue
+                if (!process.stdout.isTTY) {
+                  process.stdout.write(text + EOL)
+                  continue
+                }
+                UI.empty()
+                UI.println(text)
+                UI.empty()
+              }
+
+              if (part.type === "reasoning" && part.time?.end && args.thinking) {
+                if (emit("reasoning", { part })) continue
+                const text = part.text.trim()
+                if (!text) continue
+                const line = `Thinking: ${text}`
+                if (process.stdout.isTTY) {
+                  UI.empty()
+                  UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
+                  UI.empty()
+                  continue
+                }
+                process.stdout.write(line + EOL)
+              }
+            }
+
+            if (event.type === "session.error") {
+              const props = event.properties
+              if (!props.sessionID || !active.has(props.sessionID) || !props.error) continue
+              let err = String(props.error.name)
+              if ("data" in props.error && props.error.data && "message" in props.error.data) {
+                err = String(props.error.data.message)
+              }
+              error = error ? error + EOL + err : err
+              if (emit("error", { error: props.error })) continue
+              UI.error(err)
+            }
+
+            if (
+              event.type === "session.status" &&
+              active.has(event.properties.sessionID) &&
+              event.properties.status.type === "idle"
+            ) {
+              toggles.delete(`start:${event.properties.sessionID}`)
+              unlisten(event.properties.sessionID)
+            }
+
+            if (event.type === "permission.asked") {
+              const permission = event.properties
+              if (!active.has(permission.sessionID)) continue
+              UI.println(
+                UI.Style.TEXT_WARNING_BOLD + "!",
+                UI.Style.TEXT_NORMAL +
+                  `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
+              )
+              await sdk.permission.reply({
+                requestID: permission.id,
+                reply: "reject",
+              })
+            }
+
+            if (event.type === "question.asked") {
+              const question = event.properties
+              if (!active.has(question.sessionID)) continue
+              const waiter = waiters.get(question.sessionID)
+              if (!waiter?.auto) continue
+              if (question.questions[0]?.header !== "Build Agent") continue
+              await sdk.question.reply({
+                requestID: question.id,
+                answers: [["Yes"]],
+              })
+            }
+          }
+        })().catch((e) => {
+          console.error(e)
+          process.exit(1)
+        })
+      }
 
       function listen(sessionID: string, auto: boolean): Promise<void> {
+        const prev = waiters.get(sessionID)
+        if (prev) return prev.promise
         active.add(sessionID)
-        return new Promise<void>((resolve) => {
-          waiters.set(sessionID, { resolve, auto })
+        start()
+        let resolve!: () => void
+        const promise = new Promise<void>((done) => {
+          resolve = done
         })
+        waiters.set(sessionID, { resolve, auto, promise })
+        return promise
       }
 
       function unlisten(sessionID: string) {
@@ -510,147 +656,6 @@ export const RunCommand = cmd({
         waiters.delete(sessionID)
         waiter?.resolve()
       }
-
-      // Background event processor — runs for the lifetime of the execute() call
-      const processor = (async () => {
-        const toggles = new Map<string, boolean>()
-
-        for await (const event of events.stream) {
-          if (active.size === 0) continue
-
-          if (
-            event.type === "message.updated" &&
-            event.properties.info.role === "assistant" &&
-            args.format !== "json"
-          ) {
-            const sid = event.properties.info.sessionID
-            if (!active.has(sid)) continue
-            const key = `start:${sid}`
-            if (toggles.get(key) !== true) {
-              UI.empty()
-              UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
-              UI.empty()
-              toggles.set(key, true)
-            }
-          }
-
-          if (event.type === "message.part.updated") {
-            const part = event.properties.part
-            if (!active.has(part.sessionID)) continue
-
-            if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
-              if (emit("tool_use", { part })) continue
-              if (part.state.status === "completed") {
-                tool(part)
-                continue
-              }
-              inline({
-                icon: "✗",
-                title: `${part.tool} failed`,
-              })
-              UI.error(part.state.error)
-            }
-
-            if (
-              part.type === "tool" &&
-              part.tool === "task" &&
-              part.state.status === "running" &&
-              args.format !== "json"
-            ) {
-              if (toggles.get(part.id) === true) continue
-              task(props<typeof TaskTool>(part))
-              toggles.set(part.id, true)
-            }
-
-            if (part.type === "step-start") {
-              if (emit("step_start", { part })) continue
-            }
-
-            if (part.type === "step-finish") {
-              if (emit("step_finish", { part })) continue
-            }
-
-            if (part.type === "text" && part.time?.end) {
-              if (emit("text", { part })) continue
-              const text = part.text.trim()
-              if (!text) continue
-              if (!process.stdout.isTTY) {
-                process.stdout.write(text + EOL)
-                continue
-              }
-              UI.empty()
-              UI.println(text)
-              UI.empty()
-            }
-
-            if (part.type === "reasoning" && part.time?.end && args.thinking) {
-              if (emit("reasoning", { part })) continue
-              const text = part.text.trim()
-              if (!text) continue
-              const line = `Thinking: ${text}`
-              if (process.stdout.isTTY) {
-                UI.empty()
-                UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
-                UI.empty()
-                continue
-              }
-              process.stdout.write(line + EOL)
-            }
-          }
-
-          if (event.type === "session.error") {
-            const props = event.properties
-            if (!props.sessionID || !active.has(props.sessionID) || !props.error) continue
-            let err = String(props.error.name)
-            if ("data" in props.error && props.error.data && "message" in props.error.data) {
-              err = String(props.error.data.message)
-            }
-            error = error ? error + EOL + err : err
-            if (emit("error", { error: props.error })) continue
-            UI.error(err)
-          }
-
-          if (
-            event.type === "session.status" &&
-            active.has(event.properties.sessionID) &&
-            event.properties.status.type === "idle"
-          ) {
-            toggles.delete(`start:${event.properties.sessionID}`)
-            unlisten(event.properties.sessionID)
-          }
-
-          if (event.type === "permission.asked") {
-            const permission = event.properties
-            if (!active.has(permission.sessionID)) continue
-            UI.println(
-              UI.Style.TEXT_WARNING_BOLD + "!",
-              UI.Style.TEXT_NORMAL +
-                `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
-            )
-            await sdk.permission.reply({
-              requestID: permission.id,
-              reply: "reject",
-            })
-          }
-
-          if (event.type === "question.asked") {
-            const question = event.properties
-            if (!active.has(question.sessionID)) continue
-            const waiter = waiters.get(question.sessionID)
-            if (!waiter?.auto) continue
-            if (question.questions[0]?.header !== "Build Agent") continue
-            await sdk.question.reply({
-              requestID: question.id,
-              answers: [["Yes"]],
-            })
-          }
-        }
-      })()
-
-      processor.catch((e) => {
-        console.error(e)
-        process.exit(1)
-      })
 
       // Validate agent if specified
       const validated = await (async () => {
@@ -764,11 +769,11 @@ export const RunCommand = cmd({
           instruction: await Eval.extract(SessionID.make(sessionID), model),
           model,
           max: maxIter,
-          onSession(sid) {
-            // Register eval/build sessions so events are displayed
-            active.add(sid)
-            // Re-register the build session in case it was unlistened after idle
-            active.add(sessionID)
+          onEval(sid) {
+            listen(sid, false)
+          },
+          onBuild() {
+            listen(sessionID, auto)
           },
           onAttempt(attempt, max) {
             UI.empty()
@@ -792,6 +797,7 @@ export const RunCommand = cmd({
         })
 
         if (!result.pass) {
+          process.exitCode = 1
           UI.empty()
           UI.println(
             UI.Style.TEXT_WARNING_BOLD +
@@ -801,6 +807,8 @@ export const RunCommand = cmd({
           )
         }
       }
+
+      if (error) process.exitCode = 1
     }
 
     if (args.attach) {

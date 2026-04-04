@@ -7,6 +7,7 @@ import { Provider } from "../provider/provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import { Permission } from "../permission"
 import { Log } from "../util/log"
+import { createTwoFilesPatch } from "diff"
 
 export namespace Eval {
   const log = Log.create({ service: "session.eval" })
@@ -157,17 +158,44 @@ export namespace Eval {
     return undefined
   }
 
-  /**
-   * Extract file paths that the agent wrote to from session message parts.
-   */
-  async function written(sessionID: SessionID): Promise<string[]> {
-    const msgs = await Session.messages({ sessionID })
+  function turn(msgs: MessageV2.WithParts[]) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i]
+      if (msg.info.role !== "user") continue
+      if (
+        msg.parts.every((part) => {
+          if (part.type === "subtask") return part.command === "eval"
+          if (part.type === "text") return part.eval === true
+          return false
+        })
+      )
+        continue
+      return {
+        agent: msg.info.agent,
+        model: msg.info.model,
+      }
+    }
+  }
+
+  function patch(diffs: Array<{ file: string; before: string; after: string; status?: string }>) {
+    return diffs
+      .map((item) => {
+        const prev = item.status === "added" ? "/dev/null" : item.file
+        const next = item.status === "deleted" ? "/dev/null" : item.file
+        return createTwoFilesPatch(prev, next, item.before, item.after)
+      })
+      .join("\n")
+  }
+
+  function fallback(msgs: MessageV2.WithParts[]) {
     const files = new Set<string>()
+    const diffs = [] as string[]
     for (const msg of msgs) {
       for (const part of msg.parts) {
         if (part.type !== "tool") continue
         if (!WRITE_TOOLS.has(part.tool)) continue
         if (part.state.status !== "completed") continue
+        const meta = part.state.metadata
         const input = ("input" in part.state ? part.state.input : undefined) as Record<string, unknown> | undefined
         if (!input) continue
         if (typeof input.filePath === "string") {
@@ -181,9 +209,28 @@ export namespace Eval {
             }
           }
         }
+        if (meta && typeof meta === "object") {
+          if ("diff" in meta && typeof meta.diff === "string" && meta.diff.trim()) {
+            diffs.push(meta.diff)
+          }
+          if (Array.isArray(meta.files)) {
+            for (const item of meta.files) {
+              if (!item || typeof item !== "object") continue
+              if ("filePath" in item && typeof item.filePath === "string") files.add(item.filePath)
+              if ("movePath" in item && typeof item.movePath === "string") files.add(item.movePath)
+            }
+          }
+          if ("filediff" in meta && meta.filediff && typeof meta.filediff === "object") {
+            const next = meta.filediff as Record<string, unknown>
+            if (typeof next.file === "string") files.add(next.file)
+          }
+        }
       }
     }
-    return [...files]
+    return {
+      files: [...files],
+      diff: diffs.join("\n\n"),
+    }
   }
 
   /**
@@ -251,15 +298,18 @@ export namespace Eval {
     max?: number
     onAttempt?: (attempt: number, max: number) => void
     onResult?: (result: Result) => void
-    onSession?: (sessionID: SessionID) => void
+    onEval?: (sessionID: SessionID) => void | Promise<void>
+    onBuild?: (sessionID: SessionID) => void | Promise<void>
   }): Promise<Result> {
     const max = input.max ?? 5
-    const resolved = input.model ?? (await Provider.defaultModel())
     const rules: Permission.Ruleset = [
       { permission: "question", action: "deny", pattern: "*" },
       { permission: "plan_enter", action: "deny", pattern: "*" },
       { permission: "plan_exit", action: "deny", pattern: "*" },
     ]
+    const msgs = await Session.messages({ sessionID: input.sessionID })
+    const ctx = turn(msgs)
+    const resolved = input.model ?? ctx?.model ?? (await Provider.defaultModel())
 
     const tracked: SessionID[] = []
 
@@ -275,38 +325,21 @@ export namespace Eval {
       input.onAttempt?.(attempt, max)
       log.info("eval attempt", { attempt, max })
 
-      // Get diff from the build session — fall back to written file tracking
-      const diffs = await SessionSummary.diff({ sessionID: input.sessionID }).catch(() => [])
+      const msgs = await Session.messages({ sessionID: input.sessionID })
+      const diffs = await SessionSummary.computeDiff({ messages: msgs }).catch(() => [])
       const hasDiff = diffs.length > 0
-      let files: string[]
-      let diffText: string
+      const extra = hasDiff ? { files: diffs.map((d) => d.file), diff: patch(diffs) } : fallback(msgs)
 
-      if (hasDiff) {
-        files = diffs.map((d) => d.file)
-        diffText = diffs
-          .map((d) => {
-            const header = `--- ${d.status === "added" ? "/dev/null" : d.file}\n+++ ${d.status === "deleted" ? "/dev/null" : d.file}`
-            return `${header}\n(${d.additions} additions, ${d.deletions} deletions, status: ${d.status ?? "modified"})`
-          })
-          .join("\n\n")
-      } else {
-        files = await written(input.sessionID)
-        diffText = ""
-      }
-
-      // Create a fresh eval session
       const evalSession = await Session.create({
         parentID: input.sessionID,
         title: `Eval attempt ${attempt}`,
         permission: rules,
       })
 
-      // Track and notify caller about the new eval session
       tracked.push(evalSession.id)
-      input.onSession?.(evalSession.id)
+      await input.onEval?.(evalSession.id)
 
-      // Send eval prompt
-      const prompt = compose(input.instruction, diffText, files, hasDiff)
+      const prompt = compose(input.instruction, extra.diff, extra.files, hasDiff || !!extra.diff)
       await SessionPrompt.prompt({
         sessionID: evalSession.id,
         agent: "eval",
@@ -314,7 +347,6 @@ export namespace Eval {
         parts: [{ type: "text", text: prompt }],
       })
 
-      // Parse result from eval session
       const evalMsgs = [...MessageV2.stream(evalSession.id)].reverse()
       const result = parse(evalMsgs)
 
@@ -334,19 +366,18 @@ export namespace Eval {
         return last
       }
 
-      // If this is the last attempt, don't send feedback
       if (attempt >= max) {
         log.info("max eval iterations reached", { attempt, max })
         return last
       }
 
-      // Send feedback to build session
       log.info("eval failed, sending feedback to build", { attempt })
       const fb = feedback(last)
+      await input.onBuild?.(input.sessionID)
       await SessionPrompt.prompt({
         sessionID: input.sessionID,
-        agent: "build",
-        model: resolved,
+        agent: ctx?.agent,
+        model: ctx?.model ?? resolved,
         parts: [{ type: "text", text: fb }],
       })
     }

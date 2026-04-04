@@ -1,6 +1,10 @@
 Evaluate whether the following task was completed correctly and completely.
 
-$ARGUMENTS
+## User Instruction
+
+__EVAL_INSTRUCTION__
+
+__EVAL_CONTEXT__
 
 Your evaluation process:
 1. Read the relevant files to verify the implementation

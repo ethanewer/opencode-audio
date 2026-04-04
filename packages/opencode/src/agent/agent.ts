@@ -278,7 +278,15 @@ export namespace Agent {
               name: "eval",
               description: "Evaluation agent. Reviews build output for correctness and completeness.",
               options: {},
-              permission: Permission.merge(defaults, user),
+              permission: Permission.merge(
+                defaults,
+                Permission.fromConfig({
+                  edit: "deny",
+                  task: "deny",
+                  todowrite: "deny",
+                }),
+                user,
+              ),
               prompt: PROMPT_EVAL,
               mode: "primary",
               native: true,

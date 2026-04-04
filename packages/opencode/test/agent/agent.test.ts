@@ -106,6 +106,23 @@ test("general agent denies todo tools", async () => {
   })
 })
 
+test("eval agent denies direct edits but allows verification tools", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("eval")
+      expect(agent).toBeDefined()
+      expect(evalPerm(agent, "edit")).toBe("deny")
+      expect(evalPerm(agent, "task")).toBe("deny")
+      expect(evalPerm(agent, "todowrite")).toBe("deny")
+      expect(evalPerm(agent, "bash")).toBe("allow")
+      expect(evalPerm(agent, "read")).toBe("allow")
+      expect(evalPerm(agent, "grep")).toBe("allow")
+    },
+  })
+})
+
 test("compaction agent denies all permissions", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({

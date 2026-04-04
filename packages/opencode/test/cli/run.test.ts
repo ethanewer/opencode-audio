@@ -6,6 +6,7 @@ import * as Audio from "../../src/audio/transcribe"
 import * as Bootstrap from "../../src/cli/bootstrap"
 import { UI } from "../../src/cli/ui"
 import { Flag } from "../../src/flag/flag"
+import * as EvalModule from "../../src/session/eval"
 import * as SessionModule from "../../src/session"
 import { tmpdir } from "../fixture/fixture"
 
@@ -53,7 +54,10 @@ function args(input: Partial<Record<string, unknown>> = {}) {
   }
 }
 
-async function call(input: Partial<Record<string, unknown>> = {}, opts?: { baseID?: string }) {
+async function call(
+  input: Partial<Record<string, unknown>> = {},
+  opts?: { baseID?: string; eval?: { pass: boolean; summary: string; attempt: number } },
+) {
   const seen = {
     agent: undefined as string | undefined,
     auto: undefined as string | undefined,
@@ -62,12 +66,13 @@ async function call(input: Partial<Record<string, unknown>> = {}, opts?: { baseI
     updated: [] as { sessionID: string; permission: { permission: string; action: string; pattern: string }[] }[],
   }
   const sessionID = "ses_test"
+  const activeID = input.session ?? (opts?.baseID && !input.fork ? opts.baseID : sessionID)
   const sdk = {
     config: {
       get: async () => ({ data: { share: "manual" } }),
     },
     event: {
-      subscribe: async () => ({ stream: stream(sessionID) }),
+      subscribe: async () => ({ stream: stream(activeID) }),
     },
     session: {
       list: async () => ({ data: opts?.baseID ? [{ id: opts.baseID, parentID: undefined }] : [] }),
@@ -97,6 +102,14 @@ async function call(input: Partial<Record<string, unknown>> = {}, opts?: { baseI
   spyOn(UI, "println").mockImplementation(() => {})
   spyOn(UI, "empty").mockImplementation(() => {})
   spyOn(UI, "error").mockImplementation(() => {})
+  spyOn(EvalModule.Eval, "extract").mockResolvedValue("ship it")
+  spyOn(EvalModule.Eval, "run").mockResolvedValue({
+    pass: opts?.eval?.pass ?? true,
+    summary: opts?.eval?.summary ?? "ok",
+    attempt: opts?.eval?.attempt ?? 1,
+    sessionID: "ses_eval" as never,
+    sessions: [],
+  })
   spyOn(SessionModule.Session, "setPermission").mockImplementation(
     Object.assign(async (input: Parameters<typeof SessionModule.Session.setPermission>[0]) => {
       seen.updated.push({ sessionID: input.sessionID, permission: input.permission })
@@ -120,6 +133,7 @@ beforeEach(() => {
 afterEach(() => {
   mock.restore()
   delete process.env.OPENCODE_CLI_PLAN_AUTO_BUILD
+  process.exitCode = undefined
   // @ts-expect-error tests overwrite static flag values
   Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = original
   if (tty) Object.defineProperty(process.stdin, "isTTY", tty)
@@ -198,5 +212,11 @@ describe("cli.run", () => {
     expect(seen.agent).toBe("build")
     expect(seen.auto).toBeUndefined()
     expect(seen.rules.some((item) => item.permission === "plan_exit" && item.action === "deny")).toBe(true)
+  })
+
+  test("sets a non-zero exit code when eval fails", async () => {
+    await call({ eval: true }, { eval: { pass: false, summary: "broken", attempt: 2 } })
+
+    expect(process.exitCode).toBe(1)
   })
 })

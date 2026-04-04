@@ -605,8 +605,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           throw error
         }
 
-        // /eval: deferred instruction extraction — runs after the subtask UI is visible
-        if (task.command === Command.Default.EVAL && task.prompt.includes("__EVAL_EXTRACT__")) {
+        if (task.command === Command.Default.EVAL && task.prompt.includes("__EVAL_INSTRUCTION__")) {
           const { count, single } = Eval.instruction(msgs)
           let extracted: string
           if (count <= 1) {
@@ -639,13 +638,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               extracted = single
             }
           }
-          // Replace the marker with the extracted instruction
-          const extra = task.prompt.replace("__EVAL_EXTRACT__", "").trim()
-          const resolved = extra
-            ? `## User Instruction\n\n${extracted}\n\n## Additional Context\n\n${extra}`
-            : `## User Instruction\n\n${extracted}`
-          task = { ...task, prompt: task.prompt.replace(/__EVAL_EXTRACT__[^\n]*/, resolved) }
-          taskArgs.prompt = task.prompt
+          const prompt = task.prompt.replace("__EVAL_INSTRUCTION__", extracted)
+          task = { ...task, prompt }
+          taskArgs.prompt = prompt
         }
 
         let error: Error | undefined
@@ -755,7 +750,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           } satisfies MessageV2.ToolPart)
         }
 
-        if (!task.command || task.command === Command.Default.EVAL) return
+        const childID = (() => {
+          const meta = result?.metadata
+          if (!meta || typeof meta !== "object") return
+          if (!("sessionId" in meta) || typeof meta.sessionId !== "string") return
+          return SessionID.make(meta.sessionId)
+        })()
+
+        if (!task.command || task.command === Command.Default.EVAL) return childID
 
         const summaryUserMsg: MessageV2.User = {
           id: MessageID.ascending(),
@@ -774,6 +776,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           text: "Summarize the task tool output above and continue with your task.",
           synthetic: true,
         } satisfies MessageV2.TextPart)
+        return childID
       })
 
       const shellImpl = Effect.fn("SessionPrompt.shellImpl")(function* (input: ShellInput, signal: AbortSignal) {
@@ -1512,33 +1515,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const task = tasks.pop()
 
             if (task?.type === "subtask") {
-              yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+              const childID = yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
               // /eval subtask: check result and feed failures back to the build agent
               if (task.command === Command.Default.EVAL) {
-                // Use the public Session.messages() API which creates its own Effect runtime.
-                // The Effect-internal sessions.messages() returns 0 parts for child sessions
-                // when called from within the prompt loop's Effect context.
                 const evalResult = yield* Effect.promise(async () => {
-                  const latest = [...MessageV2.stream(sessionID)].find(
-                    (m) =>
-                      m.info.role === "assistant" &&
-                      m.parts.some((p) => p.type === "tool" && p.tool === "task" && p.state.status === "completed"),
-                  )
-                  if (!latest) return undefined
-                  const taskPart = latest.parts.find(
-                    (p) => p.type === "tool" && p.tool === "task" && p.state.status === "completed",
-                  )
-                  if (!taskPart || taskPart.type !== "tool") return undefined
-                  const meta = "metadata" in taskPart.state ? taskPart.state.metadata : undefined
-                  const childId =
-                    meta && typeof meta === "object" && "sessionId" in meta ? String(meta.sessionId) : undefined
-                  if (!childId) return undefined
-                  const childMsgs = await Session.messages({ sessionID: SessionID.make(childId) })
+                  if (!childID) return undefined
+                  const childMsgs = await Session.messages({ sessionID: childID })
                   return Eval.parse(childMsgs)
                 })
-                // Three states: pass (confirmed), fail (confirmed), unknown (no result found)
-                const passed = evalResult?.pass ?? true
-                let feedback = ""
+                const passed = evalResult?.pass === true
+                let feedback = "The evaluation agent did not return a valid result. Please review and fix the task."
                 if (evalResult && !passed) {
                   const lines = [
                     `An evaluation agent found the following issues:\n`,
@@ -1553,9 +1539,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   lines.push("\nPlease fix these issues.")
                   feedback = lines.join("\n")
                 }
-                // If eval passed or result unknown, show status and stop
                 if (passed) {
-                  const text = evalResult ? "Eval passed." : "Eval completed."
                   const mid = MessageID.ascending()
                   yield* sessions.updateMessage({
                     id: mid,
@@ -1570,12 +1554,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     messageID: mid,
                     sessionID,
                     type: "text",
-                    text,
+                    text: "Eval passed.",
                     eval: true,
                   } as MessageV2.TextPart)
                   break
                 }
-                // If eval failed, send feedback to the build agent
                 const mid = MessageID.ascending()
                 yield* sessions.updateMessage({
                   id: mid,
@@ -1590,9 +1573,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   messageID: mid,
                   sessionID,
                   type: "text",
-                  text: feedback || "The evaluation agent found issues. Please review and fix them.",
+                  text: feedback,
                 } satisfies MessageV2.TextPart)
-                // Continue the loop so the build agent processes the feedback
                 continue
               }
               continue
@@ -1807,15 +1789,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
           throw error
         }
-        // /eval: mark for deferred extraction (happens inside handleSubtask)
-        if (input.command === Command.Default.EVAL) {
-          // Pass a marker in arguments — extraction happens after the subtask UI is visible
-          input = {
-            ...input,
-            arguments: "__EVAL_EXTRACT__" + (input.arguments.trim() ? "\n" + input.arguments.trim() : ""),
-          }
-        }
-
         const agentName = cmd.agent ?? input.agent ?? (yield* agents.defaultAgent())
 
         const raw = input.arguments.match(argsRegex) ?? []
@@ -1838,6 +1811,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         })
         const usesArgumentsPlaceholder = templateCommand.includes("$ARGUMENTS")
         let template = withArgs.replaceAll("$ARGUMENTS", input.arguments)
+
+        if (input.command === Command.Default.EVAL) {
+          const extra = input.arguments.trim()
+          template = template.replace("__EVAL_CONTEXT__", extra ? `## Additional Context\n\n${extra}` : "")
+        }
 
         if (placeholders.length === 0 && !usesArgumentsPlaceholder && input.arguments.trim()) {
           template = template + "\n\n" + input.arguments
@@ -1892,11 +1870,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             ]
           : [...templateParts, ...(input.parts ?? [])]
 
-        const userAgent = isSubtask ? (input.agent ?? (yield* agents.defaultAgent())) : agentName
+        const prev = input.command === Command.Default.EVAL ? yield* lastTurn(input.sessionID) : undefined
+        const userAgent = isSubtask ? (input.agent ?? prev?.agent ?? (yield* agents.defaultAgent())) : agentName
         const userModel = isSubtask
           ? input.model
             ? Provider.parseModel(input.model)
-            : yield* lastModel(input.sessionID)
+            : (prev?.model ?? (yield* lastModel(input.sessionID)))
           : taskModel
 
         yield* plugin.trigger(
@@ -2101,6 +2080,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
     if (model) return model
     return yield* Effect.promise(() => Provider.defaultModel())
+  })
+
+  const lastTurn = Effect.fnUntraced(function* (sessionID: SessionID) {
+    return yield* Effect.sync(() => {
+      for (const item of MessageV2.stream(sessionID)) {
+        if (item.info.role !== "user") continue
+        if (
+          item.parts.every((part) => {
+            if (part.type === "subtask") return part.command === Command.Default.EVAL
+            if (part.type === "text") return part.eval === true
+            return false
+          })
+        )
+          continue
+        return {
+          agent: item.info.agent,
+          model: item.info.model,
+        }
+      }
+    })
   })
 
   /** @internal Exported for testing */
