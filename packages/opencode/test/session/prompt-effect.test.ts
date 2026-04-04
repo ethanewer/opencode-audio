@@ -549,7 +549,7 @@ it.live("eval command resolves instruction once and inherits session context", (
             })
             return {
               title: "",
-              metadata: { sessionId: child.id, model: ref },
+              metadata: { sessionId: child.id, model: ref, eval: { pass: true, summary: "ok" } },
               output: "",
             }
           },
@@ -573,6 +573,9 @@ it.live("eval command resolves instruction once and inherits session context", (
           text: "ship it",
         })
 
+        const read = spyOn(Session, "messages").mockRejectedValue(new Error("should not read child session"))
+        yield* Effect.addFinalizer(() => Effect.sync(() => read.mockRestore()))
+
         yield* Effect.promise(() =>
           SessionPrompt.command({
             sessionID: chat.id,
@@ -580,6 +583,9 @@ it.live("eval command resolves instruction once and inherits session context", (
             arguments: "double check output",
           }),
         )
+
+        expect(read).not.toHaveBeenCalled()
+        read.mockRestore()
 
         expect(text).toContain("## User Instruction")
         expect(text).toContain("ship it")
@@ -594,6 +600,13 @@ it.live("eval command resolves instruction once and inherits session context", (
         if (!item || item.info.role !== "user") return
         expect(item.info.agent).toBe("voice-build")
         expect(item.info.model).toEqual(ref)
+        expect(
+          all.some(
+            (entry) =>
+              entry.info.role === "user" &&
+              entry.parts.some((part) => part.type === "text" && part.text === "Eval passed." && part.eval === true),
+          ),
+        ).toBe(true)
       }),
     { git: true, config: cfg },
   ),

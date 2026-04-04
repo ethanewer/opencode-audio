@@ -757,7 +757,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           return SessionID.make(meta.sessionId)
         })()
 
-        if (!task.command || task.command === Command.Default.EVAL) return childID
+        const verdict = (() => {
+          const meta = result?.metadata
+          if (!meta || typeof meta !== "object") return
+          if (!("eval" in meta) || !meta.eval || typeof meta.eval !== "object") return
+          if (!("pass" in meta.eval)) return
+          return {
+            pass: meta.eval.pass === true,
+            summary: typeof meta.eval.summary === "string" ? meta.eval.summary : "",
+            issues: Array.isArray(meta.eval.issues) ? (meta.eval.issues as Eval.Issue[]) : undefined,
+          }
+        })()
+
+        if (!task.command || task.command === Command.Default.EVAL) return { childID, verdict }
 
         const summaryUserMsg: MessageV2.User = {
           id: MessageID.ascending(),
@@ -776,7 +788,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           text: "Summarize the task tool output above and continue with your task.",
           synthetic: true,
         } satisfies MessageV2.TextPart)
-        return childID
+        return { childID, verdict }
       })
 
       const shellImpl = Effect.fn("SessionPrompt.shellImpl")(function* (input: ShellInput, signal: AbortSignal) {
@@ -1515,14 +1527,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const task = tasks.pop()
 
             if (task?.type === "subtask") {
-              const childID = yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+              const sub = yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
               // /eval subtask: check result and feed failures back to the build agent
               if (task.command === Command.Default.EVAL) {
-                const evalResult = yield* Effect.promise(async () => {
-                  if (!childID) return undefined
-                  const childMsgs = await Session.messages({ sessionID: childID })
-                  return Eval.parse(childMsgs)
-                })
+                const evalResult = sub?.verdict
                 const passed = evalResult?.pass === true
                 let feedback = "The evaluation agent did not return a valid result. Please review and fix the task."
                 if (evalResult && !passed) {
