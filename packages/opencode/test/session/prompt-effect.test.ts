@@ -20,6 +20,7 @@ import { LLM } from "../../src/session/llm"
 import { MessageV2 } from "../../src/session/message-v2"
 import { AppFileSystem } from "../../src/filesystem"
 import { SessionCompaction } from "../../src/session/compaction"
+import { Eval } from "../../src/session/eval"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -496,6 +497,409 @@ it.live("failed subtask preserves metadata on error tool state", () =>
         },
       }),
     },
+  ),
+)
+
+it.live("eval command resolves instruction once and inherits session context", () =>
+  provideTmpdirInstance(
+    () =>
+      Effect.gen(function* () {
+        let text = ""
+        const init = spyOn(TaskTool, "init").mockImplementation(async () => ({
+          description: "task",
+          parameters: z.object({
+            description: z.string(),
+            prompt: z.string(),
+            subagent_type: z.string(),
+            task_id: z.string().optional(),
+            command: z.string().optional(),
+          }),
+          execute: async (args) => {
+            text = args.prompt
+            const child = await Session.create({})
+            const msg = await Session.updateMessage({
+              id: MessageID.ascending(),
+              role: "assistant",
+              sessionID: child.id,
+              parentID: MessageID.ascending(),
+              mode: "eval",
+              agent: "eval",
+              path: { cwd: "/tmp", root: "/tmp" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ref.modelID,
+              providerID: ref.providerID,
+              time: { created: Date.now(), completed: Date.now() },
+              finish: "tool-calls",
+            })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: msg.id,
+              sessionID: child.id,
+              type: "tool",
+              callID: "eval_pass",
+              tool: "eval_result",
+              state: {
+                status: "completed",
+                input: { pass: true, summary: "ok" },
+                title: "",
+                output: JSON.stringify({ pass: true, summary: "ok" }),
+                metadata: { pass: true, summary: "ok" },
+                time: { start: Date.now(), end: Date.now() },
+              },
+            })
+            return {
+              title: "",
+              metadata: {
+                sessionId: child.id,
+                model: ref,
+                eval: { pass: true, summary: "ok", sessionId: child.id, round: 1, phase: "passed" },
+              },
+              output: "",
+            }
+          },
+        }))
+        yield* Effect.addFinalizer(() => Effect.sync(() => init.mockRestore()))
+
+        const { prompt, chat, sessions } = yield* boot()
+        const msg = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: chat.id,
+          agent: "voice-build",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "ship it",
+        })
+
+        const read = spyOn(Session, "messages").mockRejectedValue(new Error("should not read child session"))
+        yield* Effect.addFinalizer(() => Effect.sync(() => read.mockRestore()))
+
+        yield* Effect.promise(() =>
+          SessionPrompt.command({
+            sessionID: chat.id,
+            command: Command.Default.EVAL,
+            arguments: "double check output",
+          }),
+        )
+
+        expect(read).not.toHaveBeenCalled()
+        read.mockRestore()
+
+        expect(text).toContain("## User Instruction")
+        expect(text).toContain("ship it")
+        expect(text).toContain("double check output")
+        expect(text.match(/## Additional Context/g)?.length ?? 0).toBe(1)
+
+        const all = yield* Effect.promise(() => Session.messages({ sessionID: chat.id }))
+        const item = all.find(
+          (entry) => entry.info.role === "user" && entry.parts.some((part) => part.type === "subtask"),
+        )
+        expect(item?.info.role).toBe("user")
+        if (!item || item.info.role !== "user") return
+        expect(item.info.agent).toBe("voice-build")
+        expect(item.info.model).toEqual(ref)
+        expect(
+          all.some(
+            (entry) =>
+              entry.info.role === "user" &&
+              entry.parts.some((part) => part.type === "text" && part.text === "Eval passed." && part.eval === true),
+          ),
+        ).toBe(true)
+      }),
+    { git: true, config: cfg },
+  ),
+)
+
+it.live("eval command fails closed and ignores older successful task sessions", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const init = spyOn(TaskTool, "init").mockImplementation(async () => ({
+        description: "task",
+        parameters: z.object({
+          description: z.string(),
+          prompt: z.string(),
+          subagent_type: z.string(),
+          task_id: z.string().optional(),
+          command: z.string().optional(),
+        }),
+        execute: async () => {
+          const child = await Session.create({})
+          const msg = await Session.updateMessage({
+            id: MessageID.ascending(),
+            role: "assistant",
+            sessionID: child.id,
+            parentID: MessageID.ascending(),
+            mode: "eval",
+            agent: "eval",
+            path: { cwd: "/tmp", root: "/tmp" },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            time: { created: Date.now(), completed: Date.now() },
+            finish: "stop",
+          })
+          await Session.updatePart({
+            id: PartID.ascending(),
+            messageID: msg.id,
+            sessionID: child.id,
+            type: "text",
+            text: "done",
+          })
+          return {
+            title: "",
+            metadata: { sessionId: child.id, model: ref },
+            output: "",
+          }
+        },
+      }))
+      yield* Effect.addFinalizer(() => Effect.sync(() => init.mockRestore()))
+
+      const { chat, sessions } = yield* boot()
+      const root = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "user",
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        time: { created: Date.now() },
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: root.id,
+        sessionID: chat.id,
+        type: "text",
+        text: "ship it",
+      })
+
+      const old = yield* Effect.promise(() => Session.create({}))
+      const oldMsg = yield* Effect.promise(() =>
+        Session.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          sessionID: old.id,
+          parentID: MessageID.ascending(),
+          mode: "eval",
+          agent: "eval",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ref.modelID,
+          providerID: ref.providerID,
+          time: { created: Date.now(), completed: Date.now() },
+          finish: "tool-calls",
+        }),
+      )
+      yield* Effect.promise(() =>
+        Session.updatePart({
+          id: PartID.ascending(),
+          messageID: oldMsg.id,
+          sessionID: old.id,
+          type: "tool",
+          callID: "old_eval",
+          tool: "eval_result",
+          state: {
+            status: "completed",
+            input: { pass: true, summary: "old" },
+            title: "",
+            output: JSON.stringify({ pass: true, summary: "old" }),
+            metadata: { pass: true, summary: "old" },
+            time: { start: Date.now(), end: Date.now() },
+          },
+        }),
+      )
+
+      const oldTask = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "assistant",
+        sessionID: chat.id,
+        parentID: root.id,
+        mode: "general",
+        agent: "general",
+        path: { cwd: "/tmp", root: "/tmp" },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ref.modelID,
+        providerID: ref.providerID,
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "tool-calls",
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: oldTask.id,
+        sessionID: chat.id,
+        type: "tool",
+        callID: "old_task",
+        tool: "task",
+        state: {
+          status: "completed",
+          input: { command: Command.Default.EVAL },
+          title: "",
+          output: "done",
+          metadata: { sessionId: old.id, model: ref },
+          time: { start: Date.now(), end: Date.now() },
+        },
+      })
+
+      yield* llm.text("fixed")
+
+      const result = yield* Effect.promise(() =>
+        SessionPrompt.command({
+          sessionID: chat.id,
+          command: Command.Default.EVAL,
+          arguments: "",
+        }),
+      )
+
+      expect(result.info.role).toBe("assistant")
+      expect(result.parts.some((part) => part.type === "text" && part.text === "fixed")).toBe(true)
+
+      const all = yield* Effect.promise(() => Session.messages({ sessionID: chat.id }))
+      expect(
+        all.some(
+          (entry) =>
+            entry.info.role === "user" &&
+            entry.parts.some((part) => part.type === "text" && part.text.includes("did not return a valid result")),
+        ),
+      ).toBe(true)
+      expect(
+        all.some(
+          (entry) =>
+            entry.info.role === "user" && entry.parts.some((part) => part.type === "text" && part.eval === true),
+        ),
+      ).toBe(false)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("eval command can submit a rebuttal and reuse the same eval session", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      let child: SessionID | undefined
+      const init = spyOn(TaskTool, "init").mockImplementation(async () => ({
+        description: "task",
+        parameters: z.object({
+          description: z.string(),
+          prompt: z.string(),
+          subagent_type: z.string(),
+          task_id: z.string().optional(),
+          command: z.string().optional(),
+        }),
+        execute: async () => {
+          const evalSession = await Session.create({})
+          child = evalSession.id
+          const msg = await Session.updateMessage({
+            id: MessageID.ascending(),
+            role: "assistant",
+            sessionID: child,
+            parentID: MessageID.ascending(),
+            mode: "eval",
+            agent: "eval",
+            path: { cwd: "/tmp", root: "/tmp" },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            time: { created: Date.now(), completed: Date.now() },
+            finish: "tool-calls",
+          })
+          await Session.updatePart({
+            id: PartID.ascending(),
+            messageID: msg.id,
+            sessionID: child,
+            type: "tool",
+            callID: "eval_fail",
+            tool: "eval_result",
+            state: {
+              status: "completed",
+              input: { pass: false, summary: "bad" },
+              title: "",
+              output: JSON.stringify({ pass: false, summary: "bad" }),
+              metadata: { pass: false, summary: "bad" },
+              time: { start: Date.now(), end: Date.now() },
+            },
+          })
+          return {
+            title: "",
+            metadata: {
+              sessionId: child,
+              model: ref,
+              eval: { pass: false, summary: "bad", sessionId: child, round: 1, phase: "failed" },
+            },
+            output: "",
+          }
+        },
+      }))
+      yield* Effect.addFinalizer(() => Effect.sync(() => init.mockRestore()))
+
+      yield* llm.tool(Eval.REBUT, { content: "the evaluator missed the existing behavior" })
+      yield* llm.text("rebutted")
+      yield* llm.tool("eval_result", { pass: true, summary: "ok" })
+
+      const { chat, sessions } = yield* boot()
+      const root = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "user",
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        time: { created: Date.now() },
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: root.id,
+        sessionID: chat.id,
+        type: "text",
+        text: "ship it",
+      })
+
+      yield* Effect.promise(() =>
+        SessionPrompt.command({
+          sessionID: chat.id,
+          command: Command.Default.EVAL,
+          arguments: "",
+        }),
+      )
+
+      const all = yield* Effect.promise(() => Session.messages({ sessionID: chat.id }))
+      expect(
+        all.some(
+          (entry) =>
+            entry.info.role === "user" &&
+            entry.parts.some((part) => part.type === "text" && part.text.includes("eval_rebuttal")),
+        ),
+      ).toBe(true)
+      expect(
+        all.some(
+          (entry) =>
+            entry.info.role === "assistant" &&
+            entry.parts.some(
+              (part) => part.type === "tool" && part.tool === Eval.REBUT && part.state.status === "completed",
+            ),
+        ),
+      ).toBe(true)
+      expect(
+        all.some(
+          (entry) =>
+            entry.info.role === "user" && entry.parts.some((part) => part.type === "text" && part.eval === true),
+        ),
+      ).toBe(true)
+
+      const evalMsgs = child ? yield* Effect.promise(() => Session.messages({ sessionID: child! })) : []
+      expect(
+        evalMsgs.flatMap((entry) => entry.parts).filter((part) => part.type === "tool" && part.tool === "eval_result")
+          .length,
+      ).toBe(2)
+    }),
+    { git: true, config: providerCfg },
   ),
 )
 

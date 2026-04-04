@@ -81,6 +81,7 @@ import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
+import { Eval } from "@/session/eval"
 
 addDefaultParsers(parsers.parsers)
 
@@ -402,6 +403,24 @@ export function Session() {
       },
       onSelect: (dialog) => {
         dialog.replace(() => <DialogSessionRename session={route.sessionID} />)
+      },
+    },
+    {
+      title: "Run eval",
+      value: "session.eval",
+      category: "Session",
+      slash: {
+        name: "eval",
+      },
+      onSelect: (dialog) => {
+        dialog.clear()
+        const model = local.model.current()
+        sdk.client.session.command({
+          sessionID: route.sessionID,
+          command: "eval",
+          arguments: "",
+          ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
+        })
       },
     },
     {
@@ -1239,10 +1258,17 @@ function UserMessage(props: {
   const [hover, setHover] = createSignal(false)
   const queued = createMemo(() => props.pending && props.message.id > props.pending)
   const color = createMemo(() => local.agent.color(props.message.agent))
+  const evalMeta = createMemo(() => (text() ? Eval.state(text() as never) : undefined))
+  const evalPass = createMemo(() => !!text() && (text() as any).eval === true)
   const queuedFg = createMemo(() => selectedForeground(theme, color()))
   const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
 
   const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
+  const border = createMemo(() => (evalMeta() || evalPass() ? theme.borderActive : color()))
+  const title = createMemo(() => {
+    if (evalMeta()) return ` Evaluator · Round ${evalMeta()!.round} `
+    if (evalPass()) return " Eval "
+  })
 
   return (
     <>
@@ -1250,9 +1276,11 @@ function UserMessage(props: {
         <box
           id={props.message.id}
           border={["left"]}
-          borderColor={color()}
+          borderColor={border()}
           customBorderChars={SplitBorder.customBorderChars}
           marginTop={props.index === 0 ? 0 : 1}
+          title={title()}
+          titleAlignment="center"
         >
           <box
             onMouseOver={() => {
@@ -1554,6 +1582,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "task"}>
           <Task {...toolprops} />
         </Match>
+        <Match when={props.part.tool === "eval_rebuttal"}>
+          <EvalRebuttal {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "apply_patch"}>
           <ApplyPatch {...toolprops} />
         </Match>
@@ -1617,6 +1648,18 @@ function GenericTool(props: ToolProps<any>) {
         </box>
       </BlockTool>
     </Show>
+  )
+}
+
+function EvalRebuttal(props: ToolProps<any>) {
+  const content =
+    typeof (props.input as Record<string, unknown>).content === "string"
+      ? String((props.input as Record<string, unknown>).content)
+      : undefined
+  return (
+    <InlineTool icon="!" pending="Preparing rebuttal..." complete={true} part={props.part}>
+      Evaluation rebuttal <Show when={content}>- {content}</Show>
+    </InlineTool>
   )
 }
 
@@ -1976,6 +2019,9 @@ function Task(props: ToolProps<typeof TaskTool>) {
   })
 
   const current = createMemo(() => tools().findLast((x) => (x.state as any).title))
+  const isEval = createMemo(() => props.input.command === "eval" || !!props.metadata.eval)
+  const evals = createMemo(() => tools().filter((x) => x.tool === "eval_result" && x.state.status === "completed"))
+  const lastEval = createMemo(() => evals().at(-1))
 
   const isRunning = createMemo(() => props.part.state.status === "running")
 
@@ -1988,6 +2034,33 @@ function Task(props: ToolProps<typeof TaskTool>) {
 
   const content = createMemo(() => {
     if (!props.input.description) return ""
+    if (isEval()) {
+      const meta = props.metadata.eval as Record<string, any> | undefined
+      const last = lastEval()
+      const state =
+        last?.state.status === "completed" ? ((last.state.metadata as Record<string, any>) ?? undefined) : undefined
+      const round = evals().length || meta?.round
+      const phase = isRunning()
+        ? "reviewing"
+        : state?.pass === true
+          ? "passed"
+          : state?.pass === false
+            ? "failed"
+            : meta?.phase
+      const summary =
+        typeof state?.summary === "string"
+          ? state.summary
+          : typeof meta?.summary === "string"
+            ? meta.summary
+            : undefined
+      const lines = ["Eval"]
+      const info = [round ? `round ${round}` : undefined, phase].filter(Boolean).join(" · ")
+      if (info) lines.push(`↳ ${info}`)
+      if (summary) lines.push(`↳ ${summary}`)
+      if (props.part.state.status === "completed") lines.push(`└ ${Locale.duration(duration())}`)
+      return lines.join("\n")
+    }
+
     let content = [`${Locale.titlecase(props.input.subagent_type ?? "General")} Task — ${props.input.description}`]
 
     if (isRunning() && tools().length > 0) {

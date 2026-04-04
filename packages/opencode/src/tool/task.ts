@@ -11,6 +11,8 @@ import { iife } from "@/util/iife"
 import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { Permission } from "@/permission"
+import { Command } from "../command"
+import { Eval } from "../session/eval"
 
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
@@ -143,6 +145,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         parts: promptParts,
       })
 
+      const verdict = params.command === Command.Default.EVAL ? Eval.parse([result]) : undefined
       const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
 
       const output = [
@@ -158,6 +161,14 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         metadata: {
           sessionId: session.id,
           model,
+          ...(verdict && {
+            eval: {
+              ...verdict,
+              sessionId: session.id,
+              round: 1,
+              phase: verdict.pass ? "passed" : "failed",
+            },
+          }),
         },
         output,
       }

@@ -28,6 +28,7 @@ import { FileTime } from "../file/time"
 import { ulid } from "ulid"
 import { spawn } from "child_process"
 import { Command } from "../command"
+import { Eval } from "./eval"
 import { pathToFileURL, fileURLToPath } from "url"
 import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
@@ -539,6 +540,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           tools[key] = item
         }
 
+        const pending = Eval.pending(input.messages)
+        if (!pending || pending.state.round > Eval.MAX_REBUT) delete tools[Eval.REBUT]
+
         return tools
       })
 
@@ -550,7 +554,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         session: Session.Info
         msgs: MessageV2.WithParts[]
       }) {
-        const { task, model, lastUser, sessionID, session, msgs } = input
+        let { task, model, lastUser, sessionID, session, msgs } = input
         const ctx = yield* InstanceState.context
         const taskTool = yield* Effect.promise(() => TaskTool.init())
         const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID) : model
@@ -602,6 +606,44 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const error = new NamedError.Unknown({ message: `Agent not found: "${task.agent}".${hint}` })
           yield* bus.publish(Session.Event.Error, { sessionID, error: error.toObject() })
           throw error
+        }
+
+        if (task.command === Command.Default.EVAL && task.prompt.includes("__EVAL_INSTRUCTION__")) {
+          const { count, single } = Eval.instruction(msgs)
+          let extracted: string
+          if (count <= 1) {
+            extracted = single || "No user instruction found"
+          } else {
+            const mdl = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
+            const history = yield* Effect.promise(() => MessageV2.toModelMessages(msgs, mdl, { stripMedia: true }))
+            const agent = yield* agents.get("extract")
+            if (agent) {
+              const ac = new AbortController()
+              extracted = yield* Effect.promise(async () => {
+                const result = await LLM.stream({
+                  agent,
+                  user: lastUser,
+                  system: agent.prompt ? [agent.prompt] : [],
+                  small: true,
+                  tools: {},
+                  model: mdl,
+                  abort: ac.signal,
+                  sessionID,
+                  retries: 1,
+                  messages: [
+                    ...history,
+                    { role: "user" as const, content: "Extract the user's instructions from the conversation above." },
+                  ],
+                })
+                return result.text ?? single
+              })
+            } else {
+              extracted = single
+            }
+          }
+          const prompt = task.prompt.replace("__EVAL_INSTRUCTION__", extracted)
+          task = { ...task, prompt }
+          taskArgs.prompt = prompt
         }
 
         let error: Error | undefined
@@ -711,7 +753,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           } satisfies MessageV2.ToolPart)
         }
 
-        if (!task.command) return
+        const childID = (() => {
+          const meta = result?.metadata
+          if (!meta || typeof meta !== "object") return
+          if (!("sessionId" in meta) || typeof meta.sessionId !== "string") return
+          return SessionID.make(meta.sessionId)
+        })()
+
+        const verdict = (() => {
+          const meta = result?.metadata
+          if (!meta || typeof meta !== "object") return
+          if (!("eval" in meta) || !meta.eval || typeof meta.eval !== "object") return
+          if (!("pass" in meta.eval)) return
+          return {
+            pass: meta.eval.pass === true,
+            summary: typeof meta.eval.summary === "string" ? meta.eval.summary : "",
+            issues: Array.isArray(meta.eval.issues) ? (meta.eval.issues as Eval.Issue[]) : undefined,
+          }
+        })()
+
+        if (!task.command || task.command === Command.Default.EVAL) return { childID, verdict }
 
         const summaryUserMsg: MessageV2.User = {
           id: MessageID.ascending(),
@@ -730,6 +791,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           text: "Summarize the task tool output above and continue with your task.",
           synthetic: true,
         } satisfies MessageV2.TextPart)
+        return { childID, verdict }
       })
 
       const shellImpl = Effect.fn("SessionPrompt.shellImpl")(function* (input: ShellInput, signal: AbortSignal) {
@@ -1353,8 +1415,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               if (!lastAssistant && msg.info.role === "assistant") lastAssistant = msg.info
               if (!lastFinished && msg.info.role === "assistant" && msg.info.finish) lastFinished = msg.info
               if (lastUser && lastFinished) break
-              const task = msg.parts.filter((part) => part.type === "compaction" || part.type === "subtask")
-              if (task && !lastFinished) tasks.push(...task)
+              const task = msg.parts.filter(
+                (part): part is MessageV2.CompactionPart | MessageV2.SubtaskPart =>
+                  part.type === "compaction" || part.type === "subtask",
+              )
+              // Skip eval subtasks from older messages — they've already been processed
+              if (task.length && !lastFinished) {
+                for (const t of task) {
+                  if (t.type === "subtask" && t.command === Command.Default.EVAL && msg.info.id !== lastUser?.id)
+                    continue
+                  tasks.push(t)
+                }
+              }
             }
 
             if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
@@ -1458,7 +1530,60 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const task = tasks.pop()
 
             if (task?.type === "subtask") {
-              yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+              const sub = yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+              // /eval subtask: check result and feed failures back to the build agent
+              if (task.command === Command.Default.EVAL) {
+                const evalResult = sub?.verdict
+                const passed = evalResult?.pass === true
+                const summary = evalResult?.summary ?? "The evaluation agent did not return a valid result."
+                const feedback = Eval.feedback(evalResult ?? { summary, issues: undefined }, !!sub?.childID)
+                if (passed) {
+                  const mid = MessageID.ascending()
+                  yield* sessions.updateMessage({
+                    id: mid,
+                    sessionID,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: lastUser.agent,
+                    model: lastUser.model,
+                  })
+                  yield* sessions.updatePart({
+                    id: PartID.ascending(),
+                    messageID: mid,
+                    sessionID,
+                    type: "text",
+                    text: "Eval passed.",
+                    eval: true,
+                  } as MessageV2.TextPart)
+                  break
+                }
+                const mid = MessageID.ascending()
+                yield* sessions.updateMessage({
+                  id: mid,
+                  sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: mid,
+                  sessionID,
+                  type: "text",
+                  text: feedback,
+                  metadata: Eval.metadata({
+                    sessionId: String(sub?.childID ?? sessionID),
+                    mode: "interactive",
+                    policy: "stop_on_accept",
+                    phase: "failed",
+                    round: 1,
+                    summary,
+                    pass: false,
+                  }),
+                } satisfies MessageV2.TextPart)
+                continue
+              }
               continue
             }
 
@@ -1628,6 +1753,98 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }),
             )
             if (outcome === "break") break
+            const source = msgs.findLast((msg) => msg.info.role === "user" && msg.info.id === lastUser.id)
+            const active = source?.parts.find(
+              (part): part is MessageV2.TextPart =>
+                part.type === "text" &&
+                !part.ignored &&
+                Eval.state(part)?.mode === "interactive" &&
+                Eval.state(part)?.phase === "failed",
+            )
+            if (active) {
+              const meta = Eval.state(active)!
+              const branch = yield* Effect.promise(() =>
+                Session.messages({ sessionID }).then((all) =>
+                  all
+                    .filter((item) => item.info.role === "assistant" && item.info.parentID === source?.info.id)
+                    .flatMap((item) => item.parts),
+                ),
+              )
+              const note = Eval.rebut(branch)
+              yield* Effect.promise(() => Eval.resolve(active))
+              if (!note) break
+              const child = SessionID.make(meta.sessionId)
+              const verdict = yield* Effect.promise(() =>
+                SessionPrompt.prompt({
+                  sessionID: child,
+                  agent: "eval",
+                  parts: [
+                    {
+                      type: "text",
+                      text: Eval.followup({ summary: meta.summary ?? "", issues: undefined }, note.content),
+                    },
+                  ],
+                }).then(async () => Eval.parse(await Session.messages({ sessionID: child }))),
+              )
+              if (verdict?.pass) {
+                const mid = MessageID.ascending()
+                yield* sessions.updateMessage({
+                  id: mid,
+                  sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: mid,
+                  sessionID,
+                  type: "text",
+                  text: "Eval passed.",
+                  eval: true,
+                } as MessageV2.TextPart)
+                break
+              }
+              const summary = verdict?.summary ?? "The evaluation agent did not return a valid result."
+              const mid = MessageID.ascending()
+              yield* sessions.updateMessage({
+                id: mid,
+                sessionID,
+                role: "user",
+                time: { created: Date.now() },
+                agent: lastUser.agent,
+                model: lastUser.model,
+              })
+              const round = meta.round + 1
+              yield* sessions.updatePart({
+                id: PartID.ascending(),
+                messageID: mid,
+                sessionID,
+                type: "text",
+                text: Eval.feedback(verdict ?? { summary, issues: undefined }, round <= Eval.MAX_REBUT),
+                metadata: Eval.metadata({
+                  sessionId: meta.sessionId,
+                  mode: "interactive",
+                  policy: "stop_on_accept",
+                  phase: "failed",
+                  round,
+                  summary,
+                  pass: false,
+                  rebutted: true,
+                }),
+              } satisfies MessageV2.TextPart)
+              continue
+            }
+            // eval_result: stop immediately so the eval agent doesn't waste a follow-up turn
+            const evalDone =
+              handle.message.finish === "tool-calls" &&
+              MessageV2.stream(sessionID)
+                .next()
+                .value?.parts.some(
+                  (p) => p.type === "tool" && p.tool === "eval_result" && p.state.status === "completed",
+                )
+            if (evalDone) break
             continue
           }
 
@@ -1685,6 +1902,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const usesArgumentsPlaceholder = templateCommand.includes("$ARGUMENTS")
         let template = withArgs.replaceAll("$ARGUMENTS", input.arguments)
 
+        if (input.command === Command.Default.EVAL) {
+          const extra = input.arguments.trim()
+          template = template.replace("__EVAL_CONTEXT__", extra ? `## Additional Context\n\n${extra}` : "")
+        }
+
         if (placeholders.length === 0 && !usesArgumentsPlaceholder && input.arguments.trim()) {
           template = template + "\n\n" + input.arguments
         }
@@ -1738,11 +1960,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             ]
           : [...templateParts, ...(input.parts ?? [])]
 
-        const userAgent = isSubtask ? (input.agent ?? (yield* agents.defaultAgent())) : agentName
+        const prev = input.command === Command.Default.EVAL ? yield* lastTurn(input.sessionID) : undefined
+        const userAgent = isSubtask ? (input.agent ?? prev?.agent ?? (yield* agents.defaultAgent())) : agentName
         const userModel = isSubtask
           ? input.model
             ? Provider.parseModel(input.model)
-            : yield* lastModel(input.sessionID)
+            : (prev?.model ?? (yield* lastModel(input.sessionID)))
           : taskModel
 
         yield* plugin.trigger(
@@ -1947,6 +2170,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
     if (model) return model
     return yield* Effect.promise(() => Provider.defaultModel())
+  })
+
+  const lastTurn = Effect.fnUntraced(function* (sessionID: SessionID) {
+    return yield* Effect.sync(() => {
+      for (const item of MessageV2.stream(sessionID)) {
+        if (item.info.role !== "user") continue
+        if (
+          item.parts.every((part) => {
+            if (part.type === "subtask") return part.command === Command.Default.EVAL
+            if (part.type === "text") return part.eval === true
+            return false
+          })
+        )
+          continue
+        return {
+          agent: item.info.agent,
+          model: item.info.model,
+        }
+      }
+    })
   })
 
   /** @internal Exported for testing */

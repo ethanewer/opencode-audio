@@ -69,6 +69,12 @@ export function formatAssistantHeader(msg: AssistantMessage, includeMetadata: bo
 
 export function formatPart(part: Part, options: TranscriptOptions): string {
   if (part.type === "text" && !part.synthetic) {
+    const meta =
+      part.metadata && typeof part.metadata === "object"
+        ? (part.metadata.eval as Record<string, any> | undefined)
+        : undefined
+    if ("eval" in part && part.eval) return `**Eval:** ${part.text}\n\n`
+    if (meta?.phase === "failed") return `**Evaluator:**\n\n${part.text}\n\n`
     return `${part.text}\n\n`
   }
 
@@ -80,6 +86,15 @@ export function formatPart(part: Part, options: TranscriptOptions): string {
   }
 
   if (part.type === "tool") {
+    if (part.tool === "eval_rebuttal") {
+      const content =
+        typeof part.state.input?.content === "string"
+          ? part.state.input.content
+          : part.state.status === "completed" && typeof part.state.metadata?.content === "string"
+            ? part.state.metadata.content
+            : ""
+      return `**Build Rebuttal:**\n\n${content}\n\n`
+    }
     let result = `**Tool: ${part.tool}**\n`
     if (options.toolDetails && part.state.input) {
       result += `\n**Input:**\n\`\`\`json\n${JSON.stringify(part.state.input, null, 2)}\n\`\`\`\n`

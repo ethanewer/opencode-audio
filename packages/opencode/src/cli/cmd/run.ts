@@ -30,6 +30,7 @@ import { Locale } from "../../util/locale"
 import { transcribeFile } from "../../audio/transcribe"
 import { Session } from "../../session"
 import { SessionID } from "../../session/schema"
+import { Eval } from "../../session/eval"
 
 type ToolProps<T extends Tool.Info> = {
   input: Tool.InferParameters<T>
@@ -187,6 +188,15 @@ function task(info: ToolProps<typeof TaskTool>) {
   })
 }
 
+function rebuttal(info: ToolProps<any>) {
+  const input = info.input as Record<string, unknown>
+  inline({
+    icon: "!",
+    title: "Evaluation rebuttal",
+    description: typeof input.content === "string" ? input.content : undefined,
+  })
+}
+
 function skill(info: ToolProps<typeof SkillTool>) {
   inline({
     icon: "→",
@@ -312,6 +322,15 @@ export const RunCommand = cmd({
       .option("audio", {
         type: "string",
         describe: "path to a .wav file to transcribe as the prompt",
+      })
+      .option("eval", {
+        type: "boolean",
+        describe: "run eval agent after build completes (default: true when no --agent specified)",
+      })
+      .option("eval-iterations", {
+        type: "number",
+        default: 5,
+        describe: "max number of build-eval iterations",
       })
   },
   handler: async (args) => {
@@ -464,6 +483,7 @@ export const RunCommand = cmd({
           if (part.tool === "codesearch") return codesearch(props<typeof CodeSearchTool>(part))
           if (part.tool === "websearch") return websearch(props<typeof WebSearchTool>(part))
           if (part.tool === "task") return task(props<typeof TaskTool>(part))
+          if (part.tool === "eval_rebuttal") return rebuttal(props<any>(part))
           if (part.tool === "todowrite") return todo(props<typeof TodoWriteTool>(part))
           if (part.tool === "skill") return skill(props<typeof SkillTool>(part))
           return fallback(part)
@@ -480,134 +500,173 @@ export const RunCommand = cmd({
         return false
       }
 
-      const events = await sdk.event.subscribe()
+      const ctrl = new AbortController()
+      const events = await sdk.event.subscribe({}, { signal: ctrl.signal })
       let error: string | undefined
+      let code = 0
 
-      async function loop(sessionID: string, auto: boolean) {
-        const toggles = new Map<string, boolean>()
+      const active = new Set<string>()
+      const waiters = new Map<string, { resolve: () => void; promise: Promise<void> }>()
 
-        for await (const event of events.stream) {
-          if (
-            event.type === "message.updated" &&
-            event.properties.info.role === "assistant" &&
-            args.format !== "json" &&
-            toggles.get("start") !== true
-          ) {
-            UI.empty()
-            UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
-            UI.empty()
-            toggles.set("start", true)
-          }
+      let proc: Promise<void> | undefined
 
-          if (event.type === "message.part.updated") {
-            const part = event.properties.part
-            if (part.sessionID !== sessionID) continue
+      function start() {
+        if (proc) return
+        proc = (async () => {
+          const toggles = new Map<string, boolean>()
 
-            if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
-              if (emit("tool_use", { part })) continue
-              if (part.state.status === "completed") {
-                tool(part)
-                continue
+          for await (const event of events.stream) {
+            if (
+              event.type === "message.updated" &&
+              event.properties.info.role === "assistant" &&
+              args.format !== "json"
+            ) {
+              const sid = event.properties.info.sessionID
+              if (!active.has(sid)) continue
+              const key = `start:${sid}`
+              if (toggles.get(key) !== true) {
+                UI.empty()
+                UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
+                UI.empty()
+                toggles.set(key, true)
               }
-              inline({
-                icon: "✗",
-                title: `${part.tool} failed`,
-              })
-              UI.error(part.state.error)
+            }
+
+            if (event.type === "message.part.updated") {
+              const part = event.properties.part
+              if (!active.has(part.sessionID)) continue
+
+              if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
+                if (emit("tool_use", { part })) continue
+                if (part.state.status === "completed") {
+                  tool(part)
+                  continue
+                }
+                inline({
+                  icon: "✗",
+                  title: `${part.tool} failed`,
+                })
+                UI.error(part.state.error)
+              }
+
+              if (
+                part.type === "tool" &&
+                part.tool === "task" &&
+                part.state.status === "running" &&
+                args.format !== "json"
+              ) {
+                if (toggles.get(part.id) === true) continue
+                task(props<typeof TaskTool>(part))
+                toggles.set(part.id, true)
+              }
+
+              if (part.type === "step-start") {
+                if (emit("step_start", { part })) continue
+              }
+
+              if (part.type === "step-finish") {
+                if (emit("step_finish", { part })) continue
+              }
+
+              if (part.type === "text" && part.time?.end) {
+                if (emit("text", { part })) continue
+                const text = part.text.trim()
+                if (!text) continue
+                if (!process.stdout.isTTY) {
+                  process.stdout.write(text + EOL)
+                  continue
+                }
+                UI.empty()
+                UI.println(text)
+                UI.empty()
+              }
+
+              if (part.type === "reasoning" && part.time?.end && args.thinking) {
+                if (emit("reasoning", { part })) continue
+                const text = part.text.trim()
+                if (!text) continue
+                const line = `Thinking: ${text}`
+                if (process.stdout.isTTY) {
+                  UI.empty()
+                  UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
+                  UI.empty()
+                  continue
+                }
+                process.stdout.write(line + EOL)
+              }
+            }
+
+            if (event.type === "session.error") {
+              const props = event.properties
+              if (!props.sessionID || !active.has(props.sessionID) || !props.error) continue
+              let err = String(props.error.name)
+              if ("data" in props.error && props.error.data && "message" in props.error.data) {
+                err = String(props.error.data.message)
+              }
+              error = error ? error + EOL + err : err
+              if (emit("error", { error: props.error })) continue
+              UI.error(err)
             }
 
             if (
-              part.type === "tool" &&
-              part.tool === "task" &&
-              part.state.status === "running" &&
-              args.format !== "json"
+              event.type === "session.status" &&
+              active.has(event.properties.sessionID) &&
+              event.properties.status.type === "idle"
             ) {
-              if (toggles.get(part.id) === true) continue
-              task(props<typeof TaskTool>(part))
-              toggles.set(part.id, true)
+              toggles.delete(`start:${event.properties.sessionID}`)
+              unlisten(event.properties.sessionID)
             }
 
-            if (part.type === "step-start") {
-              if (emit("step_start", { part })) continue
+            if (event.type === "permission.asked") {
+              const permission = event.properties
+              if (!active.has(permission.sessionID)) continue
+              UI.println(
+                UI.Style.TEXT_WARNING_BOLD + "!",
+                UI.Style.TEXT_NORMAL +
+                  `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
+              )
+              await sdk.permission.reply({
+                requestID: permission.id,
+                reply: "reject",
+              })
             }
 
-            if (part.type === "step-finish") {
-              if (emit("step_finish", { part })) continue
-            }
-
-            if (part.type === "text" && part.time?.end) {
-              if (emit("text", { part })) continue
-              const text = part.text.trim()
-              if (!text) continue
-              if (!process.stdout.isTTY) {
-                process.stdout.write(text + EOL)
-                continue
-              }
-              UI.empty()
-              UI.println(text)
-              UI.empty()
-            }
-
-            if (part.type === "reasoning" && part.time?.end && args.thinking) {
-              if (emit("reasoning", { part })) continue
-              const text = part.text.trim()
-              if (!text) continue
-              const line = `Thinking: ${text}`
-              if (process.stdout.isTTY) {
-                UI.empty()
-                UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
-                UI.empty()
-                continue
-              }
-              process.stdout.write(line + EOL)
+            if (event.type === "question.asked") {
+              const question = event.properties
+              if (!active.has(question.sessionID)) continue
+              // The run command is headless, so questions must be answered here
+              // or the session never returns to idle.
+              await sdk.question.reply({
+                requestID: question.id,
+                answers: [["Yes"]],
+              })
             }
           }
+        })().catch((e) => {
+          if (ctrl.signal.aborted) return
+          console.error(e)
+          process.exit(1)
+        })
+      }
 
-          if (event.type === "session.error") {
-            const props = event.properties
-            if (props.sessionID !== sessionID || !props.error) continue
-            let err = String(props.error.name)
-            if ("data" in props.error && props.error.data && "message" in props.error.data) {
-              err = String(props.error.data.message)
-            }
-            error = error ? error + EOL + err : err
-            if (emit("error", { error: props.error })) continue
-            UI.error(err)
-          }
+      function listen(sessionID: string): Promise<void> {
+        const prev = waiters.get(sessionID)
+        if (prev) return prev.promise
+        active.add(sessionID)
+        start()
+        let resolve!: () => void
+        const promise = new Promise<void>((done) => {
+          resolve = done
+        })
+        waiters.set(sessionID, { resolve, promise })
+        return promise
+      }
 
-          if (
-            event.type === "session.status" &&
-            event.properties.sessionID === sessionID &&
-            event.properties.status.type === "idle"
-          ) {
-            break
-          }
-
-          if (event.type === "permission.asked") {
-            const permission = event.properties
-            if (permission.sessionID !== sessionID) continue
-            UI.println(
-              UI.Style.TEXT_WARNING_BOLD + "!",
-              UI.Style.TEXT_NORMAL +
-                `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
-            )
-            await sdk.permission.reply({
-              requestID: permission.id,
-              reply: "reject",
-            })
-          }
-
-          if (event.type === "question.asked") {
-            const question = event.properties
-            if (question.sessionID !== sessionID) continue
-            if (!auto) continue
-            if (question.questions[0]?.header !== "Build Agent") continue
-            await sdk.question.reply({
-              requestID: question.id,
-              answers: [["Yes"]],
-            })
-          }
-        }
+      function unlisten(sessionID: string) {
+        active.delete(sessionID)
+        const waiter = waiters.get(sessionID)
+        waiters.delete(sessionID)
+        waiter?.resolve()
       }
 
       // Validate agent if specified
@@ -678,32 +737,108 @@ export const RunCommand = cmd({
         process.exit(1)
       }
       await share(sdk, sessionID)
-      const auto = Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(validated ?? "")
 
-      loop(sessionID, auto).catch((e) => {
-        console.error(e)
-        process.exit(1)
-      })
+      // Start listening for the build session
+      const idle = listen(sessionID)
 
-      if (args.command) {
-        await sdk.session.command({
-          sessionID,
-          agent: validated,
-          model: args.model,
-          command: args.command,
-          arguments: message,
-          variant: args.variant,
-        })
-      } else {
-        const model = args.model ? Provider.parseModel(args.model) : undefined
-        await sdk.session.prompt({
-          sessionID,
-          agent: validated,
-          model,
-          variant: args.variant,
-          parts: [...files, { type: "text", text: message }],
-        })
+      try {
+        if (args.command) {
+          await sdk.session.command({
+            sessionID,
+            agent: validated,
+            model: args.model,
+            command: args.command,
+            arguments: message,
+            variant: args.variant,
+          })
+        } else {
+          const model = args.model ? Provider.parseModel(args.model) : undefined
+          await sdk.session.prompt({
+            sessionID,
+            agent: validated,
+            model,
+            variant: args.variant,
+            parts: [...files, { type: "text", text: message }],
+          })
+        }
+
+        // Wait for build to finish
+        await idle
+
+        // Run eval if enabled
+        // Eval is on by default when implicit plan mode is active and no --agent was specified.
+        // It can be explicitly enabled/disabled with --eval.
+        const doEval = args.eval ?? (implicit && !args.agent)
+        if (doEval && !error && !args.attach) {
+          const maxIter = args.evalIterations ?? 5
+          const model = args.model ? Provider.parseModel(args.model) : undefined
+
+          UI.empty()
+          UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Running eval...")
+
+          const result = await Eval.run({
+            sessionID: SessionID.make(sessionID),
+            instruction: await Eval.extract(SessionID.make(sessionID), model),
+            model,
+            max: maxIter,
+            onEval(sid) {
+              listen(sid)
+            },
+            onBuild() {
+              listen(sessionID)
+            },
+            onRebuttal() {
+              UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Build rebuttal submitted")
+            },
+            onReview() {
+              UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Evaluator reconsidering rebuttal")
+            },
+            onAttempt(attempt, max) {
+              UI.empty()
+              UI.println(UI.Style.TEXT_INFO_BOLD + `~  ` + UI.Style.TEXT_NORMAL + `Eval attempt ${attempt}/${max}`)
+            },
+            onResult(result) {
+              if (result.pass) {
+                UI.println(UI.Style.TEXT_INFO_BOLD + "✓  " + UI.Style.TEXT_NORMAL + "Eval passed: " + result.summary)
+              } else {
+                UI.println(
+                  UI.Style.TEXT_WARNING_BOLD + "✗  " + UI.Style.TEXT_NORMAL + "Eval found issues: " + result.summary,
+                )
+                if (result.issues?.length) {
+                  for (const issue of result.issues) {
+                    const loc = issue.file ? ` (${issue.file})` : ""
+                    UI.println(UI.Style.TEXT_DIM + `   [${issue.severity}]${loc}: ${issue.description}`)
+                  }
+                }
+              }
+            },
+          })
+
+          if (!result.pass) {
+            code = 1
+            UI.empty()
+            UI.println(
+              UI.Style.TEXT_WARNING_BOLD +
+                "!  " +
+                UI.Style.TEXT_NORMAL +
+                `Eval did not pass after ${result.attempt} attempt(s)`,
+            )
+          }
+        }
+
+        if (error) code = 1
+      } finally {
+        ctrl.abort()
+        active.clear()
+        for (const waiter of waiters.values()) waiter.resolve()
+        waiters.clear()
+        if (proc) await proc
       }
+
+      // bootstrap() always disposes the local instance in a finally block.
+      // The headless run command is done once the active sessions are idle, and
+      // returning here can hang in Instance.dispose(). Exit immediately instead.
+      process.exit(code)
     }
 
     if (args.attach) {

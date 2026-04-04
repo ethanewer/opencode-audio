@@ -55,6 +55,23 @@ export function SubagentFooter() {
     }
   })
 
+  const evalInfo = createMemo(() => {
+    if (subagentInfo().label !== "Eval") return
+    const parts = messages().flatMap((msg) => sync.data.part[msg.id] ?? [])
+    const evals = parts.filter(
+      (part): part is Extract<(typeof parts)[number], { type: "tool" }> =>
+        part.type === "tool" && part.tool === "eval_result" && part.state.status === "completed",
+    )
+    const active = messages().findLast((msg) => msg.role === "assistant" && !msg.time.completed)
+    const last = evals.at(-1)
+    const meta =
+      last?.state.status === "completed" ? ((last.state.metadata as Record<string, any>) ?? undefined) : undefined
+    return {
+      round: evals.length || undefined,
+      phase: active ? "Reviewing" : meta?.pass === true ? "Passed" : meta?.pass === false ? "Failed" : undefined,
+    }
+  })
+
   const { theme } = useTheme()
   const keybind = useKeybind()
   const command = useCommandDialog()
@@ -83,6 +100,13 @@ export function SubagentFooter() {
               <text style={{ fg: theme.textMuted }}>
                 ({subagentInfo().index} of {subagentInfo().total})
               </text>
+            </Show>
+            <Show when={evalInfo()}>
+              {(item) => (
+                <text fg={theme.textMuted} wrapMode="none">
+                  {[item().round ? `Round ${item().round}` : undefined, item().phase].filter(Boolean).join(" · ")}
+                </text>
+              )}
             </Show>
             <Show when={usage()}>
               {(item) => (

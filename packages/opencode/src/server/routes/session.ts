@@ -892,6 +892,7 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
         const msg = await SessionPrompt.command({ ...body, sessionID })
+
         return c.json(msg)
       },
     )
