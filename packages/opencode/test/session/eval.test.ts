@@ -109,6 +109,79 @@ async function tool(sessionID: SessionID) {
   })
 }
 
+async function build(
+  sessionID: SessionID,
+  input: {
+    agent?: string
+    model?: { providerID: ProviderID; modelID: ModelID }
+    parts: Array<{ type: string; text?: string; metadata?: Record<string, unknown> }>
+  },
+  rebuttal?: string,
+) {
+  const userMsg = await Session.updateMessage({
+    id: MessageID.ascending(),
+    role: "user",
+    sessionID,
+    agent: input.agent ?? "build",
+    model: input.model ?? ref,
+    time: { created: Date.now() },
+  })
+  const text = input.parts.find((part) => part.type === "text")
+  await Session.updatePart({
+    id: PartID.ascending(),
+    messageID: userMsg.id,
+    sessionID,
+    type: "text",
+    text: text?.text ?? "",
+    metadata: text?.metadata,
+  })
+
+  const msg = await Session.updateMessage({
+    id: MessageID.ascending(),
+    role: "assistant",
+    sessionID,
+    parentID: userMsg.id,
+    mode: "build",
+    agent: "build",
+    path: { cwd: "/tmp", root: "/tmp" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    modelID: ref.modelID,
+    providerID: ref.providerID,
+    time: { created: Date.now(), completed: Date.now() },
+    finish: rebuttal ? "tool-calls" : "stop",
+  })
+
+  if (rebuttal) {
+    await Session.updatePart({
+      id: PartID.ascending(),
+      messageID: msg.id,
+      sessionID,
+      type: "tool",
+      callID: "call_rebuttal",
+      tool: Eval.REBUT,
+      state: {
+        status: "completed",
+        input: { content: rebuttal },
+        title: "Evaluation Rebuttal",
+        output: rebuttal,
+        metadata: { content: rebuttal },
+        time: { start: Date.now(), end: Date.now() },
+      },
+    })
+  } else {
+    await Session.updatePart({
+      id: PartID.ascending(),
+      messageID: msg.id,
+      sessionID,
+      type: "text",
+      text: "fixing",
+    })
+  }
+
+  return (await Session.messages({ sessionID })).at(-1)!
+}
+
 describe("session.eval", () => {
   test("retries with the original session agent and fresh diffs", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -233,6 +306,46 @@ describe("session.eval", () => {
 
         expect(result.pass).toBe(false)
         expect(result.summary).toBe("Eval agent did not call eval_result")
+      },
+    })
+  })
+
+  test("reuses the same eval session when build submits a rebuttal", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const chat = await Session.create({})
+        await user(chat.id, "ship it")
+
+        spyOn(SessionSummary.SessionSummary, "computeDiff").mockResolvedValue([])
+
+        let child: SessionID | undefined
+        let evals = 0
+
+        spyOn(SessionPrompt.SessionPrompt, "prompt").mockImplementation(async (input) => {
+          if (input.sessionID === chat.id) {
+            return build(chat.id, input as never, "the requirement is already satisfied")
+          }
+
+          evals++
+          if (!child) child = input.sessionID
+          expect(input.sessionID).toBe(child)
+          await verdict(input.sessionID, evals > 1, evals > 1 ? "ok" : "bad")
+          return (await Session.messages({ sessionID: input.sessionID })).at(-1)!
+        })
+
+        const result = await Eval.run({
+          sessionID: chat.id,
+          instruction: "ship it",
+          max: 2,
+        })
+
+        expect(result.pass).toBe(true)
+        expect(result.attempt).toBe(1)
+        expect(result.round).toBe(2)
+        expect(result.rebutted).toBe(true)
+        expect(evals).toBe(2)
       },
     })
   })

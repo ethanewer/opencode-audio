@@ -13,11 +13,99 @@ export namespace Eval {
   const log = Log.create({ service: "session.eval" })
 
   const WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"])
+  export const REBUT = "eval_rebuttal"
+  export const MAX_REBUT = 3
+
+  export type Phase = "evaluating" | "failed" | "rebutting" | "passed"
 
   export type Issue = {
     file?: string
     description: string
     severity: string
+  }
+
+  export type State = {
+    sessionId: string
+    mode: "interactive" | "headless"
+    policy: "stop_on_accept" | "rerun_on_accept"
+    phase: Phase
+    round: number
+    summary?: string
+    pass?: boolean
+    rebutted?: boolean
+  }
+
+  export type Rebuttal = {
+    content: string
+  }
+
+  export type Result = {
+    pass: boolean
+    summary: string
+    issues?: Issue[]
+    attempt: number
+    sessionID: SessionID
+    sessions: SessionID[]
+    round: number
+    phase: Phase
+    rebutted?: boolean
+  }
+
+  function parseState(input: unknown) {
+    if (!input || typeof input !== "object") return
+    const data = input as Record<string, unknown>
+    if (typeof data.sessionId !== "string") return
+    if (data.mode !== "interactive" && data.mode !== "headless") return
+    if (data.policy !== "stop_on_accept" && data.policy !== "rerun_on_accept") return
+    if (data.phase !== "evaluating" && data.phase !== "failed" && data.phase !== "rebutting" && data.phase !== "passed")
+      return
+    if (typeof data.round !== "number") return
+    return {
+      sessionId: data.sessionId,
+      mode: data.mode,
+      policy: data.policy,
+      phase: data.phase,
+      round: data.round,
+      ...(typeof data.summary === "string" ? { summary: data.summary } : {}),
+      ...(typeof data.pass === "boolean" ? { pass: data.pass } : {}),
+      ...(typeof data.rebutted === "boolean" ? { rebutted: data.rebutted } : {}),
+    } satisfies State
+  }
+
+  export function metadata(input: State) {
+    return { eval: input }
+  }
+
+  export function state(part?: { metadata?: Record<string, unknown> }) {
+    if (!part?.metadata || typeof part.metadata !== "object") return
+    if (!("eval" in part.metadata)) return
+    return parseState(part.metadata.eval)
+  }
+
+  export function pending(msgs: MessageV2.WithParts[]) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i]
+      if (msg.info.role !== "user") continue
+      for (let j = msg.parts.length - 1; j >= 0; j--) {
+        const part = msg.parts[j]
+        if (part.type !== "text" || part.ignored) continue
+        const meta = state(part)
+        if (meta?.phase !== "failed") continue
+        return {
+          message: msg,
+          part,
+          state: meta,
+        }
+      }
+    }
+  }
+
+  export async function resolve(part?: MessageV2.TextPart) {
+    if (!part || part.ignored) return
+    await Session.updatePart({
+      ...part,
+      ignored: true,
+    })
   }
 
   /**
@@ -35,6 +123,7 @@ export namespace Eval {
         if ("synthetic" in part && part.synthetic) continue
         if ("ignored" in part && part.ignored) continue
         if ("eval" in part && part.eval) continue
+        if (state(part)) continue
         const text = part.text.trim()
         if (!text) continue
         count++
@@ -42,15 +131,6 @@ export namespace Eval {
       }
     }
     return { count, single }
-  }
-
-  export type Result = {
-    pass: boolean
-    summary: string
-    issues?: Issue[]
-    attempt: number
-    sessionID: SessionID
-    sessions: SessionID[]
   }
 
   /**
@@ -75,7 +155,6 @@ export namespace Eval {
       return ""
     }
 
-    // Complex case: multiple user messages — run extraction agent
     log.info("running extraction agent", { count })
     const resolved = model ?? (await Provider.defaultModel())
     const mdl = await Provider.getModel(resolved.providerID, resolved.modelID)
@@ -112,20 +191,15 @@ export namespace Eval {
       parts: [{ type: "text", text: prompt }],
     })
 
-    // Get the extract agent's text response
     for (const part of result.parts) {
       if (part.type === "text" && part.text.trim()) {
         return part.text.trim()
       }
     }
 
-    // Fallback to first user message
     return single
   }
 
-  /**
-   * Parse the eval_result tool call from a completed eval session.
-   */
   export function parse(msgs: MessageV2.WithParts[]): { pass: boolean; summary: string; issues?: Issue[] } | undefined {
     for (let i = msgs.length - 1; i >= 0; i--) {
       const msg = msgs[i]
@@ -142,7 +216,6 @@ export namespace Eval {
             issues: (meta as Record<string, unknown>).issues as Issue[] | undefined,
           }
         }
-        // Try parsing from output
         try {
           const parsed = JSON.parse(part.state.output)
           return {
@@ -158,6 +231,23 @@ export namespace Eval {
     return undefined
   }
 
+  export function rebut(parts: MessageV2.Part[]) {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i]
+      if (part.type !== "tool") continue
+      if (part.tool !== REBUT) continue
+      if (part.state.status !== "completed") continue
+      const meta = part.state.metadata
+      if (meta && typeof meta === "object" && typeof meta.content === "string") {
+        return { content: meta.content } satisfies Rebuttal
+      }
+      const input = part.state.input as Record<string, unknown> | undefined
+      if (input && typeof input.content === "string") {
+        return { content: input.content } satisfies Rebuttal
+      }
+    }
+  }
+
   function turn(msgs: MessageV2.WithParts[]) {
     for (let i = msgs.length - 1; i >= 0; i--) {
       const msg = msgs[i]
@@ -165,7 +255,7 @@ export namespace Eval {
       if (
         msg.parts.every((part) => {
           if (part.type === "subtask") return part.command === "eval"
-          if (part.type === "text") return part.eval === true
+          if (part.type === "text") return part.eval === true || !!state(part)
           return false
         })
       )
@@ -198,10 +288,7 @@ export namespace Eval {
         const meta = part.state.metadata
         const input = ("input" in part.state ? part.state.input : undefined) as Record<string, unknown> | undefined
         if (!input) continue
-        if (typeof input.filePath === "string") {
-          files.add(input.filePath)
-        }
-        // multiedit has edits array
+        if (typeof input.filePath === "string") files.add(input.filePath)
         if (Array.isArray(input.edits)) {
           for (const edit of input.edits) {
             if (typeof edit === "object" && edit && typeof (edit as Record<string, unknown>).filePath === "string") {
@@ -210,9 +297,7 @@ export namespace Eval {
           }
         }
         if (meta && typeof meta === "object") {
-          if ("diff" in meta && typeof meta.diff === "string" && meta.diff.trim()) {
-            diffs.push(meta.diff)
-          }
+          if ("diff" in meta && typeof meta.diff === "string" && meta.diff.trim()) diffs.push(meta.diff)
           if (Array.isArray(meta.files)) {
             for (const item of meta.files) {
               if (!item || typeof item !== "object") continue
@@ -233,9 +318,6 @@ export namespace Eval {
     }
   }
 
-  /**
-   * Compose the eval prompt from user instructions and diff/file info.
-   */
   function compose(instruction: string, diff: string, files: string[], hasDiff: boolean): string {
     const parts = ["## Original User Instructions\n", instruction]
 
@@ -265,10 +347,7 @@ export namespace Eval {
     return parts.join("\n")
   }
 
-  /**
-   * Compose feedback from eval issues to send back to the build agent.
-   */
-  function feedback(result: { summary: string; issues?: Issue[] }): string {
+  export function feedback(result: { summary: string; issues?: Issue[] }, rebut = true): string {
     const parts = [
       "An evaluation agent has reviewed your work and found the following issues that need to be fixed:\n",
       `**Summary:** ${result.summary}\n`,
@@ -282,15 +361,51 @@ export namespace Eval {
       }
     }
     parts.push("\nPlease fix these issues and ensure the task is completed correctly.")
+    if (rebut) {
+      parts.push(
+        "If you believe the evaluation is mistaken or if you need to defend a design choice, call the eval_rebuttal tool with a concise rebuttal. Otherwise continue normally and fix the work.",
+      )
+    }
     return parts.join("\n")
   }
 
-  /**
-   * Run the eval-build loop.
-   *
-   * Creates fresh eval sessions to review the build output.
-   * If problems are found, feeds them back to the build session and repeats.
-   */
+  export function followup(result: { summary: string; issues?: Issue[] }, rebuttal: string): string {
+    const parts = [
+      "The build agent submitted a rebuttal to your most recent failed evaluation.",
+      "Review every rebuttal point carefully.",
+      "If the rebuttal is correct, revise your verdict. If it is incorrect, keep the failure and explain the remaining issues.",
+      "Your turn must end by calling eval_result again.",
+      "",
+      "## Previous Evaluation Summary",
+      result.summary,
+    ]
+    if (result.issues?.length) {
+      parts.push("", "## Previous Issues")
+      parts.push(
+        ...result.issues.map(
+          (issue) => `- [${issue.severity}]${issue.file ? ` (${issue.file})` : ""}: ${issue.description}`,
+        ),
+      )
+    }
+    parts.push("", "## Build Rebuttal", rebuttal)
+    return parts.join("\n")
+  }
+
+  async function review(input: {
+    sessionID: SessionID
+    model: { providerID: ProviderID; modelID: ModelID }
+    prompt: string
+  }) {
+    await SessionPrompt.prompt({
+      sessionID: input.sessionID,
+      agent: "eval",
+      model: input.model,
+      parts: [{ type: "text", text: input.prompt }],
+    })
+
+    return parse([...MessageV2.stream(input.sessionID)].reverse())
+  }
+
   export async function run(input: {
     sessionID: SessionID
     instruction: string
@@ -300,6 +415,8 @@ export namespace Eval {
     onResult?: (result: Result) => void
     onEval?: (sessionID: SessionID) => void | Promise<void>
     onBuild?: (sessionID: SessionID) => void | Promise<void>
+    onRebuttal?: (sessionID: SessionID, round: number) => void | Promise<void>
+    onReview?: (sessionID: SessionID, round: number) => void | Promise<void>
   }): Promise<Result> {
     const max = input.max ?? 5
     const rules: Permission.Ruleset = [
@@ -319,6 +436,8 @@ export namespace Eval {
       attempt: 0,
       sessionID: input.sessionID,
       sessions: tracked,
+      round: 0,
+      phase: "failed",
     }
 
     for (let attempt = 1; attempt <= max; attempt++) {
@@ -339,47 +458,81 @@ export namespace Eval {
       tracked.push(evalSession.id)
       await input.onEval?.(evalSession.id)
 
-      const prompt = compose(input.instruction, extra.diff, extra.files, hasDiff || !!extra.diff)
-      await SessionPrompt.prompt({
+      let round = 1
+      let verdict = await review({
         sessionID: evalSession.id,
-        agent: "eval",
         model: resolved,
-        parts: [{ type: "text", text: prompt }],
+        prompt: compose(input.instruction, extra.diff, extra.files, hasDiff || !!extra.diff),
       })
 
-      const evalMsgs = [...MessageV2.stream(evalSession.id)].reverse()
-      const result = parse(evalMsgs)
+      while (true) {
+        last = {
+          pass: verdict?.pass ?? false,
+          summary: verdict?.summary ?? "Eval agent did not call eval_result",
+          issues: verdict?.issues,
+          attempt,
+          sessionID: evalSession.id,
+          sessions: tracked,
+          round,
+          phase: verdict?.pass ? "passed" : "failed",
+          ...(round > 1 ? { rebutted: true } : {}),
+        }
 
-      last = {
-        pass: result?.pass ?? false,
-        summary: result?.summary ?? "Eval agent did not call eval_result",
-        issues: result?.issues,
-        attempt,
-        sessionID: evalSession.id,
-        sessions: tracked,
+        input.onResult?.(last)
+
+        if (last.pass) {
+          log.info("eval passed", { attempt, round })
+          return last
+        }
+
+        if (attempt >= max) {
+          log.info("max eval iterations reached", { attempt, max })
+          return last
+        }
+
+        log.info("eval failed, sending feedback to build", { attempt, round })
+        await input.onBuild?.(input.sessionID)
+        const build = await SessionPrompt.prompt({
+          sessionID: input.sessionID,
+          agent: ctx?.agent,
+          model: ctx?.model ?? resolved,
+          parts: [
+            {
+              type: "text",
+              text: feedback(last, round <= MAX_REBUT),
+              metadata: metadata({
+                sessionId: evalSession.id,
+                mode: "headless",
+                policy: "rerun_on_accept",
+                phase: "failed",
+                round,
+                summary: last.summary,
+                pass: false,
+                rebutted: round > 1,
+              }),
+            },
+          ],
+        })
+
+        const root = await Session.messages({ sessionID: input.sessionID })
+        const active = pending(root)
+        await resolve(active?.part)
+        const note = rebut(
+          root
+            .filter((msg) => msg.info.role === "assistant" && msg.info.parentID === active?.message.info.id)
+            .flatMap((msg) => msg.parts),
+        )
+        if (!note || round > MAX_REBUT) break
+
+        await input.onRebuttal?.(input.sessionID, round)
+        round++
+        await input.onReview?.(evalSession.id, round)
+        verdict = await review({
+          sessionID: evalSession.id,
+          model: resolved,
+          prompt: followup(last, note.content),
+        })
       }
-
-      input.onResult?.(last)
-
-      if (last.pass) {
-        log.info("eval passed", { attempt })
-        return last
-      }
-
-      if (attempt >= max) {
-        log.info("max eval iterations reached", { attempt, max })
-        return last
-      }
-
-      log.info("eval failed, sending feedback to build", { attempt })
-      const fb = feedback(last)
-      await input.onBuild?.(input.sessionID)
-      await SessionPrompt.prompt({
-        sessionID: input.sessionID,
-        agent: ctx?.agent,
-        model: ctx?.model ?? resolved,
-        parts: [{ type: "text", text: fb }],
-      })
     }
 
     return last

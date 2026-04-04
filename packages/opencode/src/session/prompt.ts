@@ -540,6 +540,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           tools[key] = item
         }
 
+        const pending = Eval.pending(input.messages)
+        if (!pending || pending.state.round > Eval.MAX_REBUT) delete tools[Eval.REBUT]
+
         return tools
       })
 
@@ -1532,21 +1535,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               if (task.command === Command.Default.EVAL) {
                 const evalResult = sub?.verdict
                 const passed = evalResult?.pass === true
-                let feedback = "The evaluation agent did not return a valid result. Please review and fix the task."
-                if (evalResult && !passed) {
-                  const lines = [
-                    `An evaluation agent found the following issues:\n`,
-                    `**Summary:** ${evalResult.summary}\n`,
-                  ]
-                  if (evalResult.issues?.length) {
-                    for (const issue of evalResult.issues) {
-                      const loc = issue.file ? ` (${issue.file})` : ""
-                      lines.push(`- [${issue.severity}]${loc}: ${issue.description}`)
-                    }
-                  }
-                  lines.push("\nPlease fix these issues.")
-                  feedback = lines.join("\n")
-                }
+                const summary = evalResult?.summary ?? "The evaluation agent did not return a valid result."
+                const feedback = Eval.feedback(evalResult ?? { summary, issues: undefined }, !!sub?.childID)
                 if (passed) {
                   const mid = MessageID.ascending()
                   yield* sessions.updateMessage({
@@ -1582,6 +1572,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   sessionID,
                   type: "text",
                   text: feedback,
+                  metadata: Eval.metadata({
+                    sessionId: String(sub?.childID ?? sessionID),
+                    mode: "interactive",
+                    policy: "stop_on_accept",
+                    phase: "failed",
+                    round: 1,
+                    summary,
+                    pass: false,
+                  }),
                 } satisfies MessageV2.TextPart)
                 continue
               }
@@ -1754,6 +1753,89 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }),
             )
             if (outcome === "break") break
+            const source = msgs.findLast((msg) => msg.info.role === "user" && msg.info.id === lastUser.id)
+            const active = source?.parts.find(
+              (part): part is MessageV2.TextPart =>
+                part.type === "text" &&
+                !part.ignored &&
+                Eval.state(part)?.mode === "interactive" &&
+                Eval.state(part)?.phase === "failed",
+            )
+            if (active) {
+              const meta = Eval.state(active)!
+              const branch = yield* Effect.promise(() =>
+                Session.messages({ sessionID }).then((all) =>
+                  all
+                    .filter((item) => item.info.role === "assistant" && item.info.parentID === source?.info.id)
+                    .flatMap((item) => item.parts),
+                ),
+              )
+              const note = Eval.rebut(branch)
+              yield* Effect.promise(() => Eval.resolve(active))
+              if (!note) break
+              const child = SessionID.make(meta.sessionId)
+              const verdict = yield* Effect.promise(() =>
+                SessionPrompt.prompt({
+                  sessionID: child,
+                  agent: "eval",
+                  parts: [
+                    {
+                      type: "text",
+                      text: Eval.followup({ summary: meta.summary ?? "", issues: undefined }, note.content),
+                    },
+                  ],
+                }).then(async () => Eval.parse(await Session.messages({ sessionID: child }))),
+              )
+              if (verdict?.pass) {
+                const mid = MessageID.ascending()
+                yield* sessions.updateMessage({
+                  id: mid,
+                  sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: mid,
+                  sessionID,
+                  type: "text",
+                  text: "Eval passed.",
+                  eval: true,
+                } as MessageV2.TextPart)
+                break
+              }
+              const summary = verdict?.summary ?? "The evaluation agent did not return a valid result."
+              const mid = MessageID.ascending()
+              yield* sessions.updateMessage({
+                id: mid,
+                sessionID,
+                role: "user",
+                time: { created: Date.now() },
+                agent: lastUser.agent,
+                model: lastUser.model,
+              })
+              const round = meta.round + 1
+              yield* sessions.updatePart({
+                id: PartID.ascending(),
+                messageID: mid,
+                sessionID,
+                type: "text",
+                text: Eval.feedback(verdict ?? { summary, issues: undefined }, round <= Eval.MAX_REBUT),
+                metadata: Eval.metadata({
+                  sessionId: meta.sessionId,
+                  mode: "interactive",
+                  policy: "stop_on_accept",
+                  phase: "failed",
+                  round,
+                  summary,
+                  pass: false,
+                  rebutted: true,
+                }),
+              } satisfies MessageV2.TextPart)
+              continue
+            }
             // eval_result: stop immediately so the eval agent doesn't waste a follow-up turn
             const evalDone =
               handle.message.finish === "tool-calls" &&

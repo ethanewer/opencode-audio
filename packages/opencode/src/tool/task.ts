@@ -161,7 +161,14 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         metadata: {
           sessionId: session.id,
           model,
-          ...(verdict && { eval: verdict }),
+          ...(verdict && {
+            eval: {
+              ...verdict,
+              sessionId: session.id,
+              round: 1,
+              phase: verdict.pass ? "passed" : "failed",
+            },
+          }),
         },
         output,
       }

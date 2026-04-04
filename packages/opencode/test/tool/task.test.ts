@@ -137,7 +137,13 @@ describe("tool.task", () => {
           )
 
           expect(result.metadata.sessionId).toBeString()
-          expect(result.metadata.eval).toEqual({ pass: true, summary: "ok" })
+          expect(result.metadata.eval).toEqual({
+            pass: true,
+            summary: "ok",
+            sessionId: result.metadata.sessionId,
+            round: 1,
+            phase: "passed",
+          })
         } finally {
           prompt.mockRestore()
         }

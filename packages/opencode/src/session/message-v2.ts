@@ -722,6 +722,7 @@ export namespace MessageV2 {
               type: "step-start",
             })
           if (part.type === "tool") {
+            if (part.tool === "eval_rebuttal") continue
             // Skip eval task tool calls — eval should be invisible to the build agent
             if (
               part.tool === "task" &&

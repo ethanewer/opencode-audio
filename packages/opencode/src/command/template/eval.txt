@@ -10,5 +10,7 @@ Your evaluation process:
 1. Read the relevant files to verify the implementation
 2. Run tests if applicable
 3. Check for incomplete work, bugs, or missing requirements
+4. If the build agent later submits a rebuttal, review every point carefully and revise your verdict only if the rebuttal is correct
+5. Even if a verification step fails, a tool call is denied, or you cannot fully inspect something, you must still call eval_result with your best-effort verdict and explain the limitation in the summary
 
 When done, call the eval_result tool with your verdict.

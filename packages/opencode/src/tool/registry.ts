@@ -30,7 +30,7 @@ import { ApplyPatchTool } from "./apply_patch"
 import { TranscribeTool } from "./transcribe"
 import { ReadAudioTool } from "./read_audio"
 import { SpeakTool } from "./speak"
-import { EvalTool } from "./eval"
+import { EvalRebuttalTool, EvalTool } from "./eval"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 import { Effect, Layer, ServiceMap } from "effect"
@@ -139,6 +139,7 @@ export namespace ToolRegistry {
           ReadAudioTool,
           SpeakTool,
           EvalTool,
+          EvalRebuttalTool,
           ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...(cfg.experimental?.batch_tool === true ? [BatchTool] : []),
           ...(Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
@@ -175,6 +176,10 @@ export namespace ToolRegistry {
 
           if (tool.id === "eval_result") {
             return agent?.name === "eval"
+          }
+
+          if (tool.id === "eval_rebuttal") {
+            return agent?.name !== "eval"
           }
 
           if (tool.id === "codesearch" || tool.id === "websearch") {

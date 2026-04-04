@@ -62,6 +62,19 @@ describe("transcript", () => {
       expect(result).toBe("Hello world\n\n")
     })
 
+    test("formats eval feedback text distinctly", () => {
+      const part: Part = {
+        id: "part_1",
+        sessionID: "ses_123",
+        messageID: "msg_123",
+        type: "text",
+        text: "Evaluator found an issue",
+        metadata: { eval: { phase: "failed" } },
+      } as Part
+      const result = formatPart(part, options)
+      expect(result).toBe("**Evaluator:**\n\nEvaluator found an issue\n\n")
+    })
+
     test("skips synthetic text parts", () => {
       const part: Part = {
         id: "part_1",
@@ -149,6 +162,27 @@ describe("transcript", () => {
       // Input and output should each be in their own code blocks
       expect(result).toContain("**Input:**\n```json")
       expect(result).toContain("**Output:**\n```\n```hello```\n```")
+    })
+
+    test("formats eval rebuttal tool distinctly", () => {
+      const part: Part = {
+        id: "part_1",
+        sessionID: "ses_123",
+        messageID: "msg_123",
+        type: "tool",
+        callID: "call_1",
+        tool: "eval_rebuttal",
+        state: {
+          status: "completed",
+          input: { content: "the evaluator missed the existing behavior" },
+          output: "the evaluator missed the existing behavior",
+          title: "Evaluation Rebuttal",
+          metadata: { content: "the evaluator missed the existing behavior" },
+          time: { start: 1000, end: 1100 },
+        },
+      }
+      const result = formatPart(part, options)
+      expect(result).toBe("**Build Rebuttal:**\n\nthe evaluator missed the existing behavior\n\n")
     })
 
     test("formats tool part without details when disabled", () => {
