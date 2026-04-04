@@ -349,23 +349,36 @@ export namespace Eval {
 
   export function feedback(result: { summary: string; issues?: Issue[] }, rebut = true): string {
     const parts = [
-      "An evaluation agent has reviewed your work and found the following issues that need to be fixed:\n",
-      `**Summary:** ${result.summary}\n`,
+      "I reviewed the latest work and still have concerns that need to be addressed.",
+      "",
+      `Summary: ${result.summary}`,
     ]
     if (result.issues?.length) {
-      parts.push("**Issues:**\n")
+      parts.push("", "Issues:")
       for (const issue of result.issues) {
         const prefix = issue.severity === "error" ? "ERROR" : "WARNING"
         const loc = issue.file ? ` (${issue.file})` : ""
         parts.push(`- [${prefix}]${loc}: ${issue.description}`)
       }
     }
-    parts.push("\nPlease fix these issues and ensure the task is completed correctly.")
+    parts.push("", "Please address every issue above before continuing.")
+    if (!rebut) parts.push("Do not leave any issue unresolved.")
+    return parts.join("\n")
+  }
+
+  export function reminder(rebut = true) {
+    const parts = [
+      "<system-reminder>",
+      "The latest user message contains evaluator concerns that you must resolve directly.",
+      "You must either fix every issue raised or use the eval_rebuttal tool to rebut each issue you are not going to fix.",
+      "Do not simply agree with the evaluation. Do the work needed to resolve every issue, or rebut the issue with specific evidence.",
+    ]
     if (rebut) {
-      parts.push(
-        "If you believe the evaluation is mistaken or if you need to defend a design choice, call the eval_rebuttal tool with a concise rebuttal. Otherwise continue normally and fix the work.",
-      )
+      parts.push("If any issue will remain unfixed, you must call eval_rebuttal before ending your turn.")
+    } else {
+      parts.push("At this stage, you must fix every remaining issue before ending your turn.")
     }
+    parts.push("</system-reminder>")
     return parts.join("\n")
   }
 

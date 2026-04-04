@@ -83,6 +83,18 @@ function init() {
         }
       }
     },
+    triggerSlash(name: string) {
+      const slash = name.startsWith("/") ? name.slice(1) : name
+      for (const option of entries()) {
+        if (!isEnabled(option)) continue
+        if (!option.slash) continue
+        if (option.slash.name === slash || option.slash.aliases?.includes(slash)) {
+          option.onSelect?.(dialog)
+          return true
+        }
+      }
+      return false
+    },
     slashes() {
       return visibleOptions().flatMap((option) => {
         const slash = option.slash

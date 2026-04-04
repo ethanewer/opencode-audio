@@ -9,6 +9,7 @@ import { iife } from "@/util/iife"
 import { createSimpleContext } from "./helper"
 import { useToast } from "../ui/toast"
 import { Provider } from "@/provider/provider"
+import { Permission } from "@/permission"
 import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
@@ -268,6 +269,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       // Auto mode state
       const [autoPhase, setAutoPhase] = createSignal<"idle" | "plan" | "build">("idle")
       const [autoIter, setAutoIter] = createSignal(0)
+      const [autoSync, setAutoSync] = createSignal<string>()
       const AUTO_MAX = 5
 
       // Ensure the current agent is valid for the current system
@@ -298,16 +300,19 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         current() {
           return agents().find((x) => x.name === agentStore.current) ?? agents()[0]
         },
-        /** Returns the agent name to send to the backend — resolves voice agent mapping */
-        resolved() {
-          const cur = this.current()
-          if (!cur) return "build"
-          if (cur.name === "auto") {
+        resolve(name: string) {
+          if (name === "auto") {
             const phase = autoPhase()
             const base = phase === "build" ? "build" : "plan"
             return resolveVoice(base)
           }
-          return resolveVoice(cur.name)
+          return resolveVoice(name)
+        },
+        /** Returns the agent name to send to the backend — resolves voice agent mapping */
+        resolved() {
+          const cur = this.current()
+          if (!cur) return "build"
+          return this.resolve(cur.name)
         },
         set(name: string) {
           if (!agents().some((x) => x.name === name))
@@ -351,6 +356,23 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           iter: autoIter,
           setIter: setAutoIter,
           MAX: AUTO_MAX,
+          rules(phase: "idle" | "plan" | "build" = autoPhase()) {
+            const rules: Permission.Ruleset = [
+              { permission: "question", action: "deny", pattern: "*" },
+              { permission: "plan_enter", action: "deny", pattern: "*" },
+              { permission: "plan_exit", action: "deny", pattern: "*" },
+            ]
+            return rules
+          },
+          arm(id: string) {
+            setAutoSync(id)
+          },
+          claim(id: string, base: string) {
+            const sync = autoSync()
+            if (sync !== id) return false
+            setAutoSync(undefined)
+            return ["plan", "build"].includes(base)
+          },
           start() {
             batch(() => {
               setAutoPhase("plan")
@@ -361,6 +383,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             batch(() => {
               setAutoPhase("idle")
               setAutoIter(0)
+              setAutoSync(undefined)
             })
           },
         },
