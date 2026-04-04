@@ -620,11 +620,13 @@ export const RunCommand = cmd({
             if (event.type === "permission.asked") {
               const permission = event.properties
               if (!active.has(permission.sessionID)) continue
-              UI.println(
-                UI.Style.TEXT_WARNING_BOLD + "!",
-                UI.Style.TEXT_NORMAL +
-                  `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
-              )
+              if (!emit("permission_rejected", { permission: permission.permission, patterns: permission.patterns })) {
+                UI.println(
+                  UI.Style.TEXT_WARNING_BOLD + "!",
+                  UI.Style.TEXT_NORMAL +
+                    `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
+                )
+              }
               await sdk.permission.reply({
                 requestID: permission.id,
                 reply: "reject",
@@ -773,8 +775,10 @@ export const RunCommand = cmd({
           const maxIter = args.evalIterations ?? 5
           const model = args.model ? Provider.parseModel(args.model) : undefined
 
-          UI.empty()
-          UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Running eval...")
+          if (!emit("eval_start", { max: maxIter })) {
+            UI.empty()
+            UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Running eval...")
+          }
 
           const result = await Eval.run({
             sessionID: SessionID.make(sessionID),
@@ -783,21 +787,29 @@ export const RunCommand = cmd({
             max: maxIter,
             onEval(sid) {
               listen(sid)
+              emit("eval_session", { evalSessionID: sid })
             },
             onBuild() {
               listen(sessionID)
             },
-            onRebuttal() {
-              UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Build rebuttal submitted")
+            onRebuttal(_sid, round) {
+              if (!emit("eval_rebuttal", { round })) {
+                UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Build rebuttal submitted")
+              }
             },
-            onReview() {
-              UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Evaluator reconsidering rebuttal")
+            onReview(_sid, round) {
+              if (!emit("eval_review", { round })) {
+                UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Evaluator reconsidering rebuttal")
+              }
             },
             onAttempt(attempt, max) {
-              UI.empty()
-              UI.println(UI.Style.TEXT_INFO_BOLD + `~  ` + UI.Style.TEXT_NORMAL + `Eval attempt ${attempt}/${max}`)
+              if (!emit("eval_attempt", { attempt, max })) {
+                UI.empty()
+                UI.println(UI.Style.TEXT_INFO_BOLD + `~  ` + UI.Style.TEXT_NORMAL + `Eval attempt ${attempt}/${max}`)
+              }
             },
             onResult(result) {
+              if (emit("eval_result", { pass: result.pass, summary: result.summary, issues: result.issues, attempt: result.attempt, round: result.round })) return
               if (result.pass) {
                 UI.println(UI.Style.TEXT_INFO_BOLD + "✓  " + UI.Style.TEXT_NORMAL + "Eval passed: " + result.summary)
               } else {
@@ -814,15 +826,19 @@ export const RunCommand = cmd({
             },
           })
 
+          emit("eval_complete", { pass: result.pass, summary: result.summary, issues: result.issues, attempt: result.attempt, round: result.round, phase: result.phase })
+
           if (!result.pass) {
             code = 1
-            UI.empty()
-            UI.println(
-              UI.Style.TEXT_WARNING_BOLD +
-                "!  " +
-                UI.Style.TEXT_NORMAL +
-                `Eval did not pass after ${result.attempt} attempt(s)`,
-            )
+            if (!emit("eval_failed", { attempt: result.attempt })) {
+              UI.empty()
+              UI.println(
+                UI.Style.TEXT_WARNING_BOLD +
+                  "!  " +
+                  UI.Style.TEXT_NORMAL +
+                  `Eval did not pass after ${result.attempt} attempt(s)`,
+              )
+            }
           }
         }
 
