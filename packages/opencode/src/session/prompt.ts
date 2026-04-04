@@ -1469,8 +1469,87 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             if (task?.type === "subtask") {
               yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
-              // /eval subtask: don't give the build agent another turn
-              if (task.command === Command.Default.EVAL) break
+              // /eval subtask: check result and feed failures back to the build agent
+              if (task.command === Command.Default.EVAL) {
+                // Read the eval result from the child session using the public API
+                // (the internal sessions.messages() has a DB parts issue in TUI context)
+                let passed = true
+                let feedback = ""
+                const evalResult = yield* Effect.promise(async () => {
+                  // Find the eval child session from the task tool part metadata
+                  const latest = [...MessageV2.stream(sessionID)].find(
+                    (m) =>
+                      m.info.role === "assistant" &&
+                      m.parts.some((p) => p.type === "tool" && p.tool === "task" && p.state.status === "completed"),
+                  )
+                  if (!latest) return undefined
+                  const taskPart = latest.parts.find(
+                    (p) => p.type === "tool" && p.tool === "task" && p.state.status === "completed",
+                  )
+                  if (!taskPart || taskPart.type !== "tool") return undefined
+                  const meta = "metadata" in taskPart.state ? taskPart.state.metadata : undefined
+                  const childId =
+                    meta && typeof meta === "object" && "sessionId" in meta ? String(meta.sessionId) : undefined
+                  if (!childId) return undefined
+                  // Read child session messages via public API
+                  const childMsgs = await Session.messages({ sessionID: childId as any })
+                  for (const m of childMsgs) {
+                    for (const p of m.parts) {
+                      if (p.type !== "tool" || p.tool !== "eval_result") continue
+                      if (p.state.status !== "completed") continue
+                      const rm = "metadata" in p.state ? p.state.metadata : undefined
+                      if (rm && typeof rm === "object" && "pass" in rm) {
+                        return {
+                          pass: Boolean(rm.pass),
+                          summary: String((rm as Record<string, unknown>).summary ?? ""),
+                          issues: (rm as Record<string, unknown>).issues as
+                            | { file?: string; description: string; severity: string }[]
+                            | undefined,
+                        }
+                      }
+                    }
+                  }
+                  return undefined
+                })
+                if (evalResult) {
+                  passed = evalResult.pass
+                  if (!passed) {
+                    const lines = [
+                      `An evaluation agent found the following issues:\n`,
+                      `**Summary:** ${evalResult.summary}\n`,
+                    ]
+                    if (evalResult.issues?.length) {
+                      for (const issue of evalResult.issues) {
+                        const loc = issue.file ? ` (${issue.file})` : ""
+                        lines.push(`- [${issue.severity}]${loc}: ${issue.description}`)
+                      }
+                    }
+                    lines.push("\nPlease fix these issues.")
+                    feedback = lines.join("\n")
+                  }
+                }
+                // If eval passed, stop — don't give build agent another turn
+                if (passed) break
+                // If eval failed, send feedback to the build agent
+                const mid = MessageID.ascending()
+                yield* sessions.updateMessage({
+                  id: mid,
+                  sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: mid,
+                  sessionID,
+                  type: "text",
+                  text: feedback || "The evaluation agent found issues. Please review and fix them.",
+                } satisfies MessageV2.TextPart)
+                // Continue the loop so the build agent processes the feedback
+                continue
+              }
               continue
             }
 
@@ -1684,21 +1763,100 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
           throw error
         }
-        // /eval: extract the user instruction from session messages
+        // /eval: extract the user instruction from session history
         if (input.command === Command.Default.EVAL) {
-          const msgs = yield* sessions.messages({ sessionID: input.sessionID })
-          const parts: string[] = []
-          for (const msg of msgs) {
-            if (msg.info.role !== "user") continue
-            for (const part of msg.parts) {
-              if (part.type !== "text") continue
-              if ("synthetic" in part && part.synthetic) continue
-              if ("ignored" in part && part.ignored) continue
-              const text = part.text.trim()
-              if (text) parts.push(text)
+          const allMsgs = yield* sessions.messages({ sessionID: input.sessionID })
+          // Count non-synthetic user text parts
+          let count = 0
+          let single = ""
+          for (const m of allMsgs) {
+            if (m.info.role !== "user") continue
+            for (const p of m.parts) {
+              if (p.type !== "text") continue
+              if ("synthetic" in p && p.synthetic) continue
+              if ("ignored" in p && p.ignored) continue
+              const t = p.text.trim()
+              if (!t) continue
+              count++
+              if (count === 1) single = t
             }
           }
-          const instruction = parts.join("\n\n") || "No user instruction found"
+
+          let instruction: string
+          if (count <= 1) {
+            instruction = single || "No user instruction found"
+          } else {
+            // Show a placeholder message while extracting
+            const ctx = yield* InstanceState.context
+            const placeholderModel = input.model ? Provider.parseModel(input.model) : yield* lastModel(input.sessionID)
+            const placeholderMsg: MessageV2.Assistant = {
+              id: MessageID.ascending(),
+              sessionID: input.sessionID,
+              role: "assistant",
+              parentID: MessageID.make(""),
+              agent: "eval",
+              mode: "eval",
+              modelID: ModelID.make(placeholderModel.modelID),
+              providerID: ProviderID.make(placeholderModel.providerID),
+              path: { cwd: ctx.directory, root: ctx.worktree },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              time: { created: Date.now() },
+            }
+            yield* sessions.updateMessage(placeholderMsg)
+            const placeholderPart: MessageV2.ToolPart = {
+              id: PartID.ascending(),
+              messageID: placeholderMsg.id,
+              sessionID: input.sessionID,
+              type: "tool",
+              callID: "eval-extract",
+              tool: "task",
+              state: {
+                status: "running",
+                input: {
+                  description: cmd.description ?? "evaluate the current session's work for correctness",
+                },
+                time: { start: Date.now() },
+              },
+            }
+            yield* sessions.updatePart(placeholderPart)
+
+            // Run extraction LLM call
+            const mdl = yield* Effect.promise(async () => {
+              const resolved = input.model ? Provider.parseModel(input.model) : await Provider.defaultModel()
+              return Provider.getModel(resolved.providerID, resolved.modelID)
+            })
+            const history = yield* Effect.promise(() => MessageV2.toModelMessages(allMsgs, mdl, { stripMedia: true }))
+            const extract = yield* agents.get("extract")
+            if (extract) {
+              const firstUser = allMsgs.find((m) => m.info.role === "user")?.info as MessageV2.User
+              const ac = new AbortController()
+              instruction = yield* Effect.promise(async () => {
+                const result = await LLM.stream({
+                  agent: extract,
+                  user: firstUser,
+                  system: extract.prompt ? [extract.prompt] : [],
+                  small: true,
+                  tools: {},
+                  model: mdl,
+                  abort: ac.signal,
+                  sessionID: input.sessionID,
+                  retries: 1,
+                  messages: [
+                    ...history,
+                    { role: "user" as const, content: "Extract the user's instructions from the conversation above." },
+                  ],
+                })
+                return result.text ?? single
+              })
+            } else {
+              instruction = single
+            }
+
+            // Remove the placeholder message
+            yield* sessions.removeMessage({ sessionID: input.sessionID, messageID: placeholderMsg.id })
+          }
+
           const extra = input.arguments.trim()
           input = {
             ...input,
