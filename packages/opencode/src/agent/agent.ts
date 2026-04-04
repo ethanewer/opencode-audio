@@ -12,6 +12,8 @@ import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
+import PROMPT_EVAL from "./prompt/eval.txt"
+import PROMPT_EXTRACT from "./prompt/extract.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
@@ -271,6 +273,32 @@ export namespace Agent {
                 user,
               ),
               prompt: PROMPT_SUMMARY,
+            },
+            eval: {
+              name: "eval",
+              description: "Evaluation agent. Reviews build output for correctness and completeness.",
+              options: {},
+              permission: Permission.merge(defaults, user),
+              prompt: PROMPT_EVAL,
+              mode: "primary",
+              native: true,
+              hidden: true,
+            },
+            extract: {
+              name: "extract",
+              description: "Instruction extraction agent. Summarizes user intent from conversation history.",
+              options: {},
+              permission: Permission.merge(
+                defaults,
+                Permission.fromConfig({
+                  "*": "deny",
+                }),
+                user,
+              ),
+              prompt: PROMPT_EXTRACT,
+              mode: "primary",
+              native: true,
+              hidden: true,
             },
           }
 

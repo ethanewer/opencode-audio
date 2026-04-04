@@ -10,6 +10,7 @@ import { Skill } from "../skill"
 import { Log } from "../util/log"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
+import PROMPT_EVAL from "./template/eval.txt"
 
 export namespace Command {
   const log = Log.create({ service: "command" })
@@ -63,6 +64,7 @@ export namespace Command {
   export const Default = {
     INIT: "init",
     REVIEW: "review",
+    EVAL: "eval",
   } as const
 
   export interface Interface {
@@ -101,6 +103,15 @@ export namespace Command {
           },
           subtask: true,
           hints: hints(PROMPT_REVIEW),
+        }
+        commands[Default.EVAL] = {
+          name: Default.EVAL,
+          description: "evaluate the current session's work for correctness",
+          source: "command",
+          template: PROMPT_EVAL,
+          agent: "eval",
+          subtask: true,
+          hints: hints(PROMPT_EVAL),
         }
 
         for (const [name, command] of Object.entries(cfg.command ?? {})) {

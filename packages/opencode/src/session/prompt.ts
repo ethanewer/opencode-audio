@@ -28,6 +28,7 @@ import { FileTime } from "../file/time"
 import { ulid } from "ulid"
 import { spawn } from "child_process"
 import { Command } from "../command"
+import { Eval } from "./eval"
 import { pathToFileURL, fileURLToPath } from "url"
 import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
@@ -550,7 +551,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         session: Session.Info
         msgs: MessageV2.WithParts[]
       }) {
-        const { task, model, lastUser, sessionID, session, msgs } = input
+        let { task, model, lastUser, sessionID, session, msgs } = input
         const ctx = yield* InstanceState.context
         const taskTool = yield* Effect.promise(() => TaskTool.init())
         const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID) : model
@@ -602,6 +603,49 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const error = new NamedError.Unknown({ message: `Agent not found: "${task.agent}".${hint}` })
           yield* bus.publish(Session.Event.Error, { sessionID, error: error.toObject() })
           throw error
+        }
+
+        // /eval: deferred instruction extraction — runs after the subtask UI is visible
+        if (task.command === Command.Default.EVAL && task.prompt.includes("__EVAL_EXTRACT__")) {
+          const { count, single } = Eval.instruction(msgs)
+          let extracted: string
+          if (count <= 1) {
+            extracted = single || "No user instruction found"
+          } else {
+            const mdl = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
+            const history = yield* Effect.promise(() => MessageV2.toModelMessages(msgs, mdl, { stripMedia: true }))
+            const agent = yield* agents.get("extract")
+            if (agent) {
+              const ac = new AbortController()
+              extracted = yield* Effect.promise(async () => {
+                const result = await LLM.stream({
+                  agent,
+                  user: lastUser,
+                  system: agent.prompt ? [agent.prompt] : [],
+                  small: true,
+                  tools: {},
+                  model: mdl,
+                  abort: ac.signal,
+                  sessionID,
+                  retries: 1,
+                  messages: [
+                    ...history,
+                    { role: "user" as const, content: "Extract the user's instructions from the conversation above." },
+                  ],
+                })
+                return result.text ?? single
+              })
+            } else {
+              extracted = single
+            }
+          }
+          // Replace the marker with the extracted instruction
+          const extra = task.prompt.replace("__EVAL_EXTRACT__", "").trim()
+          const resolved = extra
+            ? `## User Instruction\n\n${extracted}\n\n## Additional Context\n\n${extra}`
+            : `## User Instruction\n\n${extracted}`
+          task = { ...task, prompt: task.prompt.replace(/__EVAL_EXTRACT__[^\n]*/, resolved) }
+          taskArgs.prompt = task.prompt
         }
 
         let error: Error | undefined
@@ -711,7 +755,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           } satisfies MessageV2.ToolPart)
         }
 
-        if (!task.command) return
+        if (!task.command || task.command === Command.Default.EVAL) return
 
         const summaryUserMsg: MessageV2.User = {
           id: MessageID.ascending(),
@@ -1353,8 +1397,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               if (!lastAssistant && msg.info.role === "assistant") lastAssistant = msg.info
               if (!lastFinished && msg.info.role === "assistant" && msg.info.finish) lastFinished = msg.info
               if (lastUser && lastFinished) break
-              const task = msg.parts.filter((part) => part.type === "compaction" || part.type === "subtask")
-              if (task && !lastFinished) tasks.push(...task)
+              const task = msg.parts.filter(
+                (part): part is MessageV2.CompactionPart | MessageV2.SubtaskPart =>
+                  part.type === "compaction" || part.type === "subtask",
+              )
+              // Skip eval subtasks from older messages — they've already been processed
+              if (task.length && !lastFinished) {
+                for (const t of task) {
+                  if (t.type === "subtask" && t.command === Command.Default.EVAL && msg.info.id !== lastUser?.id)
+                    continue
+                  tasks.push(t)
+                }
+              }
             }
 
             if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
@@ -1459,6 +1513,88 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             if (task?.type === "subtask") {
               yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+              // /eval subtask: check result and feed failures back to the build agent
+              if (task.command === Command.Default.EVAL) {
+                // Use the public Session.messages() API which creates its own Effect runtime.
+                // The Effect-internal sessions.messages() returns 0 parts for child sessions
+                // when called from within the prompt loop's Effect context.
+                const evalResult = yield* Effect.promise(async () => {
+                  const latest = [...MessageV2.stream(sessionID)].find(
+                    (m) =>
+                      m.info.role === "assistant" &&
+                      m.parts.some((p) => p.type === "tool" && p.tool === "task" && p.state.status === "completed"),
+                  )
+                  if (!latest) return undefined
+                  const taskPart = latest.parts.find(
+                    (p) => p.type === "tool" && p.tool === "task" && p.state.status === "completed",
+                  )
+                  if (!taskPart || taskPart.type !== "tool") return undefined
+                  const meta = "metadata" in taskPart.state ? taskPart.state.metadata : undefined
+                  const childId =
+                    meta && typeof meta === "object" && "sessionId" in meta ? String(meta.sessionId) : undefined
+                  if (!childId) return undefined
+                  const childMsgs = await Session.messages({ sessionID: SessionID.make(childId) })
+                  return Eval.parse(childMsgs)
+                })
+                // Three states: pass (confirmed), fail (confirmed), unknown (no result found)
+                const passed = evalResult?.pass ?? true
+                let feedback = ""
+                if (evalResult && !passed) {
+                  const lines = [
+                    `An evaluation agent found the following issues:\n`,
+                    `**Summary:** ${evalResult.summary}\n`,
+                  ]
+                  if (evalResult.issues?.length) {
+                    for (const issue of evalResult.issues) {
+                      const loc = issue.file ? ` (${issue.file})` : ""
+                      lines.push(`- [${issue.severity}]${loc}: ${issue.description}`)
+                    }
+                  }
+                  lines.push("\nPlease fix these issues.")
+                  feedback = lines.join("\n")
+                }
+                // If eval passed or result unknown, show status and stop
+                if (passed) {
+                  const text = evalResult ? "Eval passed." : "Eval completed."
+                  const mid = MessageID.ascending()
+                  yield* sessions.updateMessage({
+                    id: mid,
+                    sessionID,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: lastUser.agent,
+                    model: lastUser.model,
+                  })
+                  yield* sessions.updatePart({
+                    id: PartID.ascending(),
+                    messageID: mid,
+                    sessionID,
+                    type: "text",
+                    text,
+                    eval: true,
+                  } as MessageV2.TextPart)
+                  break
+                }
+                // If eval failed, send feedback to the build agent
+                const mid = MessageID.ascending()
+                yield* sessions.updateMessage({
+                  id: mid,
+                  sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: mid,
+                  sessionID,
+                  type: "text",
+                  text: feedback || "The evaluation agent found issues. Please review and fix them.",
+                } satisfies MessageV2.TextPart)
+                // Continue the loop so the build agent processes the feedback
+                continue
+              }
               continue
             }
 
@@ -1628,6 +1764,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }),
             )
             if (outcome === "break") break
+            // eval_result: stop immediately so the eval agent doesn't waste a follow-up turn
+            const evalDone =
+              handle.message.finish === "tool-calls" &&
+              MessageV2.stream(sessionID)
+                .next()
+                .value?.parts.some(
+                  (p) => p.type === "tool" && p.tool === "eval_result" && p.state.status === "completed",
+                )
+            if (evalDone) break
             continue
           }
 
@@ -1662,6 +1807,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
           throw error
         }
+        // /eval: mark for deferred extraction (happens inside handleSubtask)
+        if (input.command === Command.Default.EVAL) {
+          // Pass a marker in arguments — extraction happens after the subtask UI is visible
+          input = {
+            ...input,
+            arguments: "__EVAL_EXTRACT__" + (input.arguments.trim() ? "\n" + input.arguments.trim() : ""),
+          }
+        }
+
         const agentName = cmd.agent ?? input.agent ?? (yield* agents.defaultAgent())
 
         const raw = input.arguments.match(argsRegex) ?? []
