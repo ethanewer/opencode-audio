@@ -66,7 +66,7 @@ async function call(
     updated: [] as { sessionID: string; permission: { permission: string; action: string; pattern: string }[] }[],
   }
   const sessionID = "ses_test"
-  const activeID = input.session ?? (opts?.baseID && !input.fork ? opts.baseID : sessionID)
+  const activeID = (input.session as string) ?? (opts?.baseID && !input.fork ? opts.baseID : sessionID)
   const sdk = {
     config: {
       get: async () => ({ data: { share: "manual" } }),
