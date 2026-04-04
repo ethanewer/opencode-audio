@@ -13,15 +13,27 @@ import { tmpdir } from "../fixture/fixture"
 const original = Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE
 const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
 
-function stream(sessionID: string) {
+class ExitErr extends Error {
+  constructor(readonly code: number | undefined) {
+    super(`exit ${code ?? 0}`)
+  }
+}
+
+function idle(sessionID: string) {
+  return {
+    type: "session.status",
+    properties: {
+      sessionID,
+      status: { type: "idle" },
+    },
+  }
+}
+
+function stream(events: unknown[]) {
   return {
     async *[Symbol.asyncIterator]() {
-      yield {
-        type: "session.status",
-        properties: {
-          sessionID,
-          status: { type: "idle" },
-        },
+      for (const event of events) {
+        yield event
       }
     },
   }
@@ -56,7 +68,11 @@ function args(input: Partial<Record<string, unknown>> = {}) {
 
 async function call(
   input: Partial<Record<string, unknown>> = {},
-  opts?: { baseID?: string; eval?: { pass: boolean; summary: string; attempt: number } },
+  opts?: {
+    baseID?: string
+    eval?: { pass: boolean; summary: string; attempt: number }
+    events?: unknown[]
+  },
 ) {
   const seen = {
     agent: undefined as string | undefined,
@@ -64,6 +80,9 @@ async function call(
     rules: [] as { permission: string; action: string; pattern: string }[],
     text: undefined as string | undefined,
     updated: [] as { sessionID: string; permission: { permission: string; action: string; pattern: string }[] }[],
+    exit: undefined as number | undefined,
+    questions: [] as { requestID: string; answers: string[][] }[],
+    signal: undefined as AbortSignal | undefined,
   }
   const sessionID = "ses_test"
   const activeID = (input.session as string) ?? (opts?.baseID && !input.fork ? opts.baseID : sessionID)
@@ -72,7 +91,10 @@ async function call(
       get: async () => ({ data: { share: "manual" } }),
     },
     event: {
-      subscribe: async () => ({ stream: stream(activeID) }),
+      subscribe: async (_input?: unknown, init?: { signal?: AbortSignal }) => {
+        seen.signal = init?.signal
+        return { stream: stream(opts?.events ?? [idle(activeID)]) }
+      },
     },
     session: {
       list: async () => ({ data: opts?.baseID ? [{ id: opts.baseID, parentID: undefined }] : [] }),
@@ -91,6 +113,12 @@ async function call(
     },
     permission: {
       reply: async () => ({ data: undefined }),
+    },
+    question: {
+      reply: async (input: { requestID: string; answers: string[][] }) => {
+        seen.questions.push(input)
+        return { data: undefined }
+      },
     },
   }
 
@@ -117,9 +145,17 @@ async function call(
       seen.updated.push({ sessionID: input.sessionID, permission: input.permission })
     }, SessionModule.Session.setPermission),
   )
+  spyOn(process, "exit").mockImplementation(((code?: number) => {
+    throw new ExitErr(code)
+  }) as typeof process.exit)
 
   const { RunCommand } = await import("../../src/cli/cmd/run")
-  await RunCommand.handler(args(input) as never)
+  try {
+    await RunCommand.handler(args(input) as never)
+  } catch (err) {
+    if (err instanceof ExitErr) seen.exit = err.code
+    else throw err
+  }
   return seen
 }
 
@@ -217,8 +253,44 @@ describe("cli.run", () => {
   })
 
   test("sets a non-zero exit code when eval fails", async () => {
-    await call({ eval: true }, { eval: { pass: false, summary: "broken", attempt: 2 } })
+    const seen = await call({ eval: true }, { eval: { pass: false, summary: "broken", attempt: 2 } })
 
-    expect(process.exitCode).toBe(1)
+    expect(seen.exit).toBe(1)
+  })
+
+  test("auto-answers headless questions before waiting for idle", async () => {
+    // @ts-expect-error tests overwrite static flag values
+    Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = false
+
+    const seen = await call(
+      {},
+      {
+        events: [
+          {
+            type: "question.asked",
+            properties: {
+              id: "req_1",
+              sessionID: "ses_test",
+              questions: [{ header: "Need confirmation" }],
+            },
+          },
+          idle("ses_test"),
+        ],
+      },
+    )
+
+    expect(seen.questions).toEqual([
+      {
+        requestID: "req_1",
+        answers: [["Yes"]],
+      },
+    ])
+  })
+
+  test("aborts the event subscription when the run finishes", async () => {
+    const seen = await call()
+
+    expect(seen.exit).toBe(0)
+    expect(seen.signal?.aborted).toBe(true)
   })
 })

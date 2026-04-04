@@ -500,11 +500,13 @@ export const RunCommand = cmd({
         return false
       }
 
-      const events = await sdk.event.subscribe()
+      const ctrl = new AbortController()
+      const events = await sdk.event.subscribe({}, { signal: ctrl.signal })
       let error: string | undefined
+      let code = 0
 
       const active = new Set<string>()
-      const waiters = new Map<string, { resolve: () => void; auto: boolean; promise: Promise<void> }>()
+      const waiters = new Map<string, { resolve: () => void; promise: Promise<void> }>()
 
       let proc: Promise<void> | undefined
 
@@ -632,9 +634,8 @@ export const RunCommand = cmd({
             if (event.type === "question.asked") {
               const question = event.properties
               if (!active.has(question.sessionID)) continue
-              const waiter = waiters.get(question.sessionID)
-              if (!waiter?.auto) continue
-              if (question.questions[0]?.header !== "Build Agent") continue
+              // The run command is headless, so questions must be answered here
+              // or the session never returns to idle.
               await sdk.question.reply({
                 requestID: question.id,
                 answers: [["Yes"]],
@@ -642,12 +643,13 @@ export const RunCommand = cmd({
             }
           }
         })().catch((e) => {
+          if (ctrl.signal.aborted) return
           console.error(e)
           process.exit(1)
         })
       }
 
-      function listen(sessionID: string, auto: boolean): Promise<void> {
+      function listen(sessionID: string): Promise<void> {
         const prev = waiters.get(sessionID)
         if (prev) return prev.promise
         active.add(sessionID)
@@ -656,7 +658,7 @@ export const RunCommand = cmd({
         const promise = new Promise<void>((done) => {
           resolve = done
         })
-        waiters.set(sessionID, { resolve, auto, promise })
+        waiters.set(sessionID, { resolve, promise })
         return promise
       }
 
@@ -735,96 +737,108 @@ export const RunCommand = cmd({
         process.exit(1)
       }
       await share(sdk, sessionID)
-      const auto = Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(validated ?? "")
 
       // Start listening for the build session
-      const idle = listen(sessionID, auto)
+      const idle = listen(sessionID)
 
-      if (args.command) {
-        await sdk.session.command({
-          sessionID,
-          agent: validated,
-          model: args.model,
-          command: args.command,
-          arguments: message,
-          variant: args.variant,
-        })
-      } else {
-        const model = args.model ? Provider.parseModel(args.model) : undefined
-        await sdk.session.prompt({
-          sessionID,
-          agent: validated,
-          model,
-          variant: args.variant,
-          parts: [...files, { type: "text", text: message }],
-        })
-      }
+      try {
+        if (args.command) {
+          await sdk.session.command({
+            sessionID,
+            agent: validated,
+            model: args.model,
+            command: args.command,
+            arguments: message,
+            variant: args.variant,
+          })
+        } else {
+          const model = args.model ? Provider.parseModel(args.model) : undefined
+          await sdk.session.prompt({
+            sessionID,
+            agent: validated,
+            model,
+            variant: args.variant,
+            parts: [...files, { type: "text", text: message }],
+          })
+        }
 
-      // Wait for build to finish
-      await idle
+        // Wait for build to finish
+        await idle
 
-      // Run eval if enabled
-      // Eval is on by default when implicit plan mode is active and no --agent was specified.
-      // It can be explicitly enabled/disabled with --eval.
-      const doEval = args.eval ?? (implicit && !args.agent)
-      if (doEval && !error && !args.attach) {
-        const maxIter = args.evalIterations ?? 5
-        const model = args.model ? Provider.parseModel(args.model) : undefined
+        // Run eval if enabled
+        // Eval is on by default when implicit plan mode is active and no --agent was specified.
+        // It can be explicitly enabled/disabled with --eval.
+        const doEval = args.eval ?? (implicit && !args.agent)
+        if (doEval && !error && !args.attach) {
+          const maxIter = args.evalIterations ?? 5
+          const model = args.model ? Provider.parseModel(args.model) : undefined
 
-        UI.empty()
-        UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Running eval...")
+          UI.empty()
+          UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Running eval...")
 
-        const result = await Eval.run({
-          sessionID: SessionID.make(sessionID),
-          instruction: await Eval.extract(SessionID.make(sessionID), model),
-          model,
-          max: maxIter,
-          onEval(sid) {
-            listen(sid, false)
-          },
-          onBuild() {
-            listen(sessionID, auto)
-          },
-          onRebuttal() {
-            UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Build rebuttal submitted")
-          },
-          onReview() {
-            UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Evaluator reconsidering rebuttal")
-          },
-          onAttempt(attempt, max) {
-            UI.empty()
-            UI.println(UI.Style.TEXT_INFO_BOLD + `~  ` + UI.Style.TEXT_NORMAL + `Eval attempt ${attempt}/${max}`)
-          },
-          onResult(result) {
-            if (result.pass) {
-              UI.println(UI.Style.TEXT_INFO_BOLD + "✓  " + UI.Style.TEXT_NORMAL + "Eval passed: " + result.summary)
-            } else {
-              UI.println(
-                UI.Style.TEXT_WARNING_BOLD + "✗  " + UI.Style.TEXT_NORMAL + "Eval found issues: " + result.summary,
-              )
-              if (result.issues?.length) {
-                for (const issue of result.issues) {
-                  const loc = issue.file ? ` (${issue.file})` : ""
-                  UI.println(UI.Style.TEXT_DIM + `   [${issue.severity}]${loc}: ${issue.description}`)
+          const result = await Eval.run({
+            sessionID: SessionID.make(sessionID),
+            instruction: await Eval.extract(SessionID.make(sessionID), model),
+            model,
+            max: maxIter,
+            onEval(sid) {
+              listen(sid)
+            },
+            onBuild() {
+              listen(sessionID)
+            },
+            onRebuttal() {
+              UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Build rebuttal submitted")
+            },
+            onReview() {
+              UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Evaluator reconsidering rebuttal")
+            },
+            onAttempt(attempt, max) {
+              UI.empty()
+              UI.println(UI.Style.TEXT_INFO_BOLD + `~  ` + UI.Style.TEXT_NORMAL + `Eval attempt ${attempt}/${max}`)
+            },
+            onResult(result) {
+              if (result.pass) {
+                UI.println(UI.Style.TEXT_INFO_BOLD + "✓  " + UI.Style.TEXT_NORMAL + "Eval passed: " + result.summary)
+              } else {
+                UI.println(
+                  UI.Style.TEXT_WARNING_BOLD + "✗  " + UI.Style.TEXT_NORMAL + "Eval found issues: " + result.summary,
+                )
+                if (result.issues?.length) {
+                  for (const issue of result.issues) {
+                    const loc = issue.file ? ` (${issue.file})` : ""
+                    UI.println(UI.Style.TEXT_DIM + `   [${issue.severity}]${loc}: ${issue.description}`)
+                  }
                 }
               }
-            }
-          },
-        })
+            },
+          })
 
-        if (!result.pass) {
-          process.exitCode = 1
-          UI.empty()
-          UI.println(
-            UI.Style.TEXT_WARNING_BOLD +
-              "!  " +
-              UI.Style.TEXT_NORMAL +
-              `Eval did not pass after ${result.attempt} attempt(s)`,
-          )
+          if (!result.pass) {
+            code = 1
+            UI.empty()
+            UI.println(
+              UI.Style.TEXT_WARNING_BOLD +
+                "!  " +
+                UI.Style.TEXT_NORMAL +
+                `Eval did not pass after ${result.attempt} attempt(s)`,
+            )
+          }
         }
+
+        if (error) code = 1
+      } finally {
+        ctrl.abort()
+        active.clear()
+        for (const waiter of waiters.values()) waiter.resolve()
+        waiters.clear()
+        if (proc) await proc
       }
 
-      if (error) process.exitCode = 1
+      // bootstrap() always disposes the local instance in a finally block.
+      // The headless run command is done once the active sessions are idle, and
+      // returning here can hang in Instance.dispose(). Exit immediately instead.
+      process.exit(code)
     }
 
     if (args.attach) {
