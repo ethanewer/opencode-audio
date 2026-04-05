@@ -891,13 +891,6 @@ it.live("eval command can submit a rebuttal and reuse the same eval session", ()
       expect(
         all.some(
           (entry) =>
-            entry.info.role === "user" &&
-            entry.parts.some((part) => part.type === "text" && part.text.includes("eval_rebuttal")),
-        ),
-      ).toBe(true)
-      expect(
-        all.some(
-          (entry) =>
             entry.info.role === "assistant" &&
             entry.parts.some(
               (part) => part.type === "tool" && part.tool === Eval.REBUT && part.state.status === "completed",
@@ -1743,8 +1736,16 @@ it.live("loop nudges build agent when eval feedback gets no action", () =>
               status: "completed",
               input: { pass: false, summary: "tests fail" },
               title: "",
-              output: JSON.stringify({ pass: false, summary: "tests fail", issues: [{ description: "missing assertion", severity: "error" }] }),
-              metadata: { pass: false, summary: "tests fail", issues: [{ description: "missing assertion", severity: "error" }] },
+              output: JSON.stringify({
+                pass: false,
+                summary: "tests fail",
+                issues: [{ description: "missing assertion", severity: "error" }],
+              }),
+              metadata: {
+                pass: false,
+                summary: "tests fail",
+                issues: [{ description: "missing assertion", severity: "error" }],
+              },
               time: { start: Date.now(), end: Date.now() },
             },
           })

@@ -14,7 +14,6 @@ import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_EVAL from "./prompt/eval.txt"
 import PROMPT_EXTRACT from "./prompt/extract.txt"
-import PROMPT_BUILD from "./prompt/build.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
@@ -110,7 +109,6 @@ export namespace Agent {
             build: {
               name: "build",
               description: "The default agent. Executes tools based on configured permissions.",
-              prompt: PROMPT_BUILD,
               options: {},
               permission: Permission.merge(
                 defaults,
@@ -168,7 +166,6 @@ export namespace Agent {
             "voice-build": {
               name: "voice-build",
               description: "Voice build agent. Same as build but responses are optimized for text-to-speech output.",
-              prompt: PROMPT_BUILD,
               options: {},
               permission: Permission.merge(
                 defaults,
