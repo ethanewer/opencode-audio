@@ -1248,7 +1248,7 @@ export function Prompt(props: PromptProps) {
         <Show when={deferred().length > 0}>
           <box border={["top"]} borderColor={theme.warning} paddingLeft={2} paddingRight={2} flexDirection="column">
             <text fg={theme.warning}>
-              <span style={{ fg: theme.warning, bold: true }}>DEFERRED</span>{" "}
+              <span style={{ fg: theme.warning, bold: true }}>QUEUED (append)</span>{" "}
               <span style={{ fg: theme.textMuted }}>{deferred().length}</span>
             </text>
             <For each={deferred().slice(0, 5)}>
@@ -1675,7 +1675,7 @@ export function Prompt(props: PromptProps) {
                 <text fg={theme.warning}>
                   append{" "}
                   <span style={{ fg: theme.textMuted }}>
-                    {deferred().length > 0 ? `${deferred().length} deferred` : "on"}
+                    {deferred().length > 0 ? `${deferred().length} queued` : "on"}
                   </span>
                 </text>
               </Show>

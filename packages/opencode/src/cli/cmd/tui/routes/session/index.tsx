@@ -397,7 +397,7 @@ export function Session() {
     const sessionID = item.sessionID ?? route.sessionID
     if (!sessionID) return
     setSending(true)
-    let ok = false
+    setDeferred((list) => list.filter((x) => x.id !== item.id))
     try {
       // Use current agent and model at dispatch time, not defer time
       const currentAgent = local.agent.current()?.name ?? "build"
@@ -409,29 +409,20 @@ export function Session() {
         draft: {
           ...item,
           agent: currentAgent,
-          ...(currentModel
-            ? { model: { providerID: currentModel.providerID, modelID: currentModel.modelID } }
-            : {}),
+          ...(currentModel ? { model: { providerID: currentModel.providerID, modelID: currentModel.modelID } } : {}),
           variant: currentVariant,
           sessionID,
         },
       })
-      ok = true
-      setDeferred((list) => list.filter((x) => x.id !== item.id))
-      toast.show({
-        message: "Deferred message sent",
-        variant: "success",
-        duration: 2000,
-      })
     } catch (err) {
+      setDeferred((list) => [...list, item])
+      setSending(false)
       toast.show({
         variant: "error",
-        title: "Failed to send deferred message",
+        title: "Failed to send queued message",
         message: err instanceof Error ? err.message : "Unknown error",
         duration: 5000,
       })
-    } finally {
-      if (!ok) setSending(false)
     }
   }
 
@@ -651,11 +642,6 @@ export function Session() {
               variant: local.model.variant.current(),
             },
           ])
-          toast.show({
-            message: `Message deferred (${deferred().length} pending)`,
-            variant: "success",
-            duration: 2000,
-          })
           return
         }
         sdk.client.session.command({
@@ -675,15 +661,7 @@ export function Session() {
       },
       onSelect: (dialog) => {
         dialog.clear()
-        const next = !appendMode()
-        setAppendMode(next)
-        toast.show({
-          message: next
-            ? "Append mode enabled - messages deferred until agent finishes"
-            : "Append mode disabled - messages sent immediately",
-          variant: "success",
-          duration: 3000,
-        })
+        setAppendMode(!appendMode())
       },
     },
     {
@@ -1466,11 +1444,6 @@ export function Session() {
                 shouldDefer={shouldDefer}
                 onDefer={(draft) => {
                   setDeferred((list) => [...list, draft])
-                  toast.show({
-                    message: `Message deferred (${deferred().length} pending)`,
-                    variant: "success",
-                    duration: 2000,
-                  })
                 }}
                 deferred={deferred}
                 appendMode={appendMode}

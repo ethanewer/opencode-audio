@@ -332,43 +332,6 @@ describe("agent and model override at dispatch time", () => {
   })
 })
 
-// ── Toast message accuracy ────────────────────────────────────────
-
-describe("deferred toast count", () => {
-  test("toast shows correct count after adding to queue", () => {
-    // Simulate Solid.js signal: setDeferred adds item, then deferred() reflects new length
-    let queue: DeferredDraft[] = []
-
-    // Add first item
-    queue = [
-      ...queue,
-      { id: "1", input: "a", parts: [], type: "normal", model: { providerID: "t", modelID: "m" }, agent: "build" },
-    ]
-    // After setDeferred, queue.length already includes new item
-    const toastMessage1 = `Message deferred (${queue.length} pending)`
-    expect(toastMessage1).toBe("Message deferred (1 pending)")
-
-    // Add second item
-    queue = [
-      ...queue,
-      { id: "2", input: "b", parts: [], type: "normal", model: { providerID: "t", modelID: "m" }, agent: "build" },
-    ]
-    const toastMessage2 = `Message deferred (${queue.length} pending)`
-    expect(toastMessage2).toBe("Message deferred (2 pending)")
-  })
-
-  test("old off-by-one toast would show wrong count", () => {
-    let queue: DeferredDraft[] = []
-    queue = [
-      ...queue,
-      { id: "1", input: "a", parts: [], type: "normal", model: { providerID: "t", modelID: "m" }, agent: "build" },
-    ]
-    // The old code used queue.length + 1 which is wrong after setDeferred
-    const wrongToast = `Message deferred (${queue.length + 1} pending)`
-    expect(wrongToast).toBe("Message deferred (2 pending)") // Wrong! Should be 1
-  })
-})
-
 // ── Dispatch effect conditions ────────────────────────────────────
 
 describe("dispatch effect conditions", () => {
