@@ -29,6 +29,7 @@ import { ulid } from "ulid"
 import { spawn } from "child_process"
 import { Command } from "../command"
 import { Eval } from "./eval"
+import { Todo } from "./todo"
 import { pathToFileURL, fileURLToPath } from "url"
 import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
@@ -72,6 +73,18 @@ function isBuild(name: string) {
 
 function buildFromPlan(name: string) {
   return name === "voice-plan" ? "voice-build" : "build"
+}
+
+const ACTION_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "bash", "eval_rebuttal"])
+const MAX_TODO_NUDGES = 3
+const MAX_EVAL_NUDGES = 2
+
+function incompleteTodos(sessionID: SessionID) {
+  const todos = Todo.get(sessionID)
+  if (!todos.length) return undefined
+  const incomplete = todos.filter((t) => t.status === "pending" || t.status === "in_progress")
+  if (!incomplete.length) return undefined
+  return { todos, incomplete }
 }
 
 export namespace SessionPrompt {
@@ -1424,6 +1437,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           let structured: unknown | undefined
           let step = 0
           let nudged = false
+          let todoNudges = 0
+          let evalNudges = 0
           let remind = false
           const session = yield* sessions.get(sessionID)
 
@@ -1549,6 +1564,41 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     remind = true
                     continue
                   }
+                }
+              }
+
+              // Todo nudge: if the build agent has incomplete todos, nudge it to continue.
+              if (todoNudges < MAX_TODO_NUDGES && isBuild(lastUser.agent)) {
+                const result = yield* Effect.sync(() => incompleteTodos(sessionID))
+                if (result) {
+                  todoNudges++
+                  const list = result.todos.map((t, i) => `${i}. [${t.status}] ${t.content}`).join("\n")
+                  const mid = MessageID.ascending()
+                  yield* sessions.updateMessage({
+                    id: mid,
+                    sessionID,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: lastUser.agent,
+                    model: lastUser.model,
+                  } satisfies MessageV2.User)
+                  yield* sessions.updatePart({
+                    id: PartID.ascending(),
+                    messageID: mid,
+                    sessionID,
+                    type: "text",
+                    text: [
+                      "<system-reminder>",
+                      "Your previous turn ended but your todo list still has incomplete items.",
+                      "",
+                      list,
+                      "",
+                      "Continue working through the remaining pending and in_progress items. Mark each todo as completed or cancelled as you finish.",
+                      "</system-reminder>",
+                    ].join("\n"),
+                    synthetic: true,
+                  } satisfies MessageV2.TextPart)
+                  continue
                 }
               }
 
@@ -1855,6 +1905,42 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 ),
               )
               const note = Eval.rebut(branch)
+              // Eval action nudge: if agent responded without side-effect tools or rebuttal, nudge it
+              if (!note && evalNudges < MAX_EVAL_NUDGES) {
+                const acted = branch.some(
+                  (part) =>
+                    part.type === "tool" && part.state.status === "completed" && ACTION_TOOLS.has(part.tool),
+                )
+                if (!acted) {
+                  evalNudges++
+                  const mid = MessageID.ascending()
+                  yield* sessions.updateMessage({
+                    id: mid,
+                    sessionID,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: lastUser.agent,
+                    model: lastUser.model,
+                  } satisfies MessageV2.User)
+                  yield* sessions.updatePart({
+                    id: PartID.ascending(),
+                    messageID: mid,
+                    sessionID,
+                    type: "text",
+                    text: [
+                      "<system-reminder>",
+                      "You acknowledged the evaluation feedback but did not make any changes or submit a rebuttal.",
+                      "You must either:",
+                      "1. Fix the issues by editing files and running verification commands",
+                      "2. Call eval_rebuttal if you disagree with the findings",
+                      "Do not simply state your intentions. Take action now.",
+                      "</system-reminder>",
+                    ].join("\n"),
+                    synthetic: true,
+                  } satisfies MessageV2.TextPart)
+                  continue
+                }
+              }
               yield* Effect.promise(() => Eval.resolve(active))
               if (!note) break
               const child = SessionID.make(meta.sessionId)

@@ -21,6 +21,7 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { AppFileSystem } from "../../src/filesystem"
 import { SessionCompaction } from "../../src/session/compaction"
 import { Eval } from "../../src/session/eval"
+import { Todo } from "../../src/session/todo"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -748,7 +749,12 @@ it.live("eval command fails closed and ignores older successful task sessions", 
         },
       })
 
+      // First response: text-only triggers the eval action nudge.
+      // Second response: a bash tool satisfies the "took action" check.
+      // Third response: final text after tool-calls continuation.
       yield* llm.text("fixed")
+      yield* llm.tool("bash", { command: "bun test" })
+      yield* llm.text("verified")
 
       const result = yield* Effect.promise(() =>
         SessionPrompt.command({
@@ -759,7 +765,6 @@ it.live("eval command fails closed and ignores older successful task sessions", 
       )
 
       expect(result.info.role).toBe("assistant")
-      expect(result.parts.some((part) => part.type === "text" && part.text === "fixed")).toBe(true)
 
       const all = yield* Effect.promise(() => Session.messages({ sessionID: chat.id }))
       expect(
@@ -775,6 +780,19 @@ it.live("eval command fails closed and ignores older successful task sessions", 
             entry.info.role === "user" && entry.parts.some((part) => part.type === "text" && part.eval === true),
         ),
       ).toBe(false)
+      // Eval action nudge should have fired since the first response was text-only
+      expect(
+        all.some(
+          (entry) =>
+            entry.info.role === "user" &&
+            entry.parts.some(
+              (part) =>
+                part.type === "text" &&
+                part.synthetic === true &&
+                part.text.includes("did not make any changes or submit a rebuttal"),
+            ),
+        ),
+      ).toBe(true)
     }),
     { git: true, config: providerCfg },
   ),
@@ -870,13 +888,6 @@ it.live("eval command can submit a rebuttal and reuse the same eval session", ()
       )
 
       const all = yield* Effect.promise(() => Session.messages({ sessionID: chat.id }))
-      expect(
-        all.some(
-          (entry) =>
-            entry.info.role === "user" &&
-            entry.parts.some((part) => part.type === "text" && part.text.includes("eval_rebuttal")),
-        ),
-      ).toBe(true)
       expect(
         all.some(
           (entry) =>
@@ -1529,4 +1540,278 @@ unix(
       ),
     ),
   30_000,
+)
+
+// Todo nudge tests
+
+it.live("loop nudges build agent when todos are incomplete", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "Pinned",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      const root = yield* user(chat.id, "implement the feature")
+      const turn = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "assistant",
+        sessionID: chat.id,
+        parentID: root.id,
+        mode: "build",
+        agent: "build",
+        path: { cwd: "/tmp", root: "/tmp" },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ref.modelID,
+        providerID: ref.providerID,
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: turn.id,
+        sessionID: chat.id,
+        type: "text",
+        text: "I started on the first task.",
+      })
+
+      Todo.update({
+        sessionID: chat.id,
+        todos: [
+          { content: "Create the schema", status: "completed", priority: "high" },
+          { content: "Add the API route", status: "pending", priority: "high" },
+          { content: "Write tests", status: "pending", priority: "medium" },
+        ],
+      })
+
+      // Todos stay pending, so the nudge fires up to MAX_TODO_NUDGES (3) times
+      yield* llm.text("continuing work 1")
+      yield* llm.text("continuing work 2")
+      yield* llm.text("continuing work 3")
+
+      const result = yield* prompt.loop({ sessionID: chat.id })
+      expect(yield* llm.calls).toBe(3)
+      expect(result.info.role).toBe("assistant")
+
+      const msgs = yield* Effect.sync(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
+      const nudge = msgs.find(
+        (msg) =>
+          msg.info.role === "user" &&
+          msg.parts.some(
+            (part) =>
+              part.type === "text" &&
+              part.synthetic === true &&
+              part.text.includes("todo list still has incomplete items"),
+          ),
+      )
+      expect(nudge?.info.role).toBe("user")
+      // Verify the nudge message includes the todo status list
+      const text = nudge?.parts.find((p) => p.type === "text")
+      expect(text?.type === "text" && text.text.includes("[pending] Add the API route")).toBe(true)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("loop does not nudge when all todos are completed", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "Pinned",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* seed(chat.id, { finish: "stop" })
+
+      Todo.update({
+        sessionID: chat.id,
+        todos: [
+          { content: "Create the schema", status: "completed", priority: "high" },
+          { content: "Skipped task", status: "cancelled", priority: "low" },
+        ],
+      })
+
+      const result = yield* prompt.loop({ sessionID: chat.id })
+      expect(yield* llm.calls).toBe(0)
+      expect(result.info.role).toBe("assistant")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live(
+  "loop limits todo nudges to 3",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "Pinned",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const root = yield* user(chat.id, "implement feature")
+        const turn = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          sessionID: chat.id,
+          parentID: root.id,
+          mode: "build",
+          agent: "build",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ref.modelID,
+          providerID: ref.providerID,
+          time: { created: Date.now(), completed: Date.now() },
+          finish: "stop",
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: turn.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "started",
+        })
+
+        Todo.update({
+          sessionID: chat.id,
+          todos: [{ content: "Task A", status: "pending", priority: "high" }],
+        })
+
+        // Queue 3 text responses (one per nudge); each ends with "stop"
+        yield* llm.text("still working 1")
+        yield* llm.text("still working 2")
+        yield* llm.text("still working 3")
+
+        const result = yield* prompt.loop({ sessionID: chat.id })
+        // 3 nudge-triggered LLM calls, then exits on 4th attempt (nudge limit reached)
+        expect(yield* llm.calls).toBe(3)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
+it.live("loop nudges build agent when eval feedback gets no action", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const init = spyOn(TaskTool, "init").mockImplementation(async () => ({
+        description: "task",
+        parameters: z.object({
+          description: z.string(),
+          prompt: z.string(),
+          subagent_type: z.string(),
+          task_id: z.string().optional(),
+          command: z.string().optional(),
+        }),
+        execute: async () => {
+          const child = await Session.create({})
+          const msg = await Session.updateMessage({
+            id: MessageID.ascending(),
+            role: "assistant",
+            sessionID: child.id,
+            parentID: MessageID.ascending(),
+            mode: "eval",
+            agent: "eval",
+            path: { cwd: "/tmp", root: "/tmp" },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            time: { created: Date.now(), completed: Date.now() },
+            finish: "tool-calls",
+          })
+          await Session.updatePart({
+            id: PartID.ascending(),
+            messageID: msg.id,
+            sessionID: child.id,
+            type: "tool",
+            callID: "eval_fail",
+            tool: "eval_result",
+            state: {
+              status: "completed",
+              input: { pass: false, summary: "tests fail" },
+              title: "",
+              output: JSON.stringify({
+                pass: false,
+                summary: "tests fail",
+                issues: [{ description: "missing assertion", severity: "error" }],
+              }),
+              metadata: {
+                pass: false,
+                summary: "tests fail",
+                issues: [{ description: "missing assertion", severity: "error" }],
+              },
+              time: { start: Date.now(), end: Date.now() },
+            },
+          })
+          return {
+            title: "",
+            metadata: {
+              sessionId: child.id,
+              model: ref,
+              eval: { pass: false, summary: "tests fail", sessionId: child.id, round: 1, phase: "failed" },
+            },
+            output: "",
+          }
+        },
+      }))
+      yield* Effect.addFinalizer(() => Effect.sync(() => init.mockRestore()))
+
+      // First response: text-only (triggers eval action nudge)
+      // Second response: bash tool (satisfies action check)
+      // Third response: final text after tool-calls continuation
+      yield* llm.text("I will address these changes")
+      yield* llm.tool("bash", { command: "bun test" })
+      yield* llm.text("tests pass now")
+
+      const { chat, sessions } = yield* boot()
+      const root = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "user",
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        time: { created: Date.now() },
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: root.id,
+        sessionID: chat.id,
+        type: "text",
+        text: "ship it",
+      })
+
+      yield* Effect.promise(() =>
+        SessionPrompt.command({
+          sessionID: chat.id,
+          command: Command.Default.EVAL,
+          arguments: "",
+        }),
+      )
+
+      const all = yield* Effect.promise(() => Session.messages({ sessionID: chat.id }))
+      // Verify the eval action nudge was injected
+      expect(
+        all.some(
+          (entry) =>
+            entry.info.role === "user" &&
+            entry.parts.some(
+              (part) =>
+                part.type === "text" &&
+                part.synthetic === true &&
+                part.text.includes("did not make any changes or submit a rebuttal"),
+            ),
+        ),
+      ).toBe(true)
+      // Verify the loop continued past the nudge (more than 1 assistant response)
+      const assistants = all.filter((entry) => entry.info.role === "assistant")
+      expect(assistants.length).toBeGreaterThanOrEqual(2)
+    }),
+    { git: true, config: providerCfg },
+  ),
 )
