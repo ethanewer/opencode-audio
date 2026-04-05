@@ -39,7 +39,7 @@ export namespace SessionRevert {
       const bus = yield* Bus.Service
 
       const revert = Effect.fn("SessionRevert.revert")(function* (input: RevertInput) {
-        yield* Effect.promise(() => SessionPrompt.assertNotBusy(input.sessionID))
+        yield* Effect.promise(() => SessionPrompt.cancel(input.sessionID))
         const all = yield* sessions.messages({ sessionID: input.sessionID })
         let lastUser: MessageV2.User | undefined
         const session = yield* sessions.get(input.sessionID)
@@ -91,7 +91,7 @@ export namespace SessionRevert {
 
       const unrevert = Effect.fn("SessionRevert.unrevert")(function* (input: { sessionID: SessionID }) {
         log.info("unreverting", input)
-        yield* Effect.promise(() => SessionPrompt.assertNotBusy(input.sessionID))
+        yield* Effect.promise(() => SessionPrompt.cancel(input.sessionID))
         const session = yield* sessions.get(input.sessionID)
         if (!session.revert) return session
         if (session.revert.snapshot) yield* snap.restore(session.revert!.snapshot!)

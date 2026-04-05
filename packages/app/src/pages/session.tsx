@@ -1526,9 +1526,6 @@ export default function Page() {
     setFollowup("edit", id, undefined)
   }
 
-  const halt = (sessionID: string) =>
-    busy(sessionID) ? sdk.client.session.abort({ sessionID }).catch(() => {}) : Promise.resolve()
-
   const revertMutation = useMutation(() => ({
     mutationFn: async (input: { sessionID: string; messageID: string }) => {
       const prev = prompt.current().slice()
@@ -1538,8 +1535,8 @@ export default function Page() {
         roll(input.sessionID, { messageID: input.messageID })
         prompt.set(value)
       })
-      await halt(input.sessionID)
-        .then(() => sdk.client.session.revert(input))
+      await sdk.client.session
+        .revert(input)
         .then((result) => {
           if (result.data) merge(result.data)
         })
@@ -1572,13 +1569,11 @@ export default function Page() {
       })
 
       const task = !next
-        ? halt(sessionID).then(() => sdk.client.session.unrevert({ sessionID }))
-        : halt(sessionID).then(() =>
-            sdk.client.session.revert({
-              sessionID,
-              messageID: next.id,
-            }),
-          )
+        ? sdk.client.session.unrevert({ sessionID })
+        : sdk.client.session.revert({
+            sessionID,
+            messageID: next.id,
+          })
 
       await task
         .then((result) => {
