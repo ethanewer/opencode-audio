@@ -82,7 +82,7 @@ export namespace Permission {
 
   export class RejectedError extends Schema.TaggedErrorClass<RejectedError>()("PermissionRejectedError", {}) {
     override get message() {
-      return "The user rejected permission to use this specific tool call."
+      return "Permission to use this tool call was denied. Try an alternative approach that does not require this permission, or proceed without it."
     }
   }
 

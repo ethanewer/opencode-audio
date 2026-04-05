@@ -225,11 +225,12 @@ export function Session() {
   const [appendMode, setAppendMode] = createSignal(false)
   const [deferred, setDeferred] = createSignal<DeferredDraft[]>([])
   const [sending, setSending] = createSignal(false)
-  const [handled, setHandled] = createSignal<string>()
   const [saved, setSaved] = createSignal<string>()
   let seen: string | undefined
   const shouldDefer = createMemo(() => {
     if (!appendMode()) return false
+    if (sending()) return true
+    if (deferred().length > 0) return true
     if (local.agent.auto.phase() !== "idle") return true
     return status().type !== "idle"
   })
@@ -297,26 +298,27 @@ export function Session() {
   })
 
   // Auto-handle permission and question prompts in auto mode so the loop never blocks.
+  // Use separate tracking sets so a permission and question arriving in the same
+  // reactive cycle are both handled without the early return blocking the second.
+  const handledSet = new Set<string>()
   createEffect(() => {
     if (!auto()) return
     const permission = permissions()[0]
-    if (permission) {
-      if (handled() === permission.id) return
-      setHandled(permission.id)
+    if (permission && !handledSet.has(permission.id)) {
+      handledSet.add(permission.id)
       sdk.client.permission.reply({
         requestID: permission.id,
         reply: "reject",
       })
-      return
     }
 
     const q = questions()[0]
-    if (!q) return
-    if (handled() === q.id) return
-    setHandled(q.id)
-    sdk.client.question.reject({
-      requestID: q.id,
-    })
+    if (q && !handledSet.has(q.id)) {
+      handledSet.add(q.id)
+      sdk.client.question.reject({
+        requestID: q.id,
+      })
+    }
   })
 
   // Trigger eval when build goes idle in auto mode, and handle eval iterations
@@ -346,6 +348,7 @@ export function Session() {
       })
       if (passed || iter >= local.agent.auto.MAX) {
         local.agent.auto.reset()
+        setAppendMode(false)
         return
       }
     }
@@ -361,13 +364,14 @@ export function Session() {
     })
   })
 
-  // Reset auto mode on interruption
+  // Reset auto mode on interruption or error so the user isn't stuck in a
+  // non-functional auto state after provider errors, rate limits, etc.
   sdk.event.on("message.updated", (evt) => {
     if (evt.properties.info.sessionID !== route.sessionID) return
     if (evt.properties.info.role !== "assistant") return
     if (!auto()) return
     if (local.agent.auto.phase() === "idle") return
-    if (evt.properties.info.error?.name === "MessageAbortedError") {
+    if (evt.properties.info.error) {
       local.agent.auto.reset()
     }
   })
@@ -383,8 +387,8 @@ export function Session() {
         local.agent.auto.reset()
         setDeferred([])
         setSending(false)
-        setHandled(undefined)
         setSaved(undefined)
+        handledSet.clear()
       },
     ),
   )
@@ -395,11 +399,20 @@ export function Session() {
     setSending(true)
     let ok = false
     try {
+      // Use current agent and model at dispatch time, not defer time
+      const currentAgent = local.agent.current()?.name ?? "build"
+      const currentModel = local.model.current()
+      const currentVariant = local.model.variant.current()
       await dispatchDraft({
         sdk,
         local,
         draft: {
           ...item,
+          agent: currentAgent,
+          ...(currentModel
+            ? { model: { providerID: currentModel.providerID, modelID: currentModel.modelID } }
+            : {}),
+          variant: currentVariant,
           sessionID,
         },
       })
@@ -635,10 +648,11 @@ export function Session() {
               args: "",
               model: { providerID: model.providerID, modelID: model.modelID },
               agent: local.agent.current()?.name ?? "build",
+              variant: local.model.variant.current(),
             },
           ])
           toast.show({
-            message: `Message deferred (${deferred().length + 1} pending)`,
+            message: `Message deferred (${deferred().length} pending)`,
             variant: "success",
             duration: 2000,
           })
@@ -1453,7 +1467,7 @@ export function Session() {
                 onDefer={(draft) => {
                   setDeferred((list) => [...list, draft])
                   toast.show({
-                    message: `Message deferred (${deferred().length + 1} pending)`,
+                    message: `Message deferred (${deferred().length} pending)`,
                     variant: "success",
                     duration: 2000,
                   })

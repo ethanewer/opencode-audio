@@ -6,11 +6,13 @@ __EVAL_INSTRUCTION__
 
 __EVAL_CONTEXT__
 
-Your evaluation process:
-1. Read the relevant files to verify the implementation
-2. Run tests if applicable
-3. Check for incomplete work, bugs, or missing requirements
-4. If the build agent later submits a rebuttal, review every point carefully and revise your verdict only if the rebuttal is correct
-5. Even if a verification step fails, a tool call is denied, or you cannot fully inspect something, you must still call eval_result with your best-effort verdict and explain the limitation in the summary
+## Evaluation process
 
-When done, call the eval_result tool with your verdict.
+1. Read the relevant files to verify the implementation matches the user's instructions
+2. Run tests if applicable — failing tests are a clear failure
+3. Check for incomplete work: TODOs, placeholder code, missing imports, broken references
+4. Look for bugs, logic errors, or missing edge cases in the changed code
+5. If a verification step fails or a tool call is denied, continue with available evidence
+6. Call eval_result with your verdict — you must call it exactly once
+
+If a build agent later submits a rebuttal, review each point against the evidence and revise your verdict only where the rebuttal is correct.

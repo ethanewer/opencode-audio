@@ -636,11 +636,10 @@ export const RunCommand = cmd({
             if (event.type === "question.asked") {
               const question = event.properties
               if (!active.has(question.sessionID)) continue
-              // The run command is headless, so questions must be answered here
-              // or the session never returns to idle.
-              await sdk.question.reply({
+              // The run command is headless — reject questions so the agent
+              // proceeds without user interaction, consistent with TUI auto mode.
+              await sdk.question.reject({
                 requestID: question.id,
-                answers: [["Yes"]],
               })
             }
           }

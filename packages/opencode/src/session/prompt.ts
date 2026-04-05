@@ -407,7 +407,7 @@ ${phase5}
 
 ${important}
 
-NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
+${autonomous ? "" : "NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins."}
 </system-reminder>`,
           synthetic: true,
         })
@@ -650,39 +650,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
 
         if (task.command === Command.Default.EVAL && task.prompt.includes("__EVAL_INSTRUCTION__")) {
-          const { count, single } = Eval.instruction(msgs)
-          let extracted: string
-          if (count <= 1) {
-            extracted = single || "No user instruction found"
-          } else {
-            const mdl = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
-            const history = yield* Effect.promise(() => MessageV2.toModelMessages(msgs, mdl, { stripMedia: true }))
-            const agent = yield* agents.get("extract")
-            if (agent) {
-              const ac = new AbortController()
-              extracted = yield* Effect.promise(async () => {
-                const result = await LLM.stream({
-                  agent,
-                  user: lastUser,
-                  system: agent.prompt ? [agent.prompt] : [],
-                  small: true,
-                  tools: {},
-                  model: mdl,
-                  abort: ac.signal,
-                  sessionID,
-                  retries: 1,
-                  messages: [
-                    ...history,
-                    { role: "user" as const, content: "Extract the user's instructions from the conversation above." },
-                  ],
-                })
-                return result.text ?? single
-              })
-            } else {
-              extracted = single
-            }
-          }
-          const prompt = task.prompt.replace("__EVAL_INSTRUCTION__", extracted)
+          const model = { providerID: lastUser.model.providerID, modelID: lastUser.model.modelID }
+          const extracted = yield* Effect.promise(() => Eval.extract(sessionID, model))
+          const prompt = task.prompt.replace("__EVAL_INSTRUCTION__", extracted || "No user instruction found")
           task = { ...task, prompt }
           taskArgs.prompt = prompt
         }
@@ -1538,24 +1508,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                             "<system-reminder>",
                             "Your previous plan-mode turn ended incorrectly again.",
                             auto
-                              ? "Do not restate the plan. Ensure the finalized plan is written to the plan file, then finish your turn normally so build can start automatically."
+                              ? `Do not restate the plan in your response. Write the finalized plan to the plan file using the write or edit tool, then end your turn. The build phase will start automatically once your turn ends with the plan file written. Do not call plan_exit.`
                               : "Do not restate the plan. If you still need information, ask the user a clarifying question now.",
                             auto
-                              ? "Do not call plan_exit in this mode."
+                              ? ""
                               : "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
                             "</system-reminder>",
-                          ].join("\n")
+                          ].filter(Boolean).join("\n")
                         : [
                             "<system-reminder>",
                             "Your previous plan-mode turn ended incorrectly.",
                             auto
-                              ? "In this autonomous planning mode, you must finish with the finalized plan written to the plan file."
+                              ? "In this autonomous planning mode, your turn must end with the finalized plan written to the plan file. You have not yet written the plan file."
                               : "In plan mode, you must not finish with a plain text plan summary.",
                             auto
-                              ? "Do not ask the user questions in this mode. Make the best reasonable assumptions and continue planning if needed."
+                              ? "Do not ask the user questions. Make the best reasonable assumptions and write the plan to the plan file now."
                               : "If you still need information, ask the user a clarifying question now.",
                             auto
-                              ? "Once the plan file is finalized, finish your turn normally so build can start automatically."
+                              ? "Once the plan file is written, end your turn normally. The build phase will start automatically. Do not call plan_exit."
                               : "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
                             "</system-reminder>",
                           ].join("\n"),
@@ -1593,7 +1563,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                       "",
                       list,
                       "",
-                      "Continue working through the remaining pending and in_progress items. Mark each todo as completed or cancelled as you finish.",
+                      "Continue working through the remaining pending and in_progress items. Mark each todo as completed or cancelled as you finish. Do not ask the user what to do next — proceed with the next incomplete item now.",
                       "</system-reminder>",
                     ].join("\n"),
                     synthetic: true,
@@ -1703,6 +1673,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     round: 1,
                     summary,
                     pass: false,
+                    issues: evalResult?.issues,
                   }),
                 } satisfies MessageV2.TextPart)
                 continue
@@ -1951,7 +1922,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   parts: [
                     {
                       type: "text",
-                      text: Eval.followup({ summary: meta.summary ?? "", issues: undefined }, note.content),
+                      text: Eval.followup({ summary: meta.summary ?? "", issues: meta.issues }, note.content),
                     },
                   ],
                 }).then(async () => Eval.parse(await Session.messages({ sessionID: child }))),
@@ -2002,6 +1973,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   summary,
                   pass: false,
                   rebutted: true,
+                  issues: verdict?.issues,
                 }),
               } satisfies MessageV2.TextPart)
               continue

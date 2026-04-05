@@ -579,9 +579,6 @@ it.live("eval command resolves instruction once and inherits session context", (
           text: "ship it",
         })
 
-        const read = spyOn(Session, "messages").mockRejectedValue(new Error("should not read child session"))
-        yield* Effect.addFinalizer(() => Effect.sync(() => read.mockRestore()))
-
         yield* Effect.promise(() =>
           SessionPrompt.command({
             sessionID: chat.id,
@@ -589,9 +586,6 @@ it.live("eval command resolves instruction once and inherits session context", (
             arguments: "double check output",
           }),
         )
-
-        expect(read).not.toHaveBeenCalled()
-        read.mockRestore()
 
         expect(text).toContain("## User Instruction")
         expect(text).toContain("ship it")
@@ -1814,4 +1808,296 @@ it.live("loop nudges build agent when eval feedback gets no action", () =>
     }),
     { git: true, config: providerCfg },
   ),
+)
+
+// ── Plan nudge tests ──────────────────────────────────────────────
+
+it.live(
+  "plan nudge fires when plan agent finishes without plan_exit in manual mode",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "PlanNudge",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const root = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: chat.id,
+          agent: "plan",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: root.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "create a feature",
+        })
+        // Plan agent responds without calling plan_exit
+        const turn = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          sessionID: chat.id,
+          parentID: root.id,
+          mode: "build",
+          agent: "plan",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ref.modelID,
+          providerID: ref.providerID,
+          time: { created: Date.now(), completed: Date.now() },
+          finish: "stop",
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: turn.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "Here is my plan: do X, Y, Z.",
+        })
+
+        // Nudge fires, LLM is called. Hang the LLM so we can inspect state.
+        yield* llm.hang
+
+        const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+        yield* llm.wait(1) // Wait for LLM to be called (after nudge)
+
+        const msgs = yield* Effect.sync(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
+        const nudge = msgs.find(
+          (msg) =>
+            msg.info.role === "user" &&
+            msg.parts.some(
+              (part) =>
+                part.type === "text" &&
+                part.synthetic === true &&
+                part.text.includes("plan-mode turn ended incorrectly"),
+            ),
+        )
+        expect(nudge).toBeDefined()
+        // Manual mode nudge should mention plan_exit
+        const nudgeText = nudge?.parts.find((p) => p.type === "text")
+        expect(nudgeText?.type === "text" && nudgeText.text.includes("plan_exit")).toBe(true)
+
+        yield* prompt.cancel(chat.id)
+        yield* Fiber.await(fiber)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
+it.live(
+  "plan nudge in autonomous mode does not mention plan_exit",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        // Autonomous mode: plan_exit is denied
+        const chat = yield* sessions.create({
+          title: "AutoPlanNudge",
+          permission: [
+            { permission: "*", pattern: "*", action: "allow" },
+            { permission: "plan_exit", pattern: "*", action: "deny" },
+          ],
+        })
+        const root = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: chat.id,
+          agent: "plan",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: root.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "create a feature",
+        })
+        // Plan agent responds without writing plan file
+        const turn = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          sessionID: chat.id,
+          parentID: root.id,
+          mode: "build",
+          agent: "plan",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ref.modelID,
+          providerID: ref.providerID,
+          time: { created: Date.now(), completed: Date.now() },
+          finish: "stop",
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: turn.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "Here is my plan: do X, Y, Z.",
+        })
+
+        // Nudge fires, LLM is called. Hang the LLM so we can inspect state.
+        yield* llm.hang
+
+        const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+        yield* llm.wait(1) // Wait for LLM to be called (after nudge)
+
+        const msgs = yield* Effect.sync(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
+        const nudge = msgs.find(
+          (msg) =>
+            msg.info.role === "user" &&
+            msg.parts.some(
+              (part) =>
+                part.type === "text" &&
+                part.synthetic === true &&
+                part.text.includes("plan-mode turn ended incorrectly"),
+            ),
+        )
+        expect(nudge).toBeDefined()
+        const nudgeText = nudge?.parts.find((p) => p.type === "text")
+        if (nudgeText?.type === "text") {
+          // Auto-mode nudge should NOT mention calling plan_exit
+          expect(nudgeText.text).not.toContain("call the plan_exit tool now")
+          // Auto-mode nudge should mention writing to the plan file
+          expect(nudgeText.text).toContain("plan file")
+        }
+
+        yield* prompt.cancel(chat.id)
+        yield* Fiber.await(fiber)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
+// ── Interactive eval fail → fix → reeval ──────────────────────────
+
+it.live(
+  "eval failure injects feedback with correct round and issues metadata",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const issues = [{ description: "no test coverage", severity: "error", file: "src/app.ts" }]
+        const init = spyOn(TaskTool, "init").mockImplementation(async () => ({
+          description: "task",
+          parameters: z.object({
+            description: z.string(),
+            prompt: z.string(),
+            subagent_type: z.string(),
+            task_id: z.string().optional(),
+            command: z.string().optional(),
+          }),
+          execute: async () => {
+            const child = await Session.create({})
+            const msg = await Session.updateMessage({
+              id: MessageID.ascending(),
+              role: "assistant",
+              sessionID: child.id,
+              parentID: MessageID.ascending(),
+              mode: "eval",
+              agent: "eval",
+              path: { cwd: "/tmp", root: "/tmp" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ref.modelID,
+              providerID: ref.providerID,
+              time: { created: Date.now(), completed: Date.now() },
+              finish: "tool-calls",
+            })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: msg.id,
+              sessionID: child.id,
+              type: "tool",
+              callID: "eval_1",
+              tool: "eval_result",
+              state: {
+                status: "completed",
+                input: { pass: false, summary: "missing test" },
+                title: "",
+                output: JSON.stringify({ pass: false, summary: "missing test", issues }),
+                metadata: { pass: false, summary: "missing test", issues },
+                time: { start: Date.now(), end: Date.now() },
+              },
+            })
+            return {
+              title: "",
+              metadata: {
+                sessionId: child.id,
+                model: ref,
+                eval: { pass: false, summary: "missing test", issues, sessionId: child.id, round: 1, phase: "failed" },
+              },
+              output: "",
+            }
+          },
+        }))
+        yield* Effect.addFinalizer(() => Effect.sync(() => init.mockRestore()))
+
+        // Agent responds with bash action (satisfies the action check so loop breaks)
+        yield* llm.tool("bash", { command: "echo test > test.ts" })
+        yield* llm.text("fixed it")
+
+        const { chat, sessions } = yield* boot()
+        const root = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: root.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "build it",
+        })
+
+        yield* Effect.promise(() =>
+          SessionPrompt.command({
+            sessionID: chat.id,
+            command: Command.Default.EVAL,
+            arguments: "",
+          }),
+        )
+
+        const all = yield* Effect.promise(() => Session.messages({ sessionID: chat.id }))
+
+        // Verify feedback message was injected with eval metadata
+        const feedbackPart = all.flatMap((e) => e.parts).find(
+          (p) =>
+            p.type === "text" &&
+            "metadata" in p &&
+            (p.metadata as Record<string, any>)?.eval?.phase === "failed",
+        )
+        expect(feedbackPart).toBeDefined()
+
+        // Verify round 1 and issues in metadata
+        if (feedbackPart && "metadata" in feedbackPart) {
+          const evalMeta = (feedbackPart.metadata as Record<string, any>)?.eval
+          expect(evalMeta?.round).toBe(1)
+          expect(evalMeta?.pass).toBe(false)
+          expect(evalMeta?.issues).toBeDefined()
+        }
+
+        // Verify feedback text contains structured error section
+        if (feedbackPart?.type === "text") {
+          expect(feedbackPart.text).toContain("Errors (must fix)")
+          expect(feedbackPart.text).toContain("no test coverage")
+        }
+      }),
+      { git: true, config: providerCfg },
+    ),
+  15_000,
 )

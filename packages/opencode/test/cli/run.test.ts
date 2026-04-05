@@ -81,6 +81,7 @@ async function call(
     updated: [] as { sessionID: string; permission: { permission: string; action: string; pattern: string }[] }[],
     exit: undefined as number | undefined,
     questions: [] as { requestID: string; answers: string[][] }[],
+    rejectedQuestions: [] as { requestID: string }[],
     signal: undefined as AbortSignal | undefined,
   }
   const sessionID = "ses_test"
@@ -116,6 +117,10 @@ async function call(
     question: {
       reply: async (input: { requestID: string; answers: string[][] }) => {
         seen.questions.push(input)
+        return { data: undefined }
+      },
+      reject: async (input: { requestID: string }) => {
+        seen.rejectedQuestions.push(input)
         return { data: undefined }
       },
     },
@@ -255,7 +260,7 @@ describe("cli.run", () => {
     expect(seen.exit).toBe(1)
   })
 
-  test("auto-answers headless questions before waiting for idle", async () => {
+  test("rejects headless questions so the agent proceeds without user interaction", async () => {
     process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = "0"
 
     const seen = await call(
@@ -275,12 +280,12 @@ describe("cli.run", () => {
       },
     )
 
-    expect(seen.questions).toEqual([
+    expect(seen.rejectedQuestions).toEqual([
       {
         requestID: "req_1",
-        answers: [["Yes"]],
       },
     ])
+    expect(seen.questions).toEqual([])
   })
 
   test("aborts the event subscription when the run finishes", async () => {

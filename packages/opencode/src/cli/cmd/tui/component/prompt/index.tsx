@@ -347,6 +347,33 @@ export function Prompt(props: PromptProps) {
       if (store.mode !== "voice") return
       const selected = local.model.current()
       if (!selected) return
+      const url = `data:audio/wav;base64,${Buffer.from(audio).toString("base64")}`
+
+      // Respect append/defer mode for audio input
+      if (props.shouldDefer?.() && props.sessionID) {
+        props.onDefer?.({
+          id: MessageID.ascending(),
+          sessionID: props.sessionID,
+          input: "[voice audio input]",
+          parts: [
+            {
+              type: "file" as const,
+              mime: "audio/wav",
+              url,
+              filename: "recording.wav",
+            },
+          ],
+          type: "normal",
+          model: {
+            providerID: selected.providerID,
+            modelID: selected.modelID,
+          },
+          agent: local.agent.current()?.name ?? "build",
+          variant: local.model.variant.current(),
+        })
+        return
+      }
+
       let sessionID = props.sessionID
       if (sessionID == null) {
         const res = await sdk.client.session.create({
@@ -362,7 +389,6 @@ export function Prompt(props: PromptProps) {
           permission: local.agent.auto.rules("plan"),
         })
       }
-      const url = `data:audio/wav;base64,${Buffer.from(audio).toString("base64")}`
       sdk.client.session
         .prompt({
           sessionID,

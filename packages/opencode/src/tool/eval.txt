@@ -1,6 +1,6 @@
 Report the result of your evaluation. You MUST call this tool exactly once when your evaluation is complete.
 
-Set pass to true if the work is correct and complete — all requirements are met and no significant issues were found.
+Set pass to true if the work is correct and complete — all requirements from the user instructions are met and no significant issues were found.
 Set pass to false if there are problems that need to be fixed.
 
-Provide a brief summary of your findings. If pass is false, include specific issues in the issues array with file paths and descriptions.
+Provide a brief summary of your findings. If pass is false, include specific issues in the issues array. Each issue should have a file path (when applicable), a concrete description that another agent can act on, and a severity level (error for must-fix, warning for should-fix).
