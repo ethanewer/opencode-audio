@@ -182,6 +182,48 @@ async function build(
   return (await Session.messages({ sessionID })).at(-1)!
 }
 
+describe("Eval.instruction", () => {
+  test("filters out synthetic and eval-tagged messages", () => {
+    const msgs = [
+      {
+        info: { role: "user" as const, id: "m1", sessionID: "s1", agent: "build", model: ref, time: { created: 1 } },
+        parts: [
+          { type: "text" as const, id: "p1", messageID: "m1", sessionID: "s1", text: "build a feature" },
+        ],
+      },
+      {
+        info: { role: "user" as const, id: "m2", sessionID: "s1", agent: "build", model: ref, time: { created: 2 } },
+        parts: [
+          { type: "text" as const, id: "p2", messageID: "m2", sessionID: "s1", text: "plan approved", synthetic: true },
+        ],
+      },
+      {
+        info: { role: "user" as const, id: "m3", sessionID: "s1", agent: "build", model: ref, time: { created: 3 } },
+        parts: [
+          { type: "text" as const, id: "p3", messageID: "m3", sessionID: "s1", text: "Eval passed.", eval: true },
+        ],
+      },
+    ] as any
+    const result = Eval.instruction(msgs)
+    expect(result.count).toBe(1)
+    expect(result.single).toBe("build a feature")
+  })
+
+  test("returns empty when no real user messages exist", () => {
+    const msgs = [
+      {
+        info: { role: "user" as const, id: "m1", sessionID: "s1", agent: "build", model: ref, time: { created: 1 } },
+        parts: [
+          { type: "text" as const, id: "p1", messageID: "m1", sessionID: "s1", text: "synthetic msg", synthetic: true },
+        ],
+      },
+    ] as any
+    const result = Eval.instruction(msgs)
+    expect(result.count).toBe(0)
+    expect(result.single).toBe("")
+  })
+})
+
 describe("session.eval", () => {
   test("retries with the original session agent and fresh diffs", async () => {
     await using tmp = await tmpdir({ git: true })

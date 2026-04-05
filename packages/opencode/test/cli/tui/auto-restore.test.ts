@@ -131,6 +131,27 @@ describe("auto restore", () => {
     ).toEqual({ agent: "plan" })
   })
 
+  test("treats non-plan/non-build agents as build phase in auto mode", () => {
+    // During eval subtask or other agents, phase should be "build" not "plan"
+    expect(
+      resolve({
+        msg: msg("eval"),
+        parts: [],
+        session: session({ permission: auto() }),
+        status: { type: "busy" } satisfies SessionStatus,
+      }),
+    ).toEqual({ agent: "auto", phase: "build" })
+
+    expect(
+      resolve({
+        msg: msg("general"),
+        parts: [],
+        session: session({ permission: auto() }),
+        status: { type: "busy" } satisfies SessionStatus,
+      }),
+    ).toEqual({ agent: "auto", phase: "build" })
+  })
+
   test("maps voice agents back to auto phases", () => {
     expect(
       resolve({

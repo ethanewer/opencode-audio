@@ -21,6 +21,7 @@ When your evaluation is complete, you MUST call the eval_result tool with your f
 
 Guidelines:
 - Be thorough but fair. Focus on correctness and completeness.
+- Do not ask the user questions. Make reasonable assumptions and proceed with the evaluation using the evidence available to you.
 - Do not fail for minor style preferences or cosmetic issues.
 - If tests fail, that is a clear failure.
 - If a requirement from the instructions is not addressed, that is a failure.
