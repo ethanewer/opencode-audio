@@ -230,6 +230,8 @@ export function Session() {
   let seen: string | undefined
   const shouldDefer = createMemo(() => {
     if (!appendMode()) return false
+    if (sending()) return true
+    if (deferred().length > 0) return true
     if (local.agent.auto.phase() !== "idle") return true
     return status().type !== "idle"
   })
@@ -395,11 +397,20 @@ export function Session() {
     setSending(true)
     let ok = false
     try {
+      // Use current agent and model at dispatch time, not defer time
+      const currentAgent = local.agent.current()?.name ?? "build"
+      const currentModel = local.model.current()
+      const currentVariant = local.model.variant.current()
       await dispatchDraft({
         sdk,
         local,
         draft: {
           ...item,
+          agent: currentAgent,
+          ...(currentModel
+            ? { model: { providerID: currentModel.providerID, modelID: currentModel.modelID } }
+            : {}),
+          variant: currentVariant,
           sessionID,
         },
       })
@@ -635,10 +646,11 @@ export function Session() {
               args: "",
               model: { providerID: model.providerID, modelID: model.modelID },
               agent: local.agent.current()?.name ?? "build",
+              variant: local.model.variant.current(),
             },
           ])
           toast.show({
-            message: `Message deferred (${deferred().length + 1} pending)`,
+            message: `Message deferred (${deferred().length} pending)`,
             variant: "success",
             duration: 2000,
           })
@@ -1453,7 +1465,7 @@ export function Session() {
                 onDefer={(draft) => {
                   setDeferred((list) => [...list, draft])
                   toast.show({
-                    message: `Message deferred (${deferred().length + 1} pending)`,
+                    message: `Message deferred (${deferred().length} pending)`,
                     variant: "success",
                     duration: 2000,
                   })
