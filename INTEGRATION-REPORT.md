@@ -196,9 +196,29 @@ Already fixed during initial integration. The test mocked `Session.messages` to 
 | `test/cli/run.test.ts` | 11 | Pass |
 | **Total** | **92** | **Pass** |
 
-Full test suite: 2020 pass, 9 skip, 1 fail (pre-existing `$schema` test on dev).
+Full test suite: 2022 pass, 9 skip, 1 fail (pre-existing `$schema` test on dev).
 
 TypeScript compilation: 0 errors.
+
+### Additional Deep-Review Investigations (Pass 3)
+
+#### Investigated: `small: true` lost in extraction path
+
+The old TUI-only extraction used `LLM.stream({ small: true })` to reduce reasoning effort on models like GPT-5/Gemini-3. The new unified `Eval.extract()` path uses `SessionPrompt.prompt()` which doesn't pass `small`.
+
+**Finding:** Not a regression — the headless path already used `SessionPrompt.prompt()` without `small` on dev. The eval-audit unified both paths to the pre-existing headless behavior. The cost increase only applies to multi-message interactive eval sessions on reasoning models (single-message sessions short-circuit with no LLM call). Acceptable tradeoff for consistency.
+
+#### Investigated: `handledSet` reactivity correctness
+
+The `handledSet` is a plain JS `Set` inside a Solid.js `createEffect`. Concern: does the reactive chain work correctly when multiple permissions/questions arrive?
+
+**Finding:** Correct. The reactive chain works because `permissions()` and `questions()` are tracked Solid.js signals. After rejecting via `sdk.client.permission.reply()`, the backend updates the pending list, which triggers the signal to change, which re-runs the effect for the next item. The `handledSet` prevents double-handling. Both permission and question branches execute independently (no early `return`).
+
+#### Investigated: prompt-effect test coverage after mock removal
+
+The removed `Session.messages` mock was verifying that single-message extraction doesn't create a child LLM session. Without it, do we still verify the short-circuit optimization?
+
+**Finding:** Adequate coverage. The `Eval.instruction` unit tests verify that single-message conversations return `count=1`, ensuring the short-circuit path in `extract()` is taken. The integration test still verifies the end-to-end behavior (correct instruction in eval prompt).
 
 ## Remaining Caveats
 
@@ -209,3 +229,4 @@ TypeScript compilation: 0 errors.
 5. **`plan-reminder-anthropic.txt` may be vestigial.** Auto-audit noted it doesn't appear to be dynamically imported. Consider removing if confirmed unused.
 6. **`setAppendMode(false)` on auto completion clears user preference.** If a user had append mode enabled before starting auto, it will be force-cleared when auto finishes. This is intentional per auto-audit but may surprise some users.
 7. **`handledSet` grows unboundedly during long auto sessions.** Permission/question IDs accumulate in the Set. Only cleared on session navigation. Not a practical concern for typical session lengths.
+8. **Extraction no longer uses `small: true` on interactive path.** Minor cost increase for reasoning models in multi-message eval sessions. Both paths now consistently use `SessionPrompt.prompt()`.
