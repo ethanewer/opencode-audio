@@ -129,6 +129,77 @@ TypeScript compilation (`tsc --noEmit`): No new errors. Only pre-existing warnin
 | `test/session/eval.test.ts` | auto + eval | 13 new tests: instruction, feedback, state, followup |
 | `test/session/prompt-effect.test.ts` | integration fix | Removed stale Session.messages mock |
 
+## Self-Review and End-to-End Verification (Pass 2)
+
+### Additional Issues Found
+
+#### Issue A: `run.test.ts` — test asserting old question-answering behavior (CRITICAL)
+
+The headless CLI test `auto-answers headless questions before waiting for idle` expected `sdk.question.reply({ requestID: "req_1", answers: [["Yes"]] })`. But auto-audit changed the headless question handler from `reply` to `reject`. The mock SDK also lacked a `question.reject` method, so the code would throw at runtime in tests.
+
+**Fix:** Added `question.reject` to the mock SDK, updated the test to assert `rejectedQuestions` instead of `questions`, and renamed the test to reflect the new behavior.
+
+#### Issue B: Dead `handled` signal after `handledSet` change (MINOR)
+
+Auto-audit replaced the single `handled()` signal read with `handledSet.has()` but left `setHandled()` writes in place. The signal was never read, making these calls dead code.
+
+**Fix:** Removed the `handled` signal declaration and all `setHandled()` calls. The `handledSet` is now the sole deduplication mechanism for permission/question auto-rejection.
+
+#### Issue C: `prompt-effect.test.ts` — stale Session.messages mock (found in Pass 1)
+
+Already fixed during initial integration. The test mocked `Session.messages` to reject, but `Eval.extract()` now calls it. Removed the mock.
+
+### End-to-End Test Scenarios
+
+#### Headless CLI (`opencode run`)
+
+| Scenario | Result |
+|----------|--------|
+| Simple task: create a file | Pass — plan → build → eval → pass |
+| Feature task: add function + tests | Pass — plan → build → eval → pass, all tests passing |
+| Question rejection in headless | Pass — questions rejected, agent proceeds autonomously |
+| Eval instruction extraction | Pass — correctly extracted single-message instructions |
+
+#### Interactive TUI (via tmux)
+
+| Scenario | Result |
+|----------|--------|
+| Basic build task | Pass — file created successfully |
+| `/append` toggle | Pass — status bar shows "append on" |
+| `/eval` command | Pass — eval subagent runs, reviews files, passes |
+| Auto mode (plan → build → eval → reset) | Pass — full cycle completed, status transitions correct |
+| Auto mode phase indicators | Pass — "Auto [Plan]" → "Auto [Build]" → "Auto" (reset) |
+| Auto mode eval trigger after build idle | Pass — eval auto-triggered, passed, auto mode reset |
+| Todo progress in auto build | Pass — todos tracked and marked as completed |
+
+#### Verification of Key Behaviors
+
+| Behavior | How Verified | Result |
+|----------|-------------|--------|
+| Plan prompt conditional note | Code review: line 410 | Correct — NOTE omitted when autonomous |
+| Headless question rejection | E2E run + unit test | Correct — `sdk.question.reject()` called |
+| Permission+question race fix | Code review of `handledSet` | Correct — both handled independently |
+| Auto reset on any error | Code review: line 377 | Correct — not limited to MessageAbortedError |
+| Eval issues in followup | Code review + unit tests | Correct — `meta.issues` passed through |
+| Instruction extraction consistency | Code review + E2E | Correct — both paths use `Eval.extract()` |
+| Eval prompt no-question line | File review: eval.txt line 44 | Present in synthesized version |
+| Auto-restore phase detection | Unit tests + code review | Correct — non-plan agents → "build" |
+
+### Final Test Results
+
+| Test Suite | Tests | Result |
+|------------|-------|--------|
+| `test/session/append-defer.test.ts` | 25 | Pass |
+| `test/session/eval.test.ts` | 24 | Pass |
+| `test/cli/tui/auto-restore.test.ts` | 12 | Pass |
+| `test/session/prompt-effect.test.ts` | 20 | Pass |
+| `test/cli/run.test.ts` | 11 | Pass |
+| **Total** | **92** | **Pass** |
+
+Full test suite: 2020 pass, 9 skip, 1 fail (pre-existing `$schema` test on dev).
+
+TypeScript compilation: 0 errors.
+
 ## Remaining Caveats
 
 1. **No E2E tests for TUI reactive wiring.** Unit tests cover logical invariants but not Solid.js signal reactivity. All three audits noted this limitation.
@@ -136,3 +207,5 @@ TypeScript compilation (`tsc --noEmit`): No new errors. Only pre-existing warnin
 3. **No deferred message cancellation UI.** Users can toggle append mode off but cannot clear the existing queue.
 4. **Audio deferral stores base64 in memory.** Could be large for long recordings. Consider temp file storage.
 5. **`plan-reminder-anthropic.txt` may be vestigial.** Auto-audit noted it doesn't appear to be dynamically imported. Consider removing if confirmed unused.
+6. **`setAppendMode(false)` on auto completion clears user preference.** If a user had append mode enabled before starting auto, it will be force-cleared when auto finishes. This is intentional per auto-audit but may surprise some users.
+7. **`handledSet` grows unboundedly during long auto sessions.** Permission/question IDs accumulate in the Set. Only cleared on session navigation. Not a practical concern for typical session lengths.

@@ -225,7 +225,6 @@ export function Session() {
   const [appendMode, setAppendMode] = createSignal(false)
   const [deferred, setDeferred] = createSignal<DeferredDraft[]>([])
   const [sending, setSending] = createSignal(false)
-  const [handled, setHandled] = createSignal<string>()
   const [saved, setSaved] = createSignal<string>()
   let seen: string | undefined
   const shouldDefer = createMemo(() => {
@@ -307,7 +306,6 @@ export function Session() {
     const permission = permissions()[0]
     if (permission && !handledSet.has(permission.id)) {
       handledSet.add(permission.id)
-      setHandled(permission.id)
       sdk.client.permission.reply({
         requestID: permission.id,
         reply: "reject",
@@ -317,7 +315,6 @@ export function Session() {
     const q = questions()[0]
     if (q && !handledSet.has(q.id)) {
       handledSet.add(q.id)
-      setHandled(q.id)
       sdk.client.question.reject({
         requestID: q.id,
       })
@@ -390,7 +387,6 @@ export function Session() {
         local.agent.auto.reset()
         setDeferred([])
         setSending(false)
-        setHandled(undefined)
         setSaved(undefined)
         handledSet.clear()
       },
