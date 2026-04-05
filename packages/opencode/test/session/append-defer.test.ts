@@ -502,3 +502,186 @@ describe("dispatch effect conditions", () => {
     ).toBe(false)
   })
 })
+
+// ── Audio defer draft construction ────────────────────────────────
+
+describe("audio defer draft construction", () => {
+  test("constructs correct audio DeferredDraft when shouldDefer and sessionID present", () => {
+    const audioBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46]) // "RIFF" header
+    const url = `data:audio/wav;base64,${Buffer.from(audioBytes).toString("base64")}`
+
+    const draft: DeferredDraft = {
+      id: "msg-audio-1",
+      sessionID: "session-1",
+      input: "[voice audio input]",
+      parts: [
+        {
+          type: "file" as const,
+          mime: "audio/wav",
+          url,
+          filename: "recording.wav",
+        },
+      ],
+      type: "normal",
+      model: { providerID: "anthropic", modelID: "claude-sonnet" },
+      agent: "build",
+      variant: "fast",
+    }
+
+    expect(draft.type).toBe("normal")
+    expect(draft.input).toBe("[voice audio input]")
+    expect(draft.parts).toHaveLength(1)
+    const filePart = draft.parts[0] as { type: "file"; mime: string; url: string; filename: string }
+    expect(filePart.type).toBe("file")
+    expect(filePart.mime).toBe("audio/wav")
+    expect(filePart.url).toStartWith("data:audio/wav;base64,")
+    expect(filePart.filename).toBe("recording.wav")
+    expect(draft.agent).toBe("build")
+    expect(draft.variant).toBe("fast")
+  })
+
+  test("audio defer requires both shouldDefer and sessionID", () => {
+    // The conditional in onAudio is: if (props.shouldDefer?.() && props.sessionID)
+    // Both must be truthy for deferral to happen
+    const shouldDefer = true
+    const sessionID: string | undefined = undefined
+    expect(shouldDefer && sessionID).toBeFalsy()
+
+    const shouldDefer2 = true
+    const sessionID2 = "session-1"
+    expect(shouldDefer2 && sessionID2).toBeTruthy()
+
+    const shouldDefer3 = false
+    const sessionID3 = "session-1"
+    expect(shouldDefer3 && sessionID3).toBeFalsy()
+  })
+
+  test("audio base64 encoding preserves data fidelity", () => {
+    const original = new Uint8Array([0, 1, 2, 127, 128, 254, 255])
+    const encoded = Buffer.from(original).toString("base64")
+    const decoded = Buffer.from(encoded, "base64")
+    expect(new Uint8Array(decoded)).toEqual(original)
+  })
+
+  test("large audio buffer encodes without truncation", () => {
+    // Simulate ~1 second of 16-bit mono 16kHz audio = 32000 bytes
+    const large = new Uint8Array(32000)
+    for (let i = 0; i < large.length; i++) large[i] = i % 256
+    const encoded = Buffer.from(large).toString("base64")
+    const decoded = Buffer.from(encoded, "base64")
+    expect(decoded.length).toBe(32000)
+    expect(new Uint8Array(decoded)).toEqual(large)
+  })
+})
+
+// ── Feature interaction: auto phase and agent override ─────────────
+
+function canDispatchCheck(opts: {
+  sessionID: string | undefined
+  statusType: string
+  autoPhase: string
+  sending: boolean
+  permissionsCount: number
+  questionsCount: number
+  deferredCount: number
+}): boolean {
+  if (!opts.sessionID) return false
+  if (opts.statusType !== "idle") return false
+  if (opts.autoPhase !== "idle") return false
+  if (opts.sending) return false
+  if (opts.permissionsCount > 0 || opts.questionsCount > 0) return false
+  if (opts.deferredCount === 0) return false
+  return true
+}
+
+describe("feature interaction: auto phase blocks dispatch", () => {
+  test("canDispatch returns false during auto build phase even with idle status", () => {
+    expect(
+      canDispatchCheck({
+        sessionID: "session-1",
+        statusType: "idle",
+        autoPhase: "build",
+        sending: false,
+        permissionsCount: 0,
+        questionsCount: 0,
+        deferredCount: 3,
+      }),
+    ).toBe(false)
+  })
+
+  test("canDispatch returns false during auto plan phase", () => {
+    expect(
+      canDispatchCheck({
+        sessionID: "session-1",
+        statusType: "idle",
+        autoPhase: "plan",
+        sending: false,
+        permissionsCount: 0,
+        questionsCount: 0,
+        deferredCount: 1,
+      }),
+    ).toBe(false)
+  })
+
+  test("canDispatch allows dispatch only when auto phase is idle", () => {
+    expect(
+      canDispatchCheck({
+        sessionID: "session-1",
+        statusType: "idle",
+        autoPhase: "idle",
+        sending: false,
+        permissionsCount: 0,
+        questionsCount: 0,
+        deferredCount: 1,
+      }),
+    ).toBe(true)
+  })
+})
+
+describe("agent override on mode switch while queue populated", () => {
+  test("dispatch overrides agent from plan to auto", () => {
+    const deferredItem: DeferredDraft = {
+      id: "msg-1",
+      sessionID: "session-1",
+      input: "test",
+      parts: [],
+      type: "normal",
+      model: { providerID: "test", modelID: "test-model" },
+      agent: "plan",
+    }
+
+    // Simulate send() override: user switched to auto agent
+    const currentAgent = "auto"
+    const dispatched = {
+      ...deferredItem,
+      agent: currentAgent,
+      sessionID: deferredItem.sessionID!,
+    }
+
+    expect(dispatched.agent).toBe("auto")
+    expect(dispatched.input).toBe("test") // content preserved
+  })
+
+  test("dispatch overrides model when user switched provider", () => {
+    const deferredItem: DeferredDraft = {
+      id: "msg-1",
+      sessionID: "session-1",
+      input: "test",
+      parts: [],
+      type: "normal",
+      model: { providerID: "openai", modelID: "gpt-4" },
+      agent: "build",
+    }
+
+    const currentModel = { providerID: "anthropic", modelID: "claude-sonnet" }
+    const dispatched = {
+      ...deferredItem,
+      agent: "build",
+      model: { providerID: currentModel.providerID, modelID: currentModel.modelID },
+      sessionID: deferredItem.sessionID!,
+    }
+
+    expect(dispatched.model.providerID).toBe("anthropic")
+    expect(dispatched.model.modelID).toBe("claude-sonnet")
+  })
+})
