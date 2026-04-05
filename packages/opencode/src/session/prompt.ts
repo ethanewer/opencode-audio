@@ -1514,7 +1514,9 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                               ? ""
                               : "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
                             "</system-reminder>",
-                          ].filter(Boolean).join("\n")
+                          ]
+                            .filter(Boolean)
+                            .join("\n")
                         : [
                             "<system-reminder>",
                             "Your previous plan-mode turn ended incorrectly.",
@@ -1690,6 +1692,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 overflow: task.overflow,
               })
               if (result === "stop") break
+              if (!task.auto) break
               continue
             }
 
@@ -1879,8 +1882,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
               // Eval action nudge: if agent responded without side-effect tools or rebuttal, nudge it
               if (!note && evalNudges < MAX_EVAL_NUDGES) {
                 const acted = branch.some(
-                  (part) =>
-                    part.type === "tool" && part.state.status === "completed" && ACTION_TOOLS.has(part.tool),
+                  (part) => part.type === "tool" && part.state.status === "completed" && ACTION_TOOLS.has(part.tool),
                 )
                 if (!acted) {
                   evalNudges++
