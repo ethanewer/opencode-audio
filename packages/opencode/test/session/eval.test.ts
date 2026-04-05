@@ -392,3 +392,147 @@ describe("session.eval", () => {
     })
   })
 })
+
+describe("session.eval.feedback", () => {
+  test("feedback separates errors and warnings", () => {
+    const result = Eval.feedback({
+      summary: "Two issues found",
+      issues: [
+        { file: "a.ts", description: "Missing null check", severity: "error" },
+        { file: "b.ts", description: "Unused import", severity: "warning" },
+      ],
+    })
+    expect(result).toContain("## Errors (must fix)")
+    expect(result).toContain("Missing null check")
+    expect(result).toContain("`a.ts`")
+    expect(result).toContain("## Warnings (should fix)")
+    expect(result).toContain("Unused import")
+    expect(result).toContain("`b.ts`")
+    expect(result).toContain("## Required action")
+  })
+
+  test("feedback mentions rebuttal when allowed", () => {
+    const withRebut = Eval.feedback({ summary: "issue", issues: [] }, true)
+    expect(withRebut).toContain("eval_rebuttal")
+
+    const noRebut = Eval.feedback({ summary: "issue", issues: [] }, false)
+    expect(noRebut).toContain("exhausted your rebuttals")
+    expect(noRebut).not.toContain("eval_rebuttal")
+  })
+
+  test("followup includes issues when provided", () => {
+    const text = Eval.followup(
+      {
+        summary: "Test failure",
+        issues: [{ file: "x.ts", description: "assertion fails", severity: "error" }],
+      },
+      "The test was actually passing",
+    )
+    expect(text).toContain("## Previous Issues")
+    expect(text).toContain("assertion fails")
+    expect(text).toContain("`x.ts`")
+    expect(text).toContain("## Build Agent Rebuttal")
+    expect(text).toContain("The test was actually passing")
+  })
+
+  test("followup works without issues", () => {
+    const text = Eval.followup({ summary: "Test failure" }, "rebuttal text")
+    expect(text).not.toContain("## Previous Issues")
+    expect(text).toContain("Test failure")
+    expect(text).toContain("rebuttal text")
+  })
+})
+
+describe("session.eval.state", () => {
+  test("state parses issues from metadata", () => {
+    const issues = [{ file: "a.ts", description: "bug", severity: "error" }]
+    const meta = Eval.metadata({
+      sessionId: "s1",
+      mode: "interactive",
+      policy: "stop_on_accept",
+      phase: "failed",
+      round: 1,
+      summary: "problem",
+      pass: false,
+      issues,
+    })
+    const parsed = Eval.state({ metadata: meta })
+    expect(parsed).toBeDefined()
+    expect(parsed!.issues).toEqual(issues)
+  })
+
+  test("state works without issues", () => {
+    const meta = Eval.metadata({
+      sessionId: "s1",
+      mode: "headless",
+      policy: "rerun_on_accept",
+      phase: "passed",
+      round: 1,
+      pass: true,
+    })
+    const parsed = Eval.state({ metadata: meta })
+    expect(parsed).toBeDefined()
+    expect(parsed!.issues).toBeUndefined()
+  })
+})
+
+describe("session.eval.instruction", () => {
+  test("counts non-synthetic, non-eval user text parts", () => {
+    const msgs = [
+      {
+        info: { role: "user" as const, id: "m1" },
+        parts: [{ type: "text" as const, text: "fix the bug" }],
+      },
+      {
+        info: { role: "assistant" as const, id: "m2" },
+        parts: [{ type: "text" as const, text: "done" }],
+      },
+      {
+        info: { role: "user" as const, id: "m3" },
+        parts: [{ type: "text" as const, text: "also add tests" }],
+      },
+    ] as any
+    const { count, single } = Eval.instruction(msgs)
+    expect(count).toBe(2)
+    expect(single).toBe("fix the bug")
+  })
+
+  test("skips synthetic and eval parts", () => {
+    const msgs = [
+      {
+        info: { role: "user" as const, id: "m1" },
+        parts: [{ type: "text" as const, text: "do the thing" }],
+      },
+      {
+        info: { role: "user" as const, id: "m2" },
+        parts: [{ type: "text" as const, text: "Eval passed.", eval: true }],
+      },
+      {
+        info: { role: "user" as const, id: "m3" },
+        parts: [{ type: "text" as const, text: "synthetic msg", synthetic: true }],
+      },
+    ] as any
+    const { count, single } = Eval.instruction(msgs)
+    expect(count).toBe(1)
+    expect(single).toBe("do the thing")
+  })
+
+  test("skips eval subtask messages", () => {
+    const msgs = [
+      {
+        info: { role: "user" as const, id: "m1" },
+        parts: [
+          { type: "subtask" as const, command: "eval" },
+          { type: "text" as const, text: "should be skipped" },
+        ],
+      },
+      {
+        info: { role: "user" as const, id: "m2" },
+        parts: [{ type: "text" as const, text: "real instruction" }],
+      },
+    ] as any
+    const { count, single } = Eval.instruction(msgs)
+    expect(count).toBe(1)
+    expect(single).toBe("real instruction")
+  })
+})

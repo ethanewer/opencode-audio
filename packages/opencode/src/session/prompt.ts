@@ -650,39 +650,9 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
         }
 
         if (task.command === Command.Default.EVAL && task.prompt.includes("__EVAL_INSTRUCTION__")) {
-          const { count, single } = Eval.instruction(msgs)
-          let extracted: string
-          if (count <= 1) {
-            extracted = single || "No user instruction found"
-          } else {
-            const mdl = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
-            const history = yield* Effect.promise(() => MessageV2.toModelMessages(msgs, mdl, { stripMedia: true }))
-            const agent = yield* agents.get("extract")
-            if (agent) {
-              const ac = new AbortController()
-              extracted = yield* Effect.promise(async () => {
-                const result = await LLM.stream({
-                  agent,
-                  user: lastUser,
-                  system: agent.prompt ? [agent.prompt] : [],
-                  small: true,
-                  tools: {},
-                  model: mdl,
-                  abort: ac.signal,
-                  sessionID,
-                  retries: 1,
-                  messages: [
-                    ...history,
-                    { role: "user" as const, content: "Extract the user's instructions from the conversation above." },
-                  ],
-                })
-                return result.text ?? single
-              })
-            } else {
-              extracted = single
-            }
-          }
-          const prompt = task.prompt.replace("__EVAL_INSTRUCTION__", extracted)
+          const model = { providerID: lastUser.model.providerID, modelID: lastUser.model.modelID }
+          const extracted = yield* Effect.promise(() => Eval.extract(sessionID, model))
+          const prompt = task.prompt.replace("__EVAL_INSTRUCTION__", extracted || "No user instruction found")
           task = { ...task, prompt }
           taskArgs.prompt = prompt
         }
@@ -1703,6 +1673,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                     round: 1,
                     summary,
                     pass: false,
+                    issues: evalResult?.issues,
                   }),
                 } satisfies MessageV2.TextPart)
                 continue
@@ -1951,7 +1922,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   parts: [
                     {
                       type: "text",
-                      text: Eval.followup({ summary: meta.summary ?? "", issues: undefined }, note.content),
+                      text: Eval.followup({ summary: meta.summary ?? "", issues: meta.issues }, note.content),
                     },
                   ],
                 }).then(async () => Eval.parse(await Session.messages({ sessionID: child }))),
@@ -2002,6 +1973,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   summary,
                   pass: false,
                   rebutted: true,
+                  issues: verdict?.issues,
                 }),
               } satisfies MessageV2.TextPart)
               continue
