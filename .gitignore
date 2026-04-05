@@ -31,3 +31,4 @@ logs/
 tsconfig.tsbuildinfo
 scratch
 packages/opencode/bin/.opencode
+.cursor*

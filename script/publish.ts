@@ -2,7 +2,6 @@
 
 import { Script } from "@opencode-ai/script"
 import { $ } from "bun"
-import { fileURLToPath } from "url"
 
 const highlightsTemplate = `
 <!--
@@ -13,9 +12,9 @@ Add highlights before publishing. Delete this section if no highlights.
 -->
 
 <!--
-<highlight source="SourceName (TUI/Desktop/Web/Core)">
+<highlight source="SourceName (TUI/Core/SDK)">
   <h2>Feature title goes here</h2>
-  <p short="Short description used for Desktop Recap">
+  <p short="Short description">
     Full description of the feature or change
   </p>
 
@@ -47,13 +46,6 @@ for (const file of pkgjsons) {
   await Bun.file(file).write(pkg)
 }
 
-const extensionToml = fileURLToPath(new URL("../packages/extensions/zed/extension.toml", import.meta.url))
-let toml = await Bun.file(extensionToml).text()
-toml = toml.replace(/^version = "[^"]+"/m, `version = "${Script.version}"`)
-toml = toml.replaceAll(/releases\/download\/v[^/]+\//g, `releases/download/v${Script.version}/`)
-console.log("updated:", extensionToml)
-await Bun.file(extensionToml).write(toml)
-
 await $`bun install`
 await import(`../packages/sdk/js/script/build.ts`)
 
@@ -67,9 +59,6 @@ if (Script.release) {
     await new Promise((resolve) => setTimeout(resolve, 5_000))
   }
 
-  await import(`../packages/desktop/scripts/finalize-latest-json.ts`)
-  await import(`../packages/desktop-electron/scripts/finalize-latest-yml.ts`)
-
   await $`gh release edit v${Script.version} --draft=false --repo ${process.env.GH_REPO}`
 }
 
@@ -82,5 +71,4 @@ await import(`../packages/sdk/js/script/publish.ts`)
 console.log("\n=== plugin ===\n")
 await import(`../packages/plugin/script/publish.ts`)
 
-const dir = fileURLToPath(new URL("..", import.meta.url))
-process.chdir(dir)
+process.chdir(new URL("..", import.meta.url).pathname)

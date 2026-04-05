@@ -246,29 +246,6 @@ export type EventFileWatcherUpdated = {
   }
 }
 
-export type Todo = {
-  /**
-   * Brief description of the task
-   */
-  content: string
-  /**
-   * Current status of the task: pending, in_progress, completed, cancelled
-   */
-  status: string
-  /**
-   * Priority level of the task: high, medium, low
-   */
-  priority: string
-}
-
-export type EventTodoUpdated = {
-  type: "todo.updated"
-  properties: {
-    sessionID: string
-    todos: Array<Todo>
-  }
-}
-
 export type EventTuiPromptAppend = {
   type: "tui.prompt.append"
   properties: {
@@ -346,6 +323,29 @@ export type EventCommandExecuted = {
     sessionID: string
     arguments: string
     messageID: string
+  }
+}
+
+export type Todo = {
+  /**
+   * Brief description of the task
+   */
+  content: string
+  /**
+   * Current status of the task: pending, in_progress, completed, cancelled
+   */
+  status: string
+  /**
+   * Priority level of the task: high, medium, low
+   */
+  priority: string
+}
+
+export type EventTodoUpdated = {
+  type: "todo.updated"
+  properties: {
+    sessionID: string
+    todos: Array<Todo>
   }
 }
 
@@ -626,6 +626,7 @@ export type TextPart = {
   text: string
   synthetic?: boolean
   ignored?: boolean
+  eval?: boolean
   time?: {
     start: number
     end?: number
@@ -985,7 +986,6 @@ export type Event =
   | EventSessionCompacted
   | EventFileEdited
   | EventFileWatcherUpdated
-  | EventTodoUpdated
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow
@@ -993,6 +993,7 @@ export type Event =
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
+  | EventTodoUpdated
   | EventSessionDiff
   | EventSessionError
   | EventVcsBranchUpdated
@@ -1931,6 +1932,7 @@ export type TextPartInput = {
   text: string
   synthetic?: boolean
   ignored?: boolean
+  eval?: boolean
   time?: {
     start: number
     end?: number

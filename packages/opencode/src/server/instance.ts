@@ -1,8 +1,6 @@
 import { describeRoute, resolver } from "hono-openapi"
 import { Hono } from "hono"
-import { proxy } from "hono/proxy"
 import z from "zod"
-import { createHash } from "node:crypto"
 import { Log } from "../util/log"
 import { Format } from "../format"
 import { TuiRoutes } from "./routes/tui"
@@ -13,7 +11,6 @@ import { Skill } from "../skill"
 import { Global } from "../global"
 import { LSP } from "../lsp"
 import { Command } from "../command"
-import { Flag } from "../flag/flag"
 import { QuestionRoutes } from "./routes/question"
 import { PermissionRoutes } from "./routes/permission"
 import { ProjectRoutes } from "./routes/project"
@@ -28,17 +25,6 @@ import { EventRoutes } from "./routes/event"
 import { errorHandler } from "./middleware"
 
 const log = Log.create({ service: "server" })
-
-const embeddedUIPromise = Flag.OPENCODE_DISABLE_EMBEDDED_WEB_UI
-  ? Promise.resolve(null)
-  : // @ts-expect-error - generated file at build time
-    import("opencode-web-ui.gen.ts").then((module) => module.default as Record<string, string>).catch(() => null)
-
-const DEFAULT_CSP =
-  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' data:; connect-src 'self' data:"
-
-const csp = (hash = "") =>
-  `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'${hash ? ` 'sha256-${hash}'` : ""}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' data:; connect-src 'self' data:`
 
 export const InstanceRoutes = (app?: Hono) =>
   (app ?? new Hono())
@@ -248,38 +234,3 @@ export const InstanceRoutes = (app?: Hono) =>
         return c.json(await Format.status())
       },
     )
-    .all("/*", async (c) => {
-      const embeddedWebUI = await embeddedUIPromise
-      const path = c.req.path
-
-      if (embeddedWebUI) {
-        const match = embeddedWebUI[path.replace(/^\//, "")] ?? embeddedWebUI["index.html"] ?? null
-        if (!match) return c.json({ error: "Not Found" }, 404)
-        const file = Bun.file(match)
-        if (await file.exists()) {
-          c.header("Content-Type", file.type)
-          if (file.type.startsWith("text/html")) {
-            c.header("Content-Security-Policy", DEFAULT_CSP)
-          }
-          return c.body(await file.arrayBuffer())
-        } else {
-          return c.json({ error: "Not Found" }, 404)
-        }
-      } else {
-        const response = await proxy(`https://app.opencode.ai${path}`, {
-          ...c.req,
-          headers: {
-            ...c.req.raw.headers,
-            host: "app.opencode.ai",
-          },
-        })
-        const match = response.headers.get("content-type")?.includes("text/html")
-          ? (await response.clone().text()).match(
-              /<script\b(?![^>]*\bsrc\s*=)[^>]*\bid=(['"])oc-theme-preload-script\1[^>]*>([\s\S]*?)<\/script>/i,
-            )
-          : undefined
-        const hash = match ? createHash("sha256").update(match[2]).digest("base64") : ""
-        response.headers.set("Content-Security-Policy", csp(hash))
-        return response
-      }
-    })
