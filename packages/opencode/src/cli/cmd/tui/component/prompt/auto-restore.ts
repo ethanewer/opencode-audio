@@ -30,7 +30,9 @@ function handoff(parts: Part[]) {
 function phase(msg: UserMessage, parts: Part[], status: SessionStatus) {
   if (status.type === "idle") return "idle"
   if (handoff(parts)) return "build"
-  return msg.agent.replace(/^voice-/, "") === "build" ? "build" : "plan"
+  const base = msg.agent.replace(/^voice-/, "")
+  // If the agent is build or any non-plan agent (e.g. eval subtask), treat as build phase
+  return base === "plan" ? "plan" : "build"
 }
 
 export function resolve(input: Input): Result | undefined {
