@@ -361,6 +361,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               { permission: "question", action: "deny", pattern: "*" },
               { permission: "plan_enter", action: "deny", pattern: "*" },
               { permission: "plan_exit", action: "deny", pattern: "*" },
+              { permission: "tui_auto", action: "deny", pattern: "*" },
             ]
             return rules
           },

@@ -52,6 +52,7 @@ import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { usePromptRef, type PromptMode } from "../../context/prompt"
 import { useVoice } from "../../util/voice"
+import { resolve as resolveAuto } from "./auto-restore"
 
 export type PromptProps = {
   sessionID?: string
@@ -202,6 +203,8 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  const session = createMemo(() => (props.sessionID ? sync.session.get(props.sessionID) : undefined))
+  const messages = createMemo(() => (props.sessionID ? (sync.data.message[props.sessionID] ?? []) : []))
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -250,10 +253,13 @@ export function Prompt(props: PromptProps) {
   })
 
   const lastUserMessage = createMemo(() => {
-    if (!props.sessionID) return undefined
-    const messages = sync.data.message[props.sessionID]
-    if (!messages) return undefined
-    return messages.findLast((m) => m.role === "user")
+    return messages().findLast((m) => m.role === "user")
+  })
+
+  const parts = createMemo(() => {
+    const msg = lastUserMessage()
+    if (!msg) return []
+    return sync.data.part[msg.id] ?? []
   })
 
   const usage = createMemo(() => {
@@ -441,10 +447,13 @@ export function Prompt(props: PromptProps) {
 
     if (sessionID !== syncedSessionID) {
       if (!sessionID || !msg) return
+      // Defer until session_status has been bulk-loaded (sync "complete")
+      // or an SSE event has already populated this session's status.
+      if (sync.data.status !== "complete" && !sync.data.session_status?.[sessionID]) return
 
       syncedSessionID = sessionID
 
-      // Try to restore agent and system from the last user message
+      // Try to restore agent and system from the current session state.
       if (msg.agent) {
         // Find a system matching the message's model AND variant
         if (msg.model) {
@@ -454,11 +463,21 @@ export function Prompt(props: PromptProps) {
           const match = candidates.find((s) => s.variant === msg.variant) ?? candidates[0]
           if (match) local.system.set(match.key)
         }
-        // Set agent (strip voice- prefix for user-facing agent)
-        const base = msg.agent.replace(/^voice-/, "")
-        const keepAuto = local.agent.current()?.name === "auto" && local.agent.auto.claim(sessionID, base)
-        const isPrimaryAgent = local.agent.list().some((x) => x.name === base || x.name === msg.agent)
-        if (isPrimaryAgent && !keepAuto) local.agent.set(base)
+        const next = resolveAuto({
+          msg,
+          parts: parts(),
+          session: session(),
+          status: status(),
+        })
+        if (next?.agent === "auto") {
+          local.agent.set("auto")
+          local.agent.auto.setPhase(next.phase ?? "idle")
+        } else {
+          const base = next?.agent ?? msg.agent.replace(/^voice-/, "")
+          const keepAuto = local.agent.current()?.name === "auto" && local.agent.auto.claim(sessionID, base)
+          const isPrimaryAgent = local.agent.list().some((x) => x.name === base || x.name === msg.agent)
+          if (isPrimaryAgent && !keepAuto) local.agent.set(base)
+        }
         if (msg.variant) local.model.variant.set(msg.variant)
       }
     }
