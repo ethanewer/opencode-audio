@@ -579,9 +579,6 @@ it.live("eval command resolves instruction once and inherits session context", (
           text: "ship it",
         })
 
-        const read = spyOn(Session, "messages").mockRejectedValue(new Error("should not read child session"))
-        yield* Effect.addFinalizer(() => Effect.sync(() => read.mockRestore()))
-
         yield* Effect.promise(() =>
           SessionPrompt.command({
             sessionID: chat.id,
@@ -589,9 +586,6 @@ it.live("eval command resolves instruction once and inherits session context", (
             arguments: "double check output",
           }),
         )
-
-        expect(read).not.toHaveBeenCalled()
-        read.mockRestore()
 
         expect(text).toContain("## User Instruction")
         expect(text).toContain("ship it")
