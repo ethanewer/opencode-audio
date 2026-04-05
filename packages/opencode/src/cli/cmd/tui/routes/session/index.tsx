@@ -83,7 +83,7 @@ import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { Eval } from "@/session/eval"
 import { Session as SessionSvc } from "@/session"
-import { SessionID } from "@/session/schema"
+import { MessageID, SessionID } from "@/session/schema"
 
 addDefaultParsers(parsers.parsers)
 
@@ -621,11 +621,34 @@ export function Session() {
       onSelect: (dialog) => {
         dialog.clear()
         const model = local.model.current()
+        if (!model) return
+        if (shouldDefer()) {
+          setDeferred((list) => [
+            ...list,
+            {
+              id: MessageID.ascending(),
+              sessionID: route.sessionID,
+              input: "",
+              parts: [],
+              type: "command" as const,
+              command: "eval",
+              args: "",
+              model: { providerID: model.providerID, modelID: model.modelID },
+              agent: local.agent.current()?.name ?? "build",
+            },
+          ])
+          toast.show({
+            message: `Message deferred (${deferred().length + 1} pending)`,
+            variant: "success",
+            duration: 2000,
+          })
+          return
+        }
         sdk.client.session.command({
           sessionID: route.sessionID,
           command: "eval",
           arguments: "",
-          ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
+          model: `${model.providerID}/${model.modelID}`,
         })
       },
     },
