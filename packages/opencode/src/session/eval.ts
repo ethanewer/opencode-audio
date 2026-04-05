@@ -33,6 +33,7 @@ export namespace Eval {
     summary?: string
     pass?: boolean
     rebutted?: boolean
+    issues?: Issue[]
   }
 
   export type Rebuttal = {
@@ -69,6 +70,7 @@ export namespace Eval {
       ...(typeof data.summary === "string" ? { summary: data.summary } : {}),
       ...(typeof data.pass === "boolean" ? { pass: data.pass } : {}),
       ...(typeof data.rebutted === "boolean" ? { rebutted: data.rebutted } : {}),
+      ...(Array.isArray(data.issues) ? { issues: data.issues as Issue[] } : {}),
     } satisfies State
   }
 
@@ -349,34 +351,56 @@ export namespace Eval {
 
   export function feedback(result: { summary: string; issues?: Issue[] }, rebut = true): string {
     const parts = [
-      "I reviewed the latest work and still have concerns that need to be addressed.",
+      "The evaluator reviewed your work and found issues that must be resolved.",
       "",
-      `Summary: ${result.summary}`,
+      `## Summary`,
+      "",
+      result.summary,
     ]
     if (result.issues?.length) {
-      parts.push("", "Issues:")
-      for (const issue of result.issues) {
-        const prefix = issue.severity === "error" ? "ERROR" : "WARNING"
-        const loc = issue.file ? ` (${issue.file})` : ""
-        parts.push(`- [${prefix}]${loc}: ${issue.description}`)
+      const errors = result.issues.filter((i) => i.severity === "error")
+      const warnings = result.issues.filter((i) => i.severity === "warning")
+      if (errors.length) {
+        parts.push("", "## Errors (must fix)")
+        for (const issue of errors) {
+          const loc = issue.file ? ` in \`${issue.file}\`` : ""
+          parts.push(`- ${issue.description}${loc}`)
+        }
+      }
+      if (warnings.length) {
+        parts.push("", "## Warnings (should fix)")
+        for (const issue of warnings) {
+          const loc = issue.file ? ` in \`${issue.file}\`` : ""
+          parts.push(`- ${issue.description}${loc}`)
+        }
       }
     }
-    parts.push("", "Please address every issue above before continuing.")
-    if (!rebut) parts.push("Do not leave any issue unresolved.")
+    parts.push("", "## Required action")
+    parts.push("")
+    parts.push("Fix every error listed above. Warnings should also be fixed unless you have a specific reason not to.")
+    if (rebut) {
+      parts.push("If you believe any issue is incorrect, call the eval_rebuttal tool with concrete evidence explaining why.")
+    } else {
+      parts.push("You have exhausted your rebuttals. Fix every remaining issue before ending your turn.")
+    }
     return parts.join("\n")
   }
 
   export function reminder(rebut = true) {
     const parts = [
       "<system-reminder>",
-      "The latest user message contains evaluator concerns that you must resolve directly.",
-      "You must either fix every issue raised or use the eval_rebuttal tool to rebut each issue you are not going to fix.",
-      "Do not simply agree with the evaluation. Do the work needed to resolve every issue, or rebut the issue with specific evidence.",
+      "The latest user message contains evaluator feedback with specific issues you must address.",
+      "Do not simply acknowledge the feedback. You must take concrete action:",
+      "1. Read the relevant files to understand each issue",
+      "2. Fix every issue by editing the affected files",
+      "3. Run tests or verification to confirm your fixes work",
     ]
     if (rebut) {
-      parts.push("If any issue will remain unfixed, you must call eval_rebuttal before ending your turn.")
+      parts.push(
+        "If you believe any issue is incorrect, call eval_rebuttal with specific evidence (e.g. test output, file contents) proving the evaluator is wrong.",
+      )
     } else {
-      parts.push("At this stage, you must fix every remaining issue before ending your turn.")
+      parts.push("You have used all rebuttals. You must fix every remaining issue before ending your turn.")
     }
     parts.push("</system-reminder>")
     return parts.join("\n")
@@ -385,22 +409,28 @@ export namespace Eval {
   export function followup(result: { summary: string; issues?: Issue[] }, rebuttal: string): string {
     const parts = [
       "The build agent submitted a rebuttal to your most recent failed evaluation.",
-      "Review every rebuttal point carefully.",
-      "If the rebuttal is correct, revise your verdict. If it is incorrect, keep the failure and explain the remaining issues.",
-      "Your turn must end by calling eval_result again.",
+      "",
+      "## Instructions",
+      "",
+      "1. Review each rebuttal point against the original issues",
+      "2. Re-examine the relevant files and test output if needed",
+      "3. For each issue: accept the rebuttal (if evidence is convincing) or maintain the failure (if evidence is insufficient)",
+      "4. Call eval_result with your revised verdict",
+      "",
+      "Only change your verdict on issues where the rebuttal provides concrete evidence. Do not flip your verdict based on assertions alone.",
       "",
       "## Previous Evaluation Summary",
+      "",
       result.summary,
     ]
     if (result.issues?.length) {
       parts.push("", "## Previous Issues")
-      parts.push(
-        ...result.issues.map(
-          (issue) => `- [${issue.severity}]${issue.file ? ` (${issue.file})` : ""}: ${issue.description}`,
-        ),
-      )
+      for (const issue of result.issues) {
+        const loc = issue.file ? ` in \`${issue.file}\`` : ""
+        parts.push(`- [${issue.severity}]${loc}: ${issue.description}`)
+      }
     }
-    parts.push("", "## Build Rebuttal", rebuttal)
+    parts.push("", "## Build Agent Rebuttal", "", rebuttal)
     return parts.join("\n")
   }
 
