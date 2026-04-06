@@ -36,6 +36,7 @@ import { pathToFileURL } from "url"
 import { Effect, Layer, ServiceMap } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRuntime } from "@/effect/run-service"
+import { Skill } from "../skill"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
@@ -169,7 +170,11 @@ export namespace ToolRegistry {
       ) {
         const state = yield* InstanceState.get(cache)
         const allTools = yield* all(state.custom)
+        const skillList = yield* Effect.promise(() => Skill.available(agent))
+        const hasSkills = skillList.length > 0
         const filtered = allTools.filter((tool) => {
+          if (tool.id === "skill") return hasSkills
+
           if (tool.id === "plan_exit") {
             return Flag.OPENCODE_CLIENT === "cli" && (agent?.name === "plan" || agent?.name === "voice-plan")
           }
@@ -192,7 +197,7 @@ export namespace ToolRegistry {
           if (tool.id === "edit" || tool.id === "write") return !usePatch
 
           if (tool.id === "read_audio") return model.audioInput === true
-          if (tool.id === "transcribe") return model.audioInput !== true
+          if (tool.id === "transcribe") return model.audioInput === true
 
           const voice = agent?.name.startsWith("voice-") ?? false
           if (tool.id === "speak") return voice && model.audioOutput !== true

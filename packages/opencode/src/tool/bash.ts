@@ -2,6 +2,7 @@ import z from "zod"
 import os from "os"
 import { Tool } from "./tool"
 import path from "path"
+import fs from "fs"
 import DESCRIPTION from "./bash.txt"
 import { Log } from "../util/log"
 import { Instance } from "../project/instance"
@@ -16,6 +17,8 @@ import { Shell } from "@/shell/shell"
 
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncate"
+import { ToolID } from "./schema"
+import { TRUNCATION_DIR } from "./truncation-dir"
 import { Plugin } from "@/plugin"
 import { Cause, Effect, Exit, Layer, ManagedRuntime, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
@@ -25,6 +28,107 @@ const runtime = ManagedRuntime.make(CrossSpawnSpawner.defaultLayer)
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
+const SENTINEL_PREFIX = "__OC_META__:"
+
+function sq(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'"
+}
+
+function sessionStateFile(sessionID: string): string {
+  const safe = sessionID.replace(/[^a-zA-Z0-9_-]/g, "_")
+  return `/tmp/.opencode-shell-state-${safe}`
+}
+
+function wrapCommand(command: string, sessionID: string, workdir?: string): string {
+  const sf = sessionStateFile(sessionID)
+  const lines = [
+    `__oc_sf=${sq(sf)}`,
+    `[ -f "$__oc_sf" ] && . "$__oc_sf" 2>/dev/null`,
+  ]
+  if (workdir) {
+    lines.push(`cd -- ${sq(workdir)} 2>/dev/null || true`)
+  }
+  lines.push(
+    command,
+    `__oc_rc=$?`,
+    `{ printf 'cd -- %q\\n' "$(pwd)"; export -p; } > "$__oc_sf" 2>/dev/null`,
+    `printf '\\n${SENTINEL_PREFIX}%d:%s\\n' "$__oc_rc" "$(pwd)"`,
+    `exit $__oc_rc`,
+  )
+  return lines.join("\n")
+}
+
+function parseSentinel(output: string): { cleanOutput: string; exitCode: number | null; cwd: string | null } {
+  const lines = output.split("\n")
+  for (let i = lines.length - 1; i >= Math.max(0, lines.length - 5); i--) {
+    if (lines[i].startsWith(SENTINEL_PREFIX)) {
+      const rest = lines[i].slice(SENTINEL_PREFIX.length)
+      const colonIdx = rest.indexOf(":")
+      const exitCode = parseInt(colonIdx >= 0 ? rest.slice(0, colonIdx) : rest, 10)
+      const cwd = colonIdx >= 0 ? rest.slice(colonIdx + 1) : null
+      let end = i
+      while (end > 0 && lines[end - 1] === "") end--
+      const cleanOutput = lines.slice(0, end).join("\n")
+      return { cleanOutput, exitCode: isNaN(exitCode) ? null : exitCode, cwd }
+    }
+  }
+  return { cleanOutput: output, exitCode: null, cwd: null }
+}
+
+function headTailTruncate(text: string, maxLines: number, maxBytes: number): { content: string; truncated: boolean; omitted: number } {
+  const lines = text.split("\n")
+  const totalBytes = Buffer.byteLength(text, "utf-8")
+  if (lines.length <= maxLines && totalBytes <= maxBytes) {
+    return { content: text, truncated: false, omitted: 0 }
+  }
+  const headLinesBudget = Math.max(1, Math.floor(maxLines * 0.2))
+  const tailLinesBudget = Math.max(1, maxLines - headLinesBudget)
+  const headBytesBudget = Math.floor(maxBytes * 0.2)
+  const tailBytesBudget = maxBytes - headBytesBudget
+
+  const head: string[] = []
+  let headBytes = 0
+  for (let i = 0; i < lines.length && head.length < headLinesBudget; i++) {
+    const size = Buffer.byteLength(lines[i], "utf-8") + (head.length > 0 ? 1 : 0)
+    if (headBytes + size > headBytesBudget) break
+    head.push(lines[i])
+    headBytes += size
+  }
+  const tail: string[] = []
+  let tailBytes = 0
+  for (let i = lines.length - 1; i >= 0 && tail.length < tailLinesBudget; i--) {
+    const size = Buffer.byteLength(lines[i], "utf-8") + (tail.length > 0 ? 1 : 0)
+    if (tailBytes + size > tailBytesBudget) break
+    tail.unshift(lines[i])
+    tailBytes += size
+  }
+  const omitted = lines.length - head.length - tail.length
+  if (omitted <= 0) return { content: text, truncated: false, omitted: 0 }
+  return {
+    content: [...head, `\n... ${omitted} lines omitted ...\n`, ...tail].join("\n"),
+    truncated: true,
+    omitted,
+  }
+}
+
+async function writeLogFile(data: { cwd: string; command: string; startTime: Date; endTime: Date; exitCode: number | null; output: string }): Promise<string> {
+  const logPath = path.join(TRUNCATION_DIR, ToolID.ascending())
+  await fs.promises.mkdir(TRUNCATION_DIR, { recursive: true })
+  const duration = data.endTime.getTime() - data.startTime.getTime()
+  const content = [
+    `=== SHELL COMMAND LOG ===`,
+    `cwd: ${data.cwd}`,
+    `command: ${data.command}`,
+    `start_time: ${data.startTime.toISOString()}`,
+    `end_time: ${data.endTime.toISOString()}`,
+    `exit_code: ${data.exitCode ?? "unknown"}`,
+    `duration_ms: ${duration}`,
+    `===`,
+    data.output,
+  ].join("\n")
+  await fs.promises.writeFile(logPath, content, "utf-8")
+  return logPath
+}
 const PS = new Set(["powershell", "pwsh"])
 const CWD = new Set(["cd", "push-location", "set-location"])
 const FILES = new Set([
@@ -325,12 +429,18 @@ async function run(
     env: NodeJS.ProcessEnv
     timeout: number
     description: string
+    sessionID: string
+    workdir?: string
   },
   ctx: Tool.Context,
 ) {
   let output = ""
   let expired = false
   let aborted = false
+  const startTime = new Date()
+
+  const ps = PS.has(input.name)
+  const execCommand = ps ? input.command : wrapCommand(input.command, input.sessionID, input.workdir)
 
   ctx.metadata({
     metadata: {
@@ -342,7 +452,7 @@ async function run(
   const exit = await runtime.runPromiseExit(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-      const handle = yield* spawner.spawn(cmd(input.shell, input.name, input.command, input.cwd, input.env))
+      const handle = yield* spawner.spawn(cmd(input.shell, input.name, execCommand, input.cwd, input.env))
 
       yield* Effect.forkScoped(
         Stream.runForEach(Stream.decodeText(handle.all), (chunk) =>
@@ -386,28 +496,65 @@ async function run(
     }).pipe(Effect.scoped, Effect.orDie),
   )
 
-  let code: number | null = null
+  const endTime = new Date()
+  let processExitCode: number | null = null
   if (Exit.isSuccess(exit)) {
-    code = exit.value
+    processExitCode = exit.value
   } else if (!Cause.hasInterruptsOnly(exit.cause)) {
     throw Cause.squash(exit.cause)
   }
 
-  const meta: string[] = []
-  if (expired) meta.push(`bash tool terminated command after exceeding timeout ${input.timeout} ms`)
-  if (aborted) meta.push("User aborted the command")
-  if (meta.length > 0) {
-    output += "\n\n<bash_metadata>\n" + meta.join("\n") + "\n</bash_metadata>"
+  let cleanOutput = output
+  let shellCwd = input.cwd
+  let shellExitCode = processExitCode
+
+  if (!ps) {
+    const parsed = parseSentinel(output)
+    cleanOutput = parsed.cleanOutput
+    if (parsed.exitCode !== null) shellExitCode = parsed.exitCode
+    if (parsed.cwd) shellCwd = parsed.cwd
   }
+
+  if (expired) cleanOutput += `\n\nCommand timed out after ${input.timeout}ms`
+  if (aborted) cleanOutput += "\n\nCommand aborted"
+
+  let logPath: string | undefined
+  try {
+    logPath = await writeLogFile({
+      cwd: shellCwd,
+      command: input.command,
+      startTime,
+      endTime,
+      exitCode: shellExitCode,
+      output: cleanOutput,
+    })
+  } catch {
+    log.warn("failed to write command log file")
+  }
+
+  const headerLines = [
+    `[cwd: ${shellCwd}] $ ${input.command}`,
+    `Exit code: ${shellExitCode ?? "unknown"}`,
+  ]
+  if (logPath) headerLines.push(`Log: ${logPath}`)
+  const header = headerLines.join("\n")
+
+  const trunc = headTailTruncate(cleanOutput, Truncate.MAX_LINES, Truncate.MAX_BYTES)
+  const formattedOutput = trunc.truncated
+    ? `${header}\n\n${trunc.content}${logPath ? `\n\n(Full output saved to ${logPath})` : ""}`
+    : `${header}\n\n${cleanOutput}`
 
   return {
     title: input.description,
     metadata: {
-      output: preview(output),
-      exit: code,
+      output: preview(cleanOutput),
+      exit: shellExitCode,
       description: input.description,
+      cwd: shellCwd,
+      logPath,
+      truncated: trunc.truncated,
     },
-    output,
+    output: formattedOutput,
   }
 }
 
@@ -452,9 +599,7 @@ export const BashTool = Tool.define("bash", async () => {
     description: DESCRIPTION.replaceAll("${directory}", Instance.directory)
       .replaceAll("${os}", process.platform)
       .replaceAll("${shell}", name)
-      .replaceAll("${chaining}", chain)
-      .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
-      .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES)),
+      .replaceAll("${chaining}", chain),
     parameters: z.object({
       command: z.string().describe("The command to execute"),
       timeout: z.number().describe("Optional timeout in milliseconds").optional(),
@@ -471,15 +616,16 @@ export const BashTool = Tool.define("bash", async () => {
         ),
     }),
     async execute(params, ctx) {
-      const cwd = params.workdir ? await resolvePath(params.workdir, Instance.directory, shell) : Instance.directory
+      const resolvedWorkdir = params.workdir ? await resolvePath(params.workdir, Instance.directory, shell) : undefined
+      const permCwd = resolvedWorkdir ?? Instance.directory
       if (params.timeout !== undefined && params.timeout < 0) {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
       }
       const timeout = params.timeout ?? DEFAULT_TIMEOUT
       const ps = PS.has(name)
       const root = await parse(params.command, ps)
-      const scan = await collect(root, cwd, ps, shell)
-      if (!Instance.containsPath(cwd)) scan.dirs.add(cwd)
+      const scan = await collect(root, permCwd, ps, shell)
+      if (!Instance.containsPath(permCwd)) scan.dirs.add(permCwd)
       await ask(ctx, scan)
 
       return run(
@@ -487,10 +633,12 @@ export const BashTool = Tool.define("bash", async () => {
           shell,
           name,
           command: params.command,
-          cwd,
-          env: await shellEnv(ctx, cwd),
+          cwd: Instance.directory,
+          env: await shellEnv(ctx, Instance.directory),
           timeout,
           description: params.description,
+          sessionID: ctx.sessionID,
+          workdir: resolvedWorkdir,
         },
         ctx,
       )

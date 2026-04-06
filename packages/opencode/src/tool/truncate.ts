@@ -24,7 +24,7 @@ export namespace Truncate {
   export interface Options {
     maxLines?: number
     maxBytes?: number
-    direction?: "head" | "tail"
+    direction?: "head" | "tail" | "head_tail"
   }
 
   function hasTaskTool(agent?: Agent.Info) {
@@ -71,50 +71,90 @@ export namespace Truncate {
           return { content: text, truncated: false } as const
         }
 
-        const out: string[] = []
-        let i = 0
-        let bytes = 0
-        let hitBytes = false
+        let preview: string
+        let removed: number
+        let unit: string
 
-        if (direction === "head") {
-          for (i = 0; i < lines.length && i < maxLines; i++) {
-            const size = Buffer.byteLength(lines[i], "utf-8") + (i > 0 ? 1 : 0)
-            if (bytes + size > maxBytes) {
-              hitBytes = true
-              break
-            }
-            out.push(lines[i])
-            bytes += size
+        if (direction === "head_tail") {
+          const headLinesBudget = Math.max(1, Math.floor(maxLines * 0.2))
+          const tailLinesBudget = Math.max(1, maxLines - headLinesBudget)
+          const headBytesBudget = Math.floor(maxBytes * 0.2)
+          const tailBytesBudget = maxBytes - headBytesBudget
+
+          const head: string[] = []
+          let headBytes = 0
+          for (let j = 0; j < lines.length && head.length < headLinesBudget; j++) {
+            const size = Buffer.byteLength(lines[j], "utf-8") + (head.length > 0 ? 1 : 0)
+            if (headBytes + size > headBytesBudget) break
+            head.push(lines[j])
+            headBytes += size
           }
+
+          const tail: string[] = []
+          let tailBytes = 0
+          for (let j = lines.length - 1; j >= 0 && tail.length < tailLinesBudget; j--) {
+            const size = Buffer.byteLength(lines[j], "utf-8") + (tail.length > 0 ? 1 : 0)
+            if (tailBytes + size > tailBytesBudget) break
+            tail.unshift(lines[j])
+            tailBytes += size
+          }
+
+          const omitted = lines.length - head.length - tail.length
+          if (omitted <= 0) {
+            return { content: text, truncated: false } as const
+          }
+          removed = omitted
+          unit = "lines"
+          preview = [...head, `\n... ${omitted} lines omitted ...\n`, ...tail].join("\n")
         } else {
-          for (i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
-            const size = Buffer.byteLength(lines[i], "utf-8") + (out.length > 0 ? 1 : 0)
-            if (bytes + size > maxBytes) {
-              hitBytes = true
-              break
+          const out: string[] = []
+          let i = 0
+          let bytes = 0
+          let hitBytes = false
+
+          if (direction === "head") {
+            for (i = 0; i < lines.length && i < maxLines; i++) {
+              const size = Buffer.byteLength(lines[i], "utf-8") + (i > 0 ? 1 : 0)
+              if (bytes + size > maxBytes) {
+                hitBytes = true
+                break
+              }
+              out.push(lines[i])
+              bytes += size
             }
-            out.unshift(lines[i])
-            bytes += size
+          } else {
+            for (i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
+              const size = Buffer.byteLength(lines[i], "utf-8") + (out.length > 0 ? 1 : 0)
+              if (bytes + size > maxBytes) {
+                hitBytes = true
+                break
+              }
+              out.unshift(lines[i])
+              bytes += size
+            }
           }
+
+          removed = hitBytes ? totalBytes - bytes : lines.length - out.length
+          unit = hitBytes ? "bytes" : "lines"
+          preview = out.join("\n")
         }
 
-        const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
-        const unit = hitBytes ? "bytes" : "lines"
-        const preview = out.join("\n")
         const file = path.join(TRUNCATION_DIR, ToolID.ascending())
 
         yield* fs.ensureDir(TRUNCATION_DIR).pipe(Effect.orDie)
         yield* fs.writeFileString(file, text).pipe(Effect.orDie)
 
         const hint = hasTaskTool(agent)
-          ? `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
-          : `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+          ? `Full output saved to: ${file}\nUse the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
+          : `Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
 
         return {
           content:
             direction === "head"
               ? `${preview}\n\n...${removed} ${unit} truncated...\n\n${hint}`
-              : `...${removed} ${unit} truncated...\n\n${hint}\n\n${preview}`,
+              : direction === "tail"
+                ? `...${removed} ${unit} truncated...\n\n${hint}\n\n${preview}`
+                : `${preview}\n\n${hint}`,
           truncated: true,
           outputPath: file,
         } as const
