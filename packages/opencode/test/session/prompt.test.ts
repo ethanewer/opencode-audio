@@ -285,8 +285,8 @@ describe("session.prompt regression", () => {
           expect(result.parts.some((part) => part.type === "text" && part.text.includes("processor.ts"))).toBe(true)
 
           const msgs = await Session.messages({ sessionID: session.id })
-          expect(msgs.filter((msg) => msg.info.role === "assistant")).toHaveLength(1)
-          expect(calls).toBe(1)
+          expect(msgs.filter((msg) => msg.info.role === "assistant")).toHaveLength(6)
+          expect(calls).toBe(6)
         },
       })
     } finally {

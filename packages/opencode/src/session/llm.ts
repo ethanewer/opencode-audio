@@ -105,7 +105,7 @@ export namespace LLM {
         // use agent prompt otherwise provider prompt
         ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
         // append voice prompt for voice agents using TTS (skip for models with native audio output)
-        ...(input.agent.name.startsWith("voice-") && !input.agent.prompt && !input.model.capabilities.output.audio
+        ...(input.agent.name.startsWith("voice-") && !input.model.capabilities.output.audio
           ? [PROMPT_VOICE]
           : []),
         // any custom prompt passed into this call

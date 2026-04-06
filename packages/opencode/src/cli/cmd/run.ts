@@ -215,6 +215,26 @@ function bash(info: ToolProps<typeof BashTool>) {
   )
 }
 
+function executeCommands(info: ToolProps<any>) {
+  const output = info.part.state.status === "completed" ? info.part.state.output?.trim() : undefined
+  const plan = info.metadata.plan ?? "Execute Commands"
+  block({ icon: "$", title: typeof plan === "string" ? plan.slice(0, 80) : "Execute Commands" }, output)
+}
+
+function taskComplete(info: ToolProps<any>) {
+  const confirmed = info.metadata.confirmed === true
+  inline({
+    icon: confirmed ? "✓" : "?",
+    title: confirmed ? "Task confirmed complete" : "Completion checklist sent",
+  })
+}
+
+function imageRead(part: ToolPart) {
+  const input = part.state.input as Record<string, unknown> | undefined
+  const file = typeof input?.file_path === "string" ? normalizePath(input.file_path) : "image"
+  inline({ icon: "⬡", title: `image_read ${file}` })
+}
+
 function todo(info: ToolProps<typeof TodoWriteTool>) {
   block(
     {
@@ -486,6 +506,9 @@ export const RunCommand = cmd({
           if (part.tool === "eval_rebuttal") return rebuttal(props<any>(part))
           if (part.tool === "todowrite") return todo(props<typeof TodoWriteTool>(part))
           if (part.tool === "skill") return skill(props<typeof SkillTool>(part))
+          if (part.tool === "execute_commands") return executeCommands(props<any>(part))
+          if (part.tool === "task_complete") return taskComplete(props<any>(part))
+          if (part.tool === "image_read") return imageRead(part)
           return fallback(part)
         } catch {
           return fallback(part)

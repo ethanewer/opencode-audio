@@ -36,6 +36,8 @@ import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
 import { SessionProcessor } from "./processor"
 import { TaskTool } from "@/tool/task"
+import { TaskComplete } from "@/tool/task_complete"
+import { Tmux } from "@/tmux/tmux"
 import { Tool } from "@/tool/tool"
 import { Permission } from "@/permission"
 import { Question } from "@/question"
@@ -78,6 +80,7 @@ function buildFromPlan(name: string) {
 const ACTION_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "bash", "eval_rebuttal"])
 const MAX_TODO_NUDGES = 3
 const MAX_EVAL_NUDGES = 2
+const MAX_KIRA_NUDGES = 5
 
 function incompleteTodos(sessionID: SessionID) {
   const todos = Todo.get(sessionID)
@@ -468,6 +471,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
             modelID: ModelID.make(input.model.api.id),
             providerID: input.model.providerID,
             audioOutput: input.model.capabilities?.output?.audio,
+            imageInput: input.model.capabilities?.input?.image,
           },
           input.agent,
         )) {
@@ -1409,8 +1413,10 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
           let nudged = false
           let todoNudges = 0
           let evalNudges = 0
+          let kiraNudges = 0
           let remind = false
           const session = yield* sessions.get(sessionID)
+          TaskComplete.reset(sessionID)
 
           while (true) {
             yield* status.set(sessionID, { type: "busy" })
@@ -1608,6 +1614,31 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   }
                 }
               }
+              // KIRA empty tool calls feedback: nudge the build agent to use
+              // execute_commands when it finishes without calling any tools.
+              // The build agent exits via task_complete double-confirmation.
+              // Guard on step > 0 so pre-existing finished assistants don't trigger a nudge.
+              if (step > 0 && kiraNudges < MAX_KIRA_NUDGES && isBuild(lastUser.agent)) {
+                kiraNudges++
+                const mid = MessageID.ascending()
+                yield* sessions.updateMessage({
+                  id: mid,
+                  sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                } satisfies MessageV2.User)
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: mid,
+                  sessionID,
+                  type: "text",
+                  text: "WARNINGS: Your response contained no tool calls. Please use execute_commands to run commands.",
+                  synthetic: true,
+                } satisfies MessageV2.TextPart)
+                continue
+              }
               log.info("exiting loop", { sessionID })
               break
             }
@@ -1749,8 +1780,24 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
                 const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
 
+                const evalActive =
+                  isBuild(agent.name) &&
+                  msgs.some(
+                    (m) =>
+                      m.info.role === "user" &&
+                      m.parts.some((p) => p.type === "text" && !p.ignored && Eval.state(p)?.phase === "failed"),
+                  )
+                const toolAgent = evalActive
+                  ? {
+                      ...agent,
+                      options: {
+                        ...agent.options,
+                        tools: [...(Array.isArray(agent.options?.tools) ? agent.options.tools : []), "eval_rebuttal"],
+                      },
+                    }
+                  : agent
                 const tools = yield* resolveTools({
-                  agent,
+                  agent: toolAgent,
                   session,
                   model,
                   tools: lastUser.tools,
@@ -1791,15 +1838,29 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
 
                 yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
+                const kira = isBuild(agent.name)
                 const [skills, env, instructions, modelMsgs] = yield* Effect.promise(() =>
                   Promise.all([
-                    SystemPrompt.skills(agent),
-                    SystemPrompt.environment(model),
-                    Instruction.system(),
+                    kira ? undefined : SystemPrompt.skills(agent),
+                    kira ? ([] as string[]) : SystemPrompt.environment(model),
+                    kira ? ([] as string[]) : Instruction.system(),
                     MessageV2.toModelMessages(msgs, model),
                   ]),
                 )
-                const system = [...env, ...(skills ? [skills] : []), ...instructions]
+
+                let effectiveAgent = agent
+                if (kira && agent.prompt) {
+                  const task = TaskComplete.instruction(msgs)
+                  const terminal = yield* Effect.promise(() => Tmux.capture(sessionID))
+                  effectiveAgent = {
+                    ...agent,
+                    prompt: agent.prompt!
+                      .replace("{instruction}", task)
+                      .replace("{terminal_state}", terminal || "(empty)"),
+                  }
+                }
+
+                const system = kira ? [] : [...env, ...(skills ? [skills] : []), ...instructions]
                 const evalPart = msgs
                   .findLast((msg) => msg.info.id === lastUser.id)
                   ?.parts.findLast(
@@ -1814,7 +1875,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
                 const result = yield* handle.process({
                   user: lastUser,
-                  agent,
+                  agent: effectiveAgent,
                   permission: session.permission,
                   sessionID,
                   system,
@@ -1989,6 +2050,11 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   (p) => p.type === "tool" && p.tool === "eval_result" && p.state.status === "completed",
                 )
             if (evalDone) break
+            // task_complete confirmed: agent confirmed completion via double-confirmation
+            if (TaskComplete.isConfirmed(sessionID)) {
+              TaskComplete.reset(sessionID)
+              break
+            }
             continue
           }
 

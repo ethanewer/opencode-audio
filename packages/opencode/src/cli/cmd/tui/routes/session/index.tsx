@@ -1843,6 +1843,15 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
         </Match>
+        <Match when={props.part.tool === "execute_commands"}>
+          <ExecuteCommands {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "task_complete"}>
+          <TaskCompleteView {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "image_read"}>
+          <ImageRead {...toolprops} />
+        </Match>
         <Match when={true}>
           <GenericTool {...toolprops} />
         </Match>
@@ -2112,6 +2121,81 @@ function Bash(props: ToolProps<typeof BashTool>) {
         </InlineTool>
       </Match>
     </Switch>
+  )
+}
+
+function ExecuteCommands(props: ToolProps<any>) {
+  const { theme } = useTheme()
+  const isRunning = createMemo(() => props.part.state.status === "running")
+  const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
+  const [expanded, setExpanded] = createSignal(false)
+  const lines = createMemo(() => output().split("\n"))
+  const overflow = createMemo(() => lines().length > 10)
+  const limited = createMemo(() => {
+    if (expanded() || !overflow()) return output()
+    return [...lines().slice(0, 10), "…"].join("\n")
+  })
+  const cmds = createMemo(() => {
+    const c = props.metadata.commands
+    return Array.isArray(c) ? c : []
+  })
+  const title = createMemo(() => {
+    const plan = props.metadata.plan
+    if (typeof plan === "string" && plan.length > 0) return `# ${plan.slice(0, 80)}`
+    return "# Execute Commands"
+  })
+
+  return (
+    <Switch>
+      <Match when={props.metadata.output !== undefined}>
+        <BlockTool
+          title={title()}
+          part={props.part}
+          spinner={isRunning()}
+          onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
+        >
+          <box gap={1}>
+            <Show when={output()}>
+              <text fg={theme.text}>{limited()}</text>
+            </Show>
+            <Show when={overflow()}>
+              <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
+            </Show>
+          </box>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <InlineTool icon="$" pending="Writing commands..." complete={cmds().join("; ") || true} part={props.part}>
+          {cmds().join("; ") || "execute_commands"}
+        </InlineTool>
+      </Match>
+    </Switch>
+  )
+}
+
+function TaskCompleteView(props: ToolProps<any>) {
+  const confirmed = createMemo(() => props.metadata.confirmed === true)
+  return (
+    <InlineTool
+      icon={confirmed() ? "✓" : "?"}
+      pending="Checking completion..."
+      complete={confirmed() ? "Task confirmed complete" : "Completion checklist sent"}
+      part={props.part}
+    >
+      {confirmed() ? "Task confirmed complete" : "Completion checklist"}
+    </InlineTool>
+  )
+}
+
+function ImageRead(props: ToolProps<any>) {
+  const file = createMemo(() => {
+    const fp = (props.input as Record<string, unknown>)?.file_path
+    return typeof fp === "string" ? normalizePath(fp) : "image"
+  })
+  return (
+    <InlineTool icon="⬡" pending="Reading image..." complete={`image_read ${file()}`} part={props.part}>
+      image_read {file()}
+    </InlineTool>
   )
 }
 

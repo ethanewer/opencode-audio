@@ -31,6 +31,9 @@ import { TranscribeTool } from "./transcribe"
 import { ReadAudioTool } from "./read_audio"
 import { SpeakTool } from "./speak"
 import { EvalRebuttalTool, EvalTool } from "./eval"
+import { ExecuteCommandsTool } from "./execute_commands"
+import { TaskCompleteTool } from "./task_complete"
+import { ImageReadTool } from "./image_read"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 import { Effect, Layer, ServiceMap } from "effect"
@@ -48,7 +51,7 @@ export namespace ToolRegistry {
     readonly register: (tool: Tool.Info) => Effect.Effect<void>
     readonly ids: () => Effect.Effect<string[]>
     readonly tools: (
-      model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean },
+      model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean },
       agent?: Agent.Info,
     ) => Effect.Effect<(Tool.Def & { id: string })[]>
   }
@@ -140,6 +143,9 @@ export namespace ToolRegistry {
           SpeakTool,
           EvalTool,
           EvalRebuttalTool,
+          ExecuteCommandsTool,
+          TaskCompleteTool,
+          ImageReadTool,
           ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...(cfg.experimental?.batch_tool === true ? [BatchTool] : []),
           ...(Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
@@ -163,12 +169,22 @@ export namespace ToolRegistry {
         return tools.map((t) => t.id)
       })
 
+      const KIRA_TOOLS = new Set(["execute_commands", "task_complete", "image_read", "invalid"])
+
+      function isKira(agent?: Agent.Info) {
+        return agent?.name === "build" || agent?.name === "voice-build"
+      }
+
       const tools = Effect.fn("ToolRegistry.tools")(function* (
-        model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean },
+        model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean },
         agent?: Agent.Info,
       ) {
         const state = yield* InstanceState.get(cache)
         const allTools = yield* all(state.custom)
+        const extra = new Set<string>(
+          Array.isArray(agent?.options?.tools) ? (agent.options.tools as string[]) : [],
+        )
+        const voice = agent?.name.startsWith("voice-") ?? false
         const filtered = allTools.filter((tool) => {
           if (tool.id === "plan_exit") {
             return Flag.OPENCODE_CLIENT === "cli" && (agent?.name === "plan" || agent?.name === "voice-plan")
@@ -179,8 +195,28 @@ export namespace ToolRegistry {
           }
 
           if (tool.id === "eval_rebuttal") {
+            if (isKira(agent)) return extra.has(tool.id)
             return agent?.name !== "eval"
           }
+
+          if (tool.id === "image_read") {
+            if (model.imageInput !== true) return false
+            if (isKira(agent)) return true
+            return extra.has(tool.id)
+          }
+
+          // KIRA agent whitelist: only KIRA tools + audio/voice tools + user extras
+          if (isKira(agent)) {
+            if (KIRA_TOOLS.has(tool.id)) return true
+            if (tool.id === "read_audio") return model.audioInput === true
+            if (tool.id === "transcribe") return model.audioInput !== true
+            if (tool.id === "speak") return voice && model.audioOutput !== true
+            if (extra.has(tool.id)) return true
+            return false
+          }
+
+          // Non-KIRA agents don't get KIRA-specific tools
+          if (tool.id === "execute_commands" || tool.id === "task_complete") return false
 
           if (tool.id === "codesearch" || tool.id === "websearch") {
             return model.providerID === ProviderID.opencode || Flag.OPENCODE_ENABLE_EXA
@@ -194,7 +230,6 @@ export namespace ToolRegistry {
           if (tool.id === "read_audio") return model.audioInput === true
           if (tool.id === "transcribe") return model.audioInput !== true
 
-          const voice = agent?.name.startsWith("voice-") ?? false
           if (tool.id === "speak") return voice && model.audioOutput !== true
           if (tool.id === "question") return !voice
 
@@ -246,6 +281,7 @@ export namespace ToolRegistry {
       modelID: ModelID
       audioInput?: boolean
       audioOutput?: boolean
+      imageInput?: boolean
     },
     agent?: Agent.Info,
   ): Promise<(Tool.Def & { id: string })[]> {

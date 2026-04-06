@@ -15,6 +15,7 @@ import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_EVAL from "./prompt/eval.txt"
 import PROMPT_EXTRACT from "./prompt/extract.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_KIRA from "../session/prompt/kira.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
@@ -109,6 +110,7 @@ export namespace Agent {
             build: {
               name: "build",
               description: "The default agent. Executes tools based on configured permissions.",
+              prompt: PROMPT_KIRA,
               options: {},
               permission: Permission.merge(
                 defaults,
@@ -166,6 +168,7 @@ export namespace Agent {
             "voice-build": {
               name: "voice-build",
               description: "Voice build agent. Same as build but responses are optimized for text-to-speech output.",
+              prompt: PROMPT_KIRA,
               options: {},
               permission: Permission.merge(
                 defaults,

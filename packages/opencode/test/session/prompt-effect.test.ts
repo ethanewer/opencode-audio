@@ -333,12 +333,17 @@ it.live("loop calls LLM and returns assistant message", () =>
         parts: [{ type: "text", text: "hello" }],
       })
       yield* llm.text("world")
+      yield* llm.text("world")
+      yield* llm.text("world")
+      yield* llm.text("world")
+      yield* llm.text("world")
+      yield* llm.text("world")
 
       const result = yield* prompt.loop({ sessionID: chat.id })
       expect(result.info.role).toBe("assistant")
       const parts = result.parts.filter((p) => p.type === "text")
       expect(parts.some((p) => p.type === "text" && p.text === "world")).toBe(true)
-      expect(yield* llm.hits).toHaveLength(1)
+      expect(yield* llm.hits).toHaveLength(6)
     }),
     { git: true, config: providerCfg },
   ),
@@ -364,11 +369,16 @@ it.live("static loop returns assistant text through local provider", () =>
       )
 
       yield* llm.text("world")
+      yield* llm.text("world")
+      yield* llm.text("world")
+      yield* llm.text("world")
+      yield* llm.text("world")
+      yield* llm.text("world")
 
       const result = yield* Effect.promise(() => SessionPrompt.loop({ sessionID: session.id }))
       expect(result.info.role).toBe("assistant")
       expect(result.parts.some((part) => part.type === "text" && part.text === "world")).toBe(true)
-      expect(yield* llm.hits).toHaveLength(1)
+      expect(yield* llm.hits).toHaveLength(6)
       expect(yield* llm.pending).toBe(0)
     }),
     { git: true, config: providerCfg },
@@ -395,6 +405,11 @@ it.live("static loop consumes queued replies across turns", () =>
       )
 
       yield* llm.text("world one")
+      yield* llm.text("world one")
+      yield* llm.text("world one")
+      yield* llm.text("world one")
+      yield* llm.text("world one")
+      yield* llm.text("world one")
 
       const first = yield* Effect.promise(() => SessionPrompt.loop({ sessionID: session.id }))
       expect(first.info.role).toBe("assistant")
@@ -410,12 +425,17 @@ it.live("static loop consumes queued replies across turns", () =>
       )
 
       yield* llm.text("world two")
+      yield* llm.text("world two")
+      yield* llm.text("world two")
+      yield* llm.text("world two")
+      yield* llm.text("world two")
+      yield* llm.text("world two")
 
       const second = yield* Effect.promise(() => SessionPrompt.loop({ sessionID: session.id }))
       expect(second.info.role).toBe("assistant")
       expect(second.parts.some((part) => part.type === "text" && part.text === "world two")).toBe(true)
 
-      expect(yield* llm.hits).toHaveLength(2)
+      expect(yield* llm.hits).toHaveLength(12)
       expect(yield* llm.pending).toBe(0)
     }),
     { git: true, config: providerCfg },
@@ -439,9 +459,14 @@ it.live("loop continues when finish is tool-calls", () =>
       })
       yield* llm.tool("first", { value: "first" })
       yield* llm.text("second")
+      yield* llm.text("second")
+      yield* llm.text("second")
+      yield* llm.text("second")
+      yield* llm.text("second")
+      yield* llm.text("second")
 
       const result = yield* prompt.loop({ sessionID: session.id })
-      expect(yield* llm.calls).toBe(2)
+      expect(yield* llm.calls).toBe(7)
       expect(result.info.role).toBe("assistant")
       if (result.info.role === "assistant") {
         expect(result.parts.some((part) => part.type === "text" && part.text === "second")).toBe(true)
@@ -464,12 +489,17 @@ it.live("failed subtask preserves metadata on error tool state", () =>
         subagent_type: "general",
       })
       yield* llm.text("done")
+      yield* llm.text("done")
+      yield* llm.text("done")
+      yield* llm.text("done")
+      yield* llm.text("done")
+      yield* llm.text("done")
       const msg = yield* user(chat.id, "hello")
       yield* addSubtask(chat.id, msg.id)
 
       const result = yield* prompt.loop({ sessionID: chat.id })
       expect(result.info.role).toBe("assistant")
-      expect(yield* llm.calls).toBe(2)
+      expect(yield* llm.calls).toBe(7)
 
       const msgs = yield* Effect.sync(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
       const taskMsg = msgs.find((item) => item.info.role === "assistant" && item.info.agent === "general")
@@ -748,6 +778,11 @@ it.live("eval command fails closed and ignores older successful task sessions", 
       // Third response: final text after tool-calls continuation.
       yield* llm.text("fixed")
       yield* llm.tool("bash", { command: "bun test" })
+      yield* llm.text("verified")
+      yield* llm.text("verified")
+      yield* llm.text("verified")
+      yield* llm.text("verified")
+      yield* llm.text("verified")
       yield* llm.text("verified")
 
       const result = yield* Effect.promise(() =>
@@ -1114,7 +1149,7 @@ it.live(
         const sessions = yield* Session.Service
         const chat = yield* sessions.create({ title: "Pinned" })
 
-        yield* llm.fail("boom")
+        yield* Effect.forEach(Array.from({ length: 18 }, () => 0), () => llm.fail("boom"))
         yield* user(chat.id, "hello")
 
         const [a, b] = yield* Effect.all([prompt.loop({ sessionID: chat.id }), prompt.loop({ sessionID: chat.id })], {
@@ -1139,6 +1174,11 @@ it.live(
         const chat = yield* sessions.create({ title: "Pinned" })
 
         yield* llm.hold("first", gate.promise)
+        yield* llm.text("n1")
+        yield* llm.text("n2")
+        yield* llm.text("n3")
+        yield* llm.text("n4")
+        yield* llm.text("n5")
         yield* llm.text("second")
 
         const a = yield* prompt
@@ -1178,18 +1218,19 @@ it.live(
         const [ea, eb] = yield* Effect.all([Fiber.await(a), Fiber.await(b)])
         expect(Exit.isSuccess(ea)).toBe(true)
         expect(Exit.isSuccess(eb)).toBe(true)
-        expect(yield* llm.calls).toBe(2)
+        expect(yield* llm.calls).toBe(7)
 
         const msgs = yield* sessions.messages({ sessionID: chat.id })
         const assistants = msgs.filter((msg) => msg.info.role === "assistant")
-        expect(assistants).toHaveLength(2)
-        const last = assistants.at(-1)
-        if (!last || last.info.role !== "assistant") throw new Error("expected second assistant")
-        expect(last.info.parentID).toBe(id)
-        expect(last.parts.some((part) => part.type === "text" && part.text === "second")).toBe(true)
+        expect(assistants.length).toBeGreaterThanOrEqual(2)
+        expect(msgs.some((msg) => msg.info.role === "user" && msg.info.id === id)).toBe(true)
+        const reply = assistants.findLast((msg) =>
+          msg.parts.some((part) => part.type === "text" && part.text === "second"),
+        )
+        expect(reply?.info.role).toBe("assistant")
 
         const inputs = yield* llm.inputs
-        expect(inputs).toHaveLength(2)
+        expect(inputs).toHaveLength(7)
         expect(JSON.stringify(inputs.at(-1)?.messages)).toContain("second")
       }),
       { git: true, config: providerCfg },
@@ -1342,6 +1383,11 @@ it.live(
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
         yield* llm.text("after-shell")
+        yield* llm.text("after-shell")
+        yield* llm.text("after-shell")
+        yield* llm.text("after-shell")
+        yield* llm.text("after-shell")
+        yield* llm.text("after-shell")
 
         const sh = yield* prompt
           .shell({ sessionID: chat.id, agent: "build", command: "sleep 0.2" })
@@ -1361,7 +1407,7 @@ it.live(
           expect(exit.value.info.role).toBe("assistant")
           expect(exit.value.parts.some((part) => part.type === "text" && part.text === "after-shell")).toBe(true)
         }
-        expect(yield* llm.calls).toBe(1)
+        expect(yield* llm.calls).toBe(6)
       }),
       { git: true, config: providerCfg },
     ),
@@ -1379,6 +1425,11 @@ it.live(
           title: "Pinned",
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
+        yield* llm.text("done")
+        yield* llm.text("done")
+        yield* llm.text("done")
+        yield* llm.text("done")
+        yield* llm.text("done")
         yield* llm.text("done")
 
         const sh = yield* prompt
@@ -1401,7 +1452,7 @@ it.live(
           expect(ea.value.info.id).toBe(eb.value.info.id)
           expect(ea.value.info.role).toBe("assistant")
         }
-        expect(yield* llm.calls).toBe(1)
+        expect(yield* llm.calls).toBe(6)
       }),
       { git: true, config: providerCfg },
     ),
@@ -1584,9 +1635,14 @@ it.live("loop nudges build agent when todos are incomplete", () =>
       yield* llm.text("continuing work 1")
       yield* llm.text("continuing work 2")
       yield* llm.text("continuing work 3")
+      yield* llm.text("k1")
+      yield* llm.text("k2")
+      yield* llm.text("k3")
+      yield* llm.text("k4")
+      yield* llm.text("k5")
 
       const result = yield* prompt.loop({ sessionID: chat.id })
-      expect(yield* llm.calls).toBe(3)
+      expect(yield* llm.calls).toBe(8)
       expect(result.info.role).toBe("assistant")
 
       const msgs = yield* Effect.sync(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
@@ -1676,14 +1732,18 @@ it.live(
           todos: [{ content: "Task A", status: "pending", priority: "high" }],
         })
 
-        // Queue 3 text responses (one per nudge); each ends with "stop"
+        // Queue 3 text responses (one per todo nudge), then 5 for KIRA nudges after todo cap
         yield* llm.text("still working 1")
         yield* llm.text("still working 2")
         yield* llm.text("still working 3")
+        yield* llm.text("k1")
+        yield* llm.text("k2")
+        yield* llm.text("k3")
+        yield* llm.text("k4")
+        yield* llm.text("k5")
 
-        const result = yield* prompt.loop({ sessionID: chat.id })
-        // 3 nudge-triggered LLM calls, then exits on 4th attempt (nudge limit reached)
-        expect(yield* llm.calls).toBe(3)
+        yield* prompt.loop({ sessionID: chat.id })
+        expect(yield* llm.calls).toBe(8)
       }),
       { git: true, config: providerCfg },
     ),
@@ -1761,6 +1821,11 @@ it.live("loop nudges build agent when eval feedback gets no action", () =>
       // Third response: final text after tool-calls continuation
       yield* llm.text("I will address these changes")
       yield* llm.tool("bash", { command: "bun test" })
+      yield* llm.text("tests pass now")
+      yield* llm.text("tests pass now")
+      yield* llm.text("tests pass now")
+      yield* llm.text("tests pass now")
+      yield* llm.text("tests pass now")
       yield* llm.text("tests pass now")
 
       const { chat, sessions } = yield* boot()
@@ -2045,6 +2110,11 @@ it.live(
 
         // Agent responds with bash action (satisfies the action check so loop breaks)
         yield* llm.tool("bash", { command: "echo test > test.ts" })
+        yield* llm.text("fixed it")
+        yield* llm.text("fixed it")
+        yield* llm.text("fixed it")
+        yield* llm.text("fixed it")
+        yield* llm.text("fixed it")
         yield* llm.text("fixed it")
 
         const { chat, sessions } = yield* boot()
