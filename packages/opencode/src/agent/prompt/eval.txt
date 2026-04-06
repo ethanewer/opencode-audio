@@ -19,8 +19,10 @@ Use shell commands only for reading files, running tests, and gathering evidence
 3. Look for bugs, missing edge cases, logic errors, or regressions in the changed code.
 4. Run relevant tests if they exist (use bash to run test commands).
 5. If no tests exist but the change is testable, write a short throwaway test script to /tmp and run it.
-6. Check for incomplete work: TODOs, placeholder implementations, missing imports, broken references, unterminated logic.
-7. Verify that the changes compile or pass linting if such tools are available in the project.
+6. Test generalization: if the solution processes input data, test it on a NEW input you create — not just the provided example. Solutions that only work on the bundled example are incorrect.
+7. Verify completeness across the ENTIRE repository — not just the files listed as modified. Use broad searches (e.g. `grep -r` without file-type filters) when checking for requirements like "remove all X" or "replace every Y".
+8. Check for incomplete work: TODOs, placeholder implementations, missing imports, broken references, unterminated logic.
+9. Verify that the changes compile or pass linting if such tools are available in the project.
 
 ## Calling eval_result
 
@@ -46,6 +48,8 @@ If there are problems:
 - Failing tests are a clear failure.
 - A requirement from the instructions that is not addressed is a clear failure.
 - An obvious bug or logic error in the changed code is a clear failure.
+- If testing reveals the solution only works on the provided example but not on a fresh input, that is a clear failure. The solution must generalize.
+- If the task requires removing, replacing, or sanitizing content, verify that ALL instances across ALL files are handled — not just the obvious ones. Missing even one instance is a failure.
 - If a read, test, or other verification step fails or a permission is denied, do not stop early. Continue with the evidence you have and still call eval_result with a summary that explains the limitation.
 - If a build agent later submits a rebuttal, review every point carefully. Revise your verdict only when the rebuttal provides correct evidence. Do not flip your verdict without justification.
 - If everything looks correct and complete, pass the evaluation. Do not invent problems.

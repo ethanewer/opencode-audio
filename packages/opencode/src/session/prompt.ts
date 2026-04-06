@@ -349,7 +349,20 @@ ${exists ? `A plan file already exists at ${plan}. You can read it and make incr
 You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
 ## Plan Workflow
+${autonomous ? `
+### Step 1: Understand the task
+- Read the user's request carefully. Identify all requirements and constraints.
+- If there is an existing codebase, use read/grep/glob/list directly to understand the relevant files. Only launch an explore agent if the codebase is large and the scope is unclear.
+- If the task is self-contained (fresh project, clear instructions), skip exploration entirely.
 
+### Step 2: Write the plan
+- Write a concise, actionable plan to the plan file.
+- Include: the approach, key files to create or modify, and a verification section describing how to test correctness.
+- Keep the plan short — focus on what to do, not alternatives or background.
+
+${phase5}
+
+${important}` : `
 ### Phase 1: Initial Understanding
 Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the explore subagent type.
 
@@ -405,7 +418,7 @@ Goal: Write your final plan to the plan file (the only file you can edit).
 
 ${phase5}
 
-${important}
+${important}`}
 
 ${autonomous ? "" : "NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins."}
 </system-reminder>`,
