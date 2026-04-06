@@ -27,7 +27,7 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 const runtime = ManagedRuntime.make(CrossSpawnSpawner.defaultLayer)
 
 const MAX_METADATA_LENGTH = 30_000
-const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
+const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 5 * 60 * 1000
 const SENTINEL_PREFIX = "__OC_META__:"
 
 function sq(s: string): string {
@@ -42,6 +42,7 @@ function sessionStateFile(sessionID: string): string {
 function wrapCommand(command: string, sessionID: string, workdir?: string): string {
   const sf = sessionStateFile(sessionID)
   const lines = [
+    `set -o pipefail 2>/dev/null`,
     `__oc_sf=${sq(sf)}`,
     `[ -f "$__oc_sf" ] && . "$__oc_sf" 2>/dev/null`,
   ]
