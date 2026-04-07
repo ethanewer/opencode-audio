@@ -122,7 +122,12 @@ export namespace Tmux {
 
       while ((performance.now() - start) / 1000 < cmd.duration) {
         const pane = await capturePane(state.name)
-        if (pane.includes(marker)) break
+        if (
+          pane
+            .split("\n")
+            .some((line) => line.includes(marker) && !MARKER_ECHO_RE.test(line))
+        )
+          break
         if (update) {
           update(filterMarkers(delta(before, pane)))
         }
