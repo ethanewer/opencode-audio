@@ -20,6 +20,7 @@ type SystemDef = {
   model: string
   variant?: string
   transcription?: string
+  vision?: string
   tts?: {
     model?: string
     voice?: string
@@ -54,6 +55,14 @@ const DEFAULT_SYSTEMS: SystemEntry[] = [
     label: "Claude Opus 4.6",
     model: "anthropic/claude-opus-4-6",
     variant: "max",
+    transcription: "gpt-4o-mini-transcribe",
+    agents: ["build", "plan", "auto"],
+  },
+  {
+    key: "minimax-m2.7",
+    label: "MiniMax M2.7",
+    model: "openrouter/minimax/minimax-m2.7",
+    vision: "openrouter/google/gemma-4-31b-it",
     transcription: "gpt-4o-mini-transcribe",
     agents: ["build", "plan", "auto"],
   },
@@ -190,6 +199,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         const hasAudioInput = entry.transcription ? false : (model?.capabilities?.input?.audio ?? false)
         const hasTts = !!entry.tts
         const hasVoice = hasTts || hasAudioOutput
+        // Resolve separate vision model if configured
+        const visionParsed = entry.vision ? Provider.parseModel(entry.vision) : undefined
+        const visionProvider = visionParsed ? sync.data.provider.find((x) => x.id === visionParsed.providerID) : undefined
+        const visionModel = visionParsed && visionProvider ? visionProvider.models[visionParsed.modelID] : undefined
+        const hasVision = !!entry.vision
         return {
           ...entry,
           parsed,
@@ -199,6 +213,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           hasAudioInput,
           hasTts,
           hasVoice,
+          hasVision,
+          visionParsed,
+          visionProvider,
+          visionModel,
         }
       }
 

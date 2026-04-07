@@ -88,7 +88,10 @@ export const ImageReadTool = Tool.define("image_read", {
     const b64 = Buffer.from(buf).toString("base64")
     const url = `data:${mime};base64,${b64}`
 
-    const model = ctx.extra?.model as Provider.Model | undefined
+    // Use separate vision model when configured, otherwise fall back to main model
+    const visionModel = ctx.extra?.visionModel as Provider.Model | undefined
+    const mainModel = ctx.extra?.model as Provider.Model | undefined
+    const model = visionModel ?? mainModel
     if (!model) {
       return {
         title: `image_read ${path.basename(filepath)}`,

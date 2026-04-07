@@ -31,6 +31,7 @@ import { Command } from "../command"
 import { Eval } from "./eval"
 import { Todo } from "./todo"
 import { pathToFileURL, fileURLToPath } from "url"
+import { Config } from "../config/config"
 import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
@@ -426,6 +427,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
         processor: Pick<SessionProcessor.Handle, "message" | "partFromToolCall">
         bypassAgentCheck: boolean
         messages: MessageV2.WithParts[]
+        visionModel?: Provider.Model
       }) {
         using _ = log.time("resolveTools")
         const tools: Record<string, AITool> = {}
@@ -435,7 +437,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
           abort: options.abortSignal!,
           messageID: input.processor.message.id,
           callID: options.toolCallId,
-          extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck },
+          extra: { model: input.model, visionModel: input.visionModel, bypassAgentCheck: input.bypassAgentCheck },
           agent: input.agent.name,
           messages: input.messages,
           metadata: (val) =>
@@ -472,6 +474,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
             providerID: input.model.providerID,
             audioOutput: input.model.capabilities?.output?.audio,
             imageInput: input.model.capabilities?.input?.image,
+            hasVisionModel: !!input.visionModel,
           },
           input.agent,
         )) {
@@ -1796,10 +1799,23 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                       },
                     }
                   : agent
+                // Resolve separate vision model from system config if available
+                const cfg = yield* Effect.promise(() => Config.get())
+                let visionModel: Provider.Model | undefined
+                if (cfg.system) {
+                  for (const sys of Object.values(cfg.system)) {
+                    if (sys.vision && sys.model === `${model.providerID}/${model.api.id}`) {
+                      const vp = Provider.parseModel(sys.vision)
+                      visionModel = yield* Effect.promise(() => Provider.getModel(vp.providerID, vp.modelID).catch(() => undefined))
+                      break
+                    }
+                  }
+                }
                 const tools = yield* resolveTools({
                   agent: toolAgent,
                   session,
                   model,
+                  visionModel,
                   tools: lastUser.tools,
                   processor: handle,
                   bypassAgentCheck,

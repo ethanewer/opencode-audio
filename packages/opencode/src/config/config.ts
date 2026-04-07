@@ -908,6 +908,7 @@ export namespace Config {
       model: ModelId.describe("Main LLM model in provider/model format"),
       variant: z.string().optional().describe("Model variant (e.g. reasoning effort level)"),
       transcription: z.string().optional().describe("STT model for voice input (e.g. gpt-4o-mini-transcribe)"),
+      vision: ModelId.optional().describe("Separate vision model for image analysis in provider/model format (enables image_read tool for non-vision main models)"),
       tts: SystemTts.optional().describe("Text-to-speech output configuration"),
       agents: z.array(z.string()).default(["build", "plan"]).describe("Agents available in this system"),
       options: z.record(z.string(), z.any()).optional().describe("Model-specific options (e.g. reasoningEffort)"),

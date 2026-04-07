@@ -15,6 +15,7 @@ export function DialogSystem() {
       if (info.provider) parts.push(info.provider.name)
       if (info.hasTts) parts.push("TTS")
       if (info.transcription) parts.push("STT")
+      if (info.hasVision) parts.push("Vision")
       if (info.hasAudioOutput) parts.push("Native Audio")
       const desc = parts.length ? parts.join(", ") : undefined
       return {

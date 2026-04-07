@@ -1161,6 +1161,7 @@ export function Prompt(props: PromptProps) {
     if (info.provider) parts.push(info.provider.name)
     if (info.transcription && !info.hasAudioInput) parts.push("OpenAI STT")
     if (info.hasTts && !info.hasAudioOutput) parts.push("OpenAI TTS")
+    if (info.hasVision && info.visionModel) parts.push(`${info.visionModel.name ?? "Vision"} Vision`)
     if (!parts.length) return ""
     return `(${parts.join(", ")})`
   })

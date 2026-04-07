@@ -51,7 +51,7 @@ export namespace ToolRegistry {
     readonly register: (tool: Tool.Info) => Effect.Effect<void>
     readonly ids: () => Effect.Effect<string[]>
     readonly tools: (
-      model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean },
+      model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean; hasVisionModel?: boolean },
       agent?: Agent.Info,
     ) => Effect.Effect<(Tool.Def & { id: string })[]>
   }
@@ -176,7 +176,7 @@ export namespace ToolRegistry {
       }
 
       const tools = Effect.fn("ToolRegistry.tools")(function* (
-        model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean },
+        model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean; hasVisionModel?: boolean },
         agent?: Agent.Info,
       ) {
         const state = yield* InstanceState.get(cache)
@@ -200,7 +200,7 @@ export namespace ToolRegistry {
           }
 
           if (tool.id === "image_read") {
-            if (model.imageInput !== true) return false
+            if (model.imageInput !== true && model.hasVisionModel !== true) return false
             if (isKira(agent)) return true
             return extra.has(tool.id)
           }
