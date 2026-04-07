@@ -12,6 +12,13 @@ export namespace Tool {
 
   export interface InitContext {
     agent?: Agent.Info
+    capabilities?: {
+      imageInput?: boolean
+      audioInput?: boolean
+      pdfInput?: boolean
+      hasVisionModel?: boolean
+      hasTranscription?: boolean
+    }
   }
 
   export type Context<M extends Metadata = Metadata> = {

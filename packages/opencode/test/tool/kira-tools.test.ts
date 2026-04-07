@@ -36,13 +36,12 @@ describe("kira tool filtering", () => {
         const ids = tools.map((t) => t.id)
         expect(ids).toContain("execute_commands")
         expect(ids).toContain("task_complete")
-        expect(ids).toContain("image_read")
+        expect(ids).toContain("read")
+        expect(ids).toContain("write")
+        expect(ids).toContain("edit")
         expect(ids).toContain("invalid")
-        // Should NOT contain standard tools
+        // Should NOT contain standard non-KIRA tools
         expect(ids).not.toContain("bash")
-        expect(ids).not.toContain("read")
-        expect(ids).not.toContain("edit")
-        expect(ids).not.toContain("write")
         expect(ids).not.toContain("grep")
         expect(ids).not.toContain("glob")
         expect(ids).not.toContain("task")
@@ -50,23 +49,9 @@ describe("kira tool filtering", () => {
         expect(ids).not.toContain("todowrite")
         expect(ids).not.toContain("question")
         expect(ids).not.toContain("eval_rebuttal")
-      },
-    })
-  })
-
-  test("build agent hides image_read when model lacks image input", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const tools = await ToolRegistry.tools(
-          { providerID: provider, modelID: model, imageInput: false },
-          agent("build") as never,
-        )
-        const ids = tools.map((t) => t.id)
-        expect(ids).toContain("execute_commands")
-        expect(ids).toContain("task_complete")
         expect(ids).not.toContain("image_read")
+        expect(ids).not.toContain("transcribe")
+        expect(ids).not.toContain("read_audio")
       },
     })
   })
@@ -83,9 +68,10 @@ describe("kira tool filtering", () => {
         const ids = tools.map((t) => t.id)
         expect(ids).toContain("execute_commands")
         expect(ids).toContain("task_complete")
-        expect(ids).toContain("image_read")
+        expect(ids).toContain("read")
         expect(ids).toContain("speak")
         expect(ids).not.toContain("bash")
+        expect(ids).not.toContain("image_read")
       },
     })
   })
@@ -105,34 +91,24 @@ describe("kira tool filtering", () => {
     })
   })
 
-  test("build agent gets transcribe when no native audio input", async () => {
+  test("build agent does not get transcribe or read_audio (read handles audio)", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const tools = await ToolRegistry.tools(
+        const without = await ToolRegistry.tools(
           { providerID: provider, modelID: model, audioInput: false },
           agent("build") as never,
         )
-        const ids = tools.map((t) => t.id)
-        expect(ids).toContain("transcribe")
-        expect(ids).not.toContain("read_audio")
-      },
-    })
-  })
+        expect(without.map((t) => t.id)).not.toContain("transcribe")
+        expect(without.map((t) => t.id)).not.toContain("read_audio")
 
-  test("build agent gets read_audio when model supports audio input", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const tools = await ToolRegistry.tools(
+        const with_ = await ToolRegistry.tools(
           { providerID: provider, modelID: model, audioInput: true },
           agent("build") as never,
         )
-        const ids = tools.map((t) => t.id)
-        expect(ids).toContain("read_audio")
-        expect(ids).not.toContain("transcribe")
+        expect(with_.map((t) => t.id)).not.toContain("transcribe")
+        expect(with_.map((t) => t.id)).not.toContain("read_audio")
       },
     })
   })
@@ -144,16 +120,17 @@ describe("kira tool filtering", () => {
       fn: async () => {
         const tools = await ToolRegistry.tools(
           { providerID: provider, modelID: model },
-          agent("build", { tools: ["read", "edit", "grep"] }) as never,
+          agent("build", { tools: ["grep", "webfetch"] }) as never,
         )
         const ids = tools.map((t) => t.id)
         expect(ids).toContain("execute_commands")
         expect(ids).toContain("task_complete")
         expect(ids).toContain("read")
+        expect(ids).toContain("write")
         expect(ids).toContain("edit")
         expect(ids).toContain("grep")
-        expect(ids).not.toContain("write")
-        expect(ids).not.toContain("webfetch")
+        expect(ids).toContain("webfetch")
+        expect(ids).not.toContain("bash")
       },
     })
   })
@@ -350,19 +327,4 @@ describe("execute_commands tool definition", () => {
     })
   })
 
-  test("image_read description matches KIRA", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const tools = await ToolRegistry.tools(
-          { providerID: provider, modelID: model, imageInput: true },
-          agent("build") as never,
-        )
-        const ir = tools.find((t) => t.id === "image_read")
-        expect(ir).toBeDefined()
-        expect(ir!.description).toContain("Read and analyze an image file")
-      },
-    })
-  })
 })

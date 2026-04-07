@@ -1884,9 +1884,6 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "task_complete"}>
           <TaskCompleteView {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "image_read"}>
-          <ImageRead {...toolprops} />
-        </Match>
         <Match when={true}>
           <GenericTool {...toolprops} />
         </Match>
@@ -2267,18 +2264,6 @@ function TaskCompleteView(props: ToolProps<any>) {
       part={props.part}
     >
       {confirmed() ? "Task confirmed complete" : "Completion checklist"}
-    </InlineTool>
-  )
-}
-
-function ImageRead(props: ToolProps<any>) {
-  const file = createMemo(() => {
-    const fp = (props.input as Record<string, unknown>)?.file_path
-    return typeof fp === "string" ? normalizePath(fp) : "image"
-  })
-  return (
-    <InlineTool icon="⬡" pending="Reading image..." complete={`image_read ${file()}`} part={props.part}>
-      image_read {file()}
     </InlineTool>
   )
 }

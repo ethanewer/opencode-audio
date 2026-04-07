@@ -472,8 +472,10 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
           {
             modelID: ModelID.make(input.model.api.id),
             providerID: input.model.providerID,
+            audioInput: input.model.capabilities?.input?.audio,
             audioOutput: input.model.capabilities?.output?.audio,
             imageInput: input.model.capabilities?.input?.image,
+            pdfInput: input.model.capabilities?.input?.pdf,
             hasVisionModel: !!input.visionModel,
           },
           input.agent,
@@ -1638,7 +1640,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   messageID: mid,
                   sessionID,
                   type: "text",
-                  text: "WARNINGS: Your response contained no tool calls. Please use execute_commands to run commands.",
+                  text: "WARNING: Your response contained no tool calls. You must use your tools to make progress.",
                   synthetic: true,
                 } satisfies MessageV2.TextPart)
                 continue

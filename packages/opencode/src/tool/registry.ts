@@ -12,6 +12,7 @@ import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
+import { Skill } from "../skill"
 import type { Agent } from "../agent/agent"
 import { Tool } from "./tool"
 import { Config } from "../config/config"
@@ -33,7 +34,6 @@ import { SpeakTool } from "./speak"
 import { EvalRebuttalTool, EvalTool } from "./eval"
 import { ExecuteCommandsTool } from "./execute_commands"
 import { TaskCompleteTool } from "./task_complete"
-import { ImageReadTool } from "./image_read"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 import { Effect, Layer, ServiceMap } from "effect"
@@ -51,7 +51,7 @@ export namespace ToolRegistry {
     readonly register: (tool: Tool.Info) => Effect.Effect<void>
     readonly ids: () => Effect.Effect<string[]>
     readonly tools: (
-      model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean; hasVisionModel?: boolean },
+      model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean; pdfInput?: boolean; hasVisionModel?: boolean },
       agent?: Agent.Info,
     ) => Effect.Effect<(Tool.Def & { id: string })[]>
   }
@@ -145,7 +145,6 @@ export namespace ToolRegistry {
           EvalRebuttalTool,
           ExecuteCommandsTool,
           TaskCompleteTool,
-          ImageReadTool,
           ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...(cfg.experimental?.batch_tool === true ? [BatchTool] : []),
           ...(Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
@@ -169,14 +168,14 @@ export namespace ToolRegistry {
         return tools.map((t) => t.id)
       })
 
-      const KIRA_TOOLS = new Set(["execute_commands", "task_complete", "image_read", "invalid"])
+      const KIRA_TOOLS = new Set(["execute_commands", "task_complete", "read", "write", "edit", "apply_patch", "invalid"])
 
       function isKira(agent?: Agent.Info) {
         return agent?.name === "build" || agent?.name === "voice-build"
       }
 
       const tools = Effect.fn("ToolRegistry.tools")(function* (
-        model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean; hasVisionModel?: boolean },
+        model: { providerID: ProviderID; modelID: ModelID; audioInput?: boolean; audioOutput?: boolean; imageInput?: boolean; pdfInput?: boolean; hasVisionModel?: boolean },
         agent?: Agent.Info,
       ) {
         const state = yield* InstanceState.get(cache)
@@ -185,7 +184,11 @@ export namespace ToolRegistry {
           Array.isArray(agent?.options?.tools) ? (agent.options.tools as string[]) : [],
         )
         const voice = agent?.name.startsWith("voice-") ?? false
+        const skillList = yield* Effect.promise(() => Skill.available(agent))
+        const hasSkills = skillList.length > 0
         const filtered = allTools.filter((tool) => {
+          if (tool.id === "skill") return !isKira(agent) && hasSkills
+
           if (tool.id === "plan_exit") {
             return Flag.OPENCODE_CLIENT === "cli" && (agent?.name === "plan" || agent?.name === "voice-plan")
           }
@@ -199,17 +202,13 @@ export namespace ToolRegistry {
             return agent?.name !== "eval"
           }
 
-          if (tool.id === "image_read") {
-            if (model.imageInput !== true && model.hasVisionModel !== true) return false
-            if (isKira(agent)) return true
-            return extra.has(tool.id)
-          }
-
           // KIRA agent whitelist: only KIRA tools + audio/voice tools + user extras
           if (isKira(agent)) {
+            const usePatch =
+              model.modelID.includes("gpt-") && !model.modelID.includes("oss") && !model.modelID.includes("gpt-4")
+            if (tool.id === "apply_patch") return usePatch
+            if (tool.id === "edit" || tool.id === "write") return !usePatch
             if (KIRA_TOOLS.has(tool.id)) return true
-            if (tool.id === "read_audio") return model.audioInput === true
-            if (tool.id === "transcribe") return model.audioInput !== true
             if (tool.id === "speak") return voice && model.audioOutput !== true
             if (extra.has(tool.id)) return true
             return false
@@ -239,7 +238,16 @@ export namespace ToolRegistry {
           filtered,
           Effect.fnUntraced(function* (tool: Tool.Info) {
             using _ = log.time(tool.id)
-            const next = yield* Effect.promise(() => tool.init({ agent }))
+            const next = yield* Effect.promise(() => tool.init({
+              agent,
+              capabilities: {
+                imageInput: model.imageInput,
+                audioInput: model.audioInput,
+                pdfInput: model.pdfInput,
+                hasVisionModel: model.hasVisionModel,
+                hasTranscription: true,
+              },
+            }))
             const output = {
               description: next.description,
               parameters: next.parameters,
@@ -282,6 +290,7 @@ export namespace ToolRegistry {
       audioInput?: boolean
       audioOutput?: boolean
       imageInput?: boolean
+      pdfInput?: boolean
     },
     agent?: Agent.Info,
   ): Promise<(Tool.Def & { id: string })[]> {

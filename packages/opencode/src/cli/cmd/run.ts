@@ -229,12 +229,6 @@ function taskComplete(info: ToolProps<any>) {
   })
 }
 
-function imageRead(part: ToolPart) {
-  const input = part.state.input as Record<string, unknown> | undefined
-  const file = typeof input?.file_path === "string" ? normalizePath(input.file_path) : "image"
-  inline({ icon: "⬡", title: `image_read ${file}` })
-}
-
 function todo(info: ToolProps<typeof TodoWriteTool>) {
   block(
     {
@@ -508,7 +502,6 @@ export const RunCommand = cmd({
           if (part.tool === "skill") return skill(props<typeof SkillTool>(part))
           if (part.tool === "execute_commands") return executeCommands(props<any>(part))
           if (part.tool === "task_complete") return taskComplete(props<any>(part))
-          if (part.tool === "image_read") return imageRead(part)
           return fallback(part)
         } catch {
           return fallback(part)
