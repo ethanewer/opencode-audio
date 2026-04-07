@@ -339,7 +339,7 @@ export const RunCommand = cmd({
       })
       .option("eval", {
         type: "boolean",
-        describe: "run eval agent after build completes (default: true when no --agent specified)",
+        describe: "run eval agent after build completes (default: true with --agent auto)",
       })
       .option("eval-iterations", {
         type: "number",
@@ -410,9 +410,8 @@ export const RunCommand = cmd({
       process.exit(1)
     }
 
-    const implicit =
-      Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && !args.attach && !args.command && !args.continue && !args.session
-    const agent = args.agent ?? (implicit ? "plan" : undefined)
+    const auto = args.agent === "auto"
+    const agent = auto ? "plan" : args.agent
 
     const rules: Permission.Ruleset = [
       {
@@ -783,9 +782,9 @@ export const RunCommand = cmd({
         await idle
 
         // Run eval if enabled
-        // Eval is on by default when implicit plan mode is active and no --agent was specified.
+        // Eval is on by default with --agent auto.
         // It can be explicitly enabled/disabled with --eval.
-        const doEval = args.eval ?? (implicit && !args.agent)
+        const doEval = args.eval ?? auto
         if (doEval && !error && !args.attach) {
           const maxIter = args.evalIterations ?? 5
           const model = args.model ? Provider.parseModel(args.model) : undefined
