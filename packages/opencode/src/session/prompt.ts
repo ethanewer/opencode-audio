@@ -1052,6 +1052,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
           agent: ag.name,
           model,
           system: input.system,
+          vision: input.vision,
           format: input.format,
           variant,
         }
@@ -1799,15 +1800,24 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                       },
                     }
                   : agent
-                // Resolve separate vision model from system config if available
-                const cfg = yield* Effect.promise(() => Config.get())
+                // Resolve separate vision model: check user messages first, then config
                 let visionModel: Provider.Model | undefined
-                if (cfg.system) {
-                  for (const sys of Object.values(cfg.system)) {
-                    if (sys.vision && sys.model === `${model.providerID}/${model.api.id}`) {
-                      const vp = Provider.parseModel(sys.vision)
-                      visionModel = yield* Effect.promise(() => Provider.getModel(vp.providerID, vp.modelID).catch(() => undefined))
-                      break
+                const vision =
+                  lastUser.vision ??
+                  (msgs.findLast((m) => m.info.role === "user" && (m.info as MessageV2.User).vision)?.info as MessageV2.User | undefined)?.vision
+                if (vision) {
+                  const vp = Provider.parseModel(vision)
+                  visionModel = yield* Effect.promise(() => Provider.getModel(vp.providerID, vp.modelID).catch(() => undefined))
+                }
+                if (!visionModel) {
+                  const cfg = yield* Effect.promise(() => Config.get())
+                  if (cfg.system) {
+                    for (const sys of Object.values(cfg.system)) {
+                      if (sys.vision && sys.model === `${model.providerID}/${model.api.id}`) {
+                        const vp = Provider.parseModel(sys.vision)
+                        visionModel = yield* Effect.promise(() => Provider.getModel(vp.providerID, vp.modelID).catch(() => undefined))
+                        break
+                      }
                     }
                   }
                 }
@@ -2276,6 +2286,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
       ),
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
+    vision: z.string().optional(),
     variant: z.string().optional(),
     parts: z.array(
       z.discriminatedUnion("type", [

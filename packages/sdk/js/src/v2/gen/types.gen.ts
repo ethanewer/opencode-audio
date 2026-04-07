@@ -552,6 +552,7 @@ export type UserMessage = {
     modelID: string
   }
   system?: string
+  vision?: string
   tools?: {
     [key: string]: boolean
   }
@@ -1188,6 +1189,10 @@ export type SystemConfig = {
    * STT model for voice input (e.g. gpt-4o-mini-transcribe)
    */
   transcription?: string
+  /**
+   * Separate vision model for image analysis in provider/model format (enables image_read tool for non-vision main models)
+   */
+  vision?: string
   tts?: SystemTtsConfig
   /**
    * Agents available in this system
@@ -3622,6 +3627,7 @@ export type SessionPromptData = {
     }
     format?: OutputFormat
     system?: string
+    vision?: string
     variant?: string
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
@@ -3822,6 +3828,7 @@ export type SessionPromptAsyncData = {
     }
     format?: OutputFormat
     system?: string
+    vision?: string
     variant?: string
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }

@@ -86,6 +86,7 @@ export type DeferredDraft = {
   model: { providerID: string; modelID: string }
   agent: string
   variant?: string
+  vision?: string
 }
 
 export type PromptRef = {
@@ -164,6 +165,7 @@ export async function dispatchDraft(opts: {
     agent,
     model: draft.model,
     variant: draft.variant,
+    vision: draft.vision,
     ...(draft.agent === "auto" ? { tools: autoTools(opts.local) } : {}),
     parts: [
       {
@@ -370,6 +372,7 @@ export function Prompt(props: PromptProps) {
           },
           agent: local.agent.current()?.name ?? "build",
           variant: local.model.variant.current(),
+          vision: local.system.current()?.vision,
         })
         return
       }
@@ -397,6 +400,7 @@ export function Prompt(props: PromptProps) {
           agent: local.agent.resolved(),
           model: selected,
           variant: local.model.variant.current(),
+          vision: local.system.current()?.vision,
           ...(local.agent.current()?.name === "auto" ? { tools: autoTools(local) } : {}),
           parts: [
             {
@@ -992,6 +996,7 @@ export function Prompt(props: PromptProps) {
       },
       agent: local.agent.current()?.name ?? "build",
       variant,
+      vision: local.system.current()?.vision,
     }
 
     if (props.shouldDefer?.() && props.sessionID) {

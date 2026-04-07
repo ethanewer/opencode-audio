@@ -1993,6 +1993,7 @@ export class Session2 extends HeyApiClient {
       }
       format?: OutputFormat
       system?: string
+      vision?: string
       variant?: string
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
@@ -2013,6 +2014,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
             { in: "body", key: "system" },
+            { in: "body", key: "vision" },
             { in: "body", key: "variant" },
             { in: "body", key: "parts" },
           ],
@@ -2125,6 +2127,7 @@ export class Session2 extends HeyApiClient {
       }
       format?: OutputFormat
       system?: string
+      vision?: string
       variant?: string
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
@@ -2145,6 +2148,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
             { in: "body", key: "system" },
+            { in: "body", key: "vision" },
             { in: "body", key: "variant" },
             { in: "body", key: "parts" },
           ],

@@ -411,6 +411,7 @@ export function Session() {
           agent: currentAgent,
           ...(currentModel ? { model: { providerID: currentModel.providerID, modelID: currentModel.modelID } } : {}),
           variant: currentVariant,
+          vision: local.system.current()?.vision,
           sessionID,
         },
       })
