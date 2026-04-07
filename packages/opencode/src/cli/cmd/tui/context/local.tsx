@@ -62,7 +62,7 @@ const DEFAULT_SYSTEMS: SystemEntry[] = [
     key: "minimax-m2.7",
     label: "MiniMax M2.7",
     model: "openrouter/minimax/minimax-m2.7",
-    vision: "moonshotai/kimi-k2.5",
+    vision: "openrouter/moonshotai/kimi-k2.5",
     transcription: "gpt-4o-mini-transcribe",
     agents: ["build", "plan", "auto"],
   },

@@ -302,9 +302,6 @@ export function Prompt(props: PromptProps) {
     returnToVoice: false,
   })
 
-  if (!props.sessionID && store.mode === "normal" && sync.data.config.experimental?.voice?.enabled)
-    setStore("mode", "voice")
-
   createEffect(() => promptRef.setMode(store.mode))
 
   let submitting = false

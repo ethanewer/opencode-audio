@@ -7,7 +7,7 @@ export const { use: usePromptRef, provider: PromptRefProvider } = createSimpleCo
   name: "PromptRef",
   init: () => {
     let current: PromptRef | undefined
-    let mode: PromptMode = "normal"
+    let mode: PromptMode = "voice"
 
     return {
       get current() {
