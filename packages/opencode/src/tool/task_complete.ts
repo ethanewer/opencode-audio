@@ -30,6 +30,24 @@ export namespace TaskComplete {
   }
 }
 
+function count(messages: MessageV2.WithParts[]) {
+  let n = 0
+  let first = ""
+  for (const msg of messages) {
+    if (msg.info.role !== "user") continue
+    for (const part of msg.parts) {
+      if (part.type !== "text") continue
+      if ("synthetic" in part && part.synthetic) continue
+      if ("ignored" in part && part.ignored) continue
+      const text = part.text.trim()
+      if (!text) continue
+      n++
+      if (n === 1) first = text
+    }
+  }
+  return { n, first }
+}
+
 export const TaskCompleteTool = Tool.define("task_complete", {
   description: "Call this when the task is complete.",
   parameters: z.object({}),
@@ -45,7 +63,12 @@ export const TaskCompleteTool = Tool.define("task_complete", {
     }
 
     pending.set(sid, true)
-    const task = TaskComplete.instruction(ctx.messages)
+    const { n, first } = count(ctx.messages)
+    let task = first || "N/A"
+    if (n > 1) {
+      const { Eval } = await import("../session/eval")
+      task = (await Eval.extract(sid)) || task
+    }
     const terminal = await Tmux.capture(sid)
 
     return {

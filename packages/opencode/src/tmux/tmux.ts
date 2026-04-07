@@ -39,16 +39,14 @@ async function capturePane(name: string) {
   return (await run(["tmux", "capture-pane", "-t", name, "-p", "-S", "-"])).trimEnd()
 }
 
-function filterMarkers(text: string, max: number) {
-  const markers = new Set<string>()
-  for (let i = 1; i <= max; i++) markers.add(`${MARKER}${i}__`)
+const MARKER_OUTPUT_RE = new RegExp(`${MARKER}\\d+__`)
+
+function filterMarkers(text: string) {
   return text
     .split("\n")
     .filter((line) => {
       if (MARKER_ECHO_RE.test(line)) return false
-      for (const m of markers) {
-        if (line.includes(m)) return false
-      }
+      if (MARKER_OUTPUT_RE.test(line)) return false
       return true
     })
     .join("\n")
@@ -58,19 +56,9 @@ function delta(prior: string, current: string) {
   if (!prior) return current
   const pl = prior.split("\n")
   const cl = current.split("\n")
-  let overlap = 0
-  outer: for (let offset = 0; offset <= pl.length; offset++) {
-    const start = pl.length - offset
-    let match = true
-    for (let j = 0; j < offset && start + j < pl.length && j < cl.length; j++) {
-      if (pl[start + j] !== cl[j]) {
-        match = false
-        break
-      }
-    }
-    if (match && offset > overlap) overlap = offset
-  }
-  return cl.slice(overlap).join("\n")
+  let i = 0
+  while (i < pl.length && i < cl.length && pl[i] === cl[i]) i++
+  return cl.slice(i).join("\n")
 }
 
 export namespace Tmux {
@@ -115,10 +103,13 @@ export namespace Tmux {
       await ensure(id, cwd)
     }
     const before = await capturePane(state.name)
-    state.prior = before
-    const seqStart = state.seq
 
     for (const cmd of commands) {
+      const keys = cmd.keystrokes.replace(/\n$/, "").trim()
+      if (!keys) {
+        await Bun.sleep(cmd.duration * 1000)
+        continue
+      }
       state.seq++
       const marker = `${MARKER}${state.seq}__`
       const start = performance.now()
@@ -133,17 +124,16 @@ export namespace Tmux {
         const pane = await capturePane(state.name)
         if (pane.includes(marker)) break
         if (update) {
-          const raw = delta(before, pane)
-          update(filterMarkers(raw, state.seq))
+          update(filterMarkers(delta(before, pane)))
         }
         await Bun.sleep(500)
       }
     }
 
     const after = await capturePane(state.name)
+    const raw = delta(state.prior, after)
     state.prior = after
-    const raw = delta(before, after)
-    return filterMarkers(raw, state.seq)
+    return filterMarkers(raw)
   }
 
   export async function capture(id: string) {

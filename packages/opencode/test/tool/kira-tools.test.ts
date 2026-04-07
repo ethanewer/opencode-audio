@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Instance } from "../../src/project/instance"
 import { ToolRegistry } from "../../src/tool/registry"
 import { ProviderID, ModelID } from "../../src/provider/schema"
-import { TaskComplete } from "../../src/tool/task_complete"
+import { SessionID, MessageID } from "../../src/session/schema"
+import { TaskComplete, TaskCompleteTool } from "../../src/tool/task_complete"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { tmpdir } from "../fixture/fixture"
 
@@ -251,9 +252,66 @@ describe("task_complete double-confirmation", () => {
 
   test("pending/confirmed state transitions", () => {
     TaskComplete.reset(sid)
-    // Initially neither pending nor confirmed
     expect(TaskComplete.isPending(sid)).toBe(false)
     expect(TaskComplete.isConfirmed(sid)).toBe(false)
+  })
+
+  test("checklist shows first message for single user input", async () => {
+    const id = SessionID.make("ses_tc_single")
+    TaskComplete.reset(id)
+    const msgs: MessageV2.WithParts[] = [
+      {
+        info: { role: "user", id: "m1" } as any,
+        parts: [{ type: "text", text: "Build a REST API", synthetic: false } as any],
+      },
+    ]
+    const tool = await TaskCompleteTool.init()
+    const result = await tool.execute({}, {
+      sessionID: id,
+      messageID: MessageID.make(""),
+      callID: "",
+      agent: "build",
+      abort: AbortSignal.any([]),
+      messages: msgs,
+      metadata: () => {},
+      ask: async () => {},
+    })
+    expect(result.output).toContain("Build a REST API")
+    expect(result.metadata.confirmed).toBe(false)
+    TaskComplete.reset(id)
+  })
+
+  test("checklist uses fast path when synthetic messages pad the count", async () => {
+    const id = SessionID.make("ses_tc_synth")
+    TaskComplete.reset(id)
+    const msgs: MessageV2.WithParts[] = [
+      {
+        info: { role: "user", id: "m1" } as any,
+        parts: [{ type: "text", text: "Fix the bug", synthetic: false } as any],
+      },
+      {
+        info: { role: "user", id: "m2" } as any,
+        parts: [{ type: "text", text: "WARNINGS: no tool calls", synthetic: true } as any],
+      },
+      {
+        info: { role: "user", id: "m3" } as any,
+        parts: [{ type: "text", text: "", synthetic: false } as any],
+      },
+    ]
+    const tool = await TaskCompleteTool.init()
+    const result = await tool.execute({}, {
+      sessionID: id,
+      messageID: MessageID.make(""),
+      callID: "",
+      agent: "build",
+      abort: AbortSignal.any([]),
+      messages: msgs,
+      metadata: () => {},
+      ask: async () => {},
+    })
+    expect(result.output).toContain("Fix the bug")
+    expect(result.metadata.confirmed).toBe(false)
+    TaskComplete.reset(id)
   })
 })
 

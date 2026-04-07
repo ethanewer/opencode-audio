@@ -12,6 +12,7 @@ import { Permission } from "../../src/permission"
 import { Plugin } from "../../src/plugin"
 import { Question } from "../../src/question"
 import { Session } from "../../src/session"
+import { MessageV2 } from "../../src/session/message-v2"
 import { LLM } from "../../src/session/llm"
 import { AppFileSystem } from "../../src/filesystem"
 import { SessionCompaction } from "../../src/session/compaction"
@@ -333,6 +334,75 @@ describe("kira agent integration", () => {
         { git: true, config: providerCfg },
       ),
     10_000,
+  )
+
+  it.live(
+    "task_complete uses extraction agent for multi-message sessions",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const prompt = yield* SessionPrompt.Service
+          const session = yield* Session.Service
+          const chat = yield* session.create({
+            title: "Multi-message extraction test",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+
+          yield* prompt.prompt({
+            sessionID: chat.id,
+            agent: "build",
+            noReply: true,
+            parts: [{ type: "text", text: "Create a REST API server" }],
+          })
+
+          // Simulate a first build turn: LLM returns text, gets nudged, then returns text again, etc.
+          // We need to exhaust MAX_KIRA_NUDGES (5) so the loop exits and we can add a second user message.
+          yield* llm.text("thinking 1")
+          yield* llm.text("thinking 2")
+          yield* llm.text("thinking 3")
+          yield* llm.text("thinking 4")
+          yield* llm.text("thinking 5")
+          yield* llm.text("thinking 6")
+          yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.ignore)
+
+          // Add second user message
+          yield* prompt.prompt({
+            sessionID: chat.id,
+            agent: "build",
+            noReply: true,
+            parts: [{ type: "text", text: "Also add authentication middleware" }],
+          })
+
+          // Build agent calls task_complete (first call → checklist).
+          // Since there are 2 user messages, Eval.extract runs the extract agent.
+          // Extract agent makes its own LLM call → respond with summarized instruction.
+          // Build agent then calls task_complete again → confirmation. Loop exits.
+          yield* llm.tool("task_complete", {})
+          yield* llm.text("Create a REST API server with authentication middleware")
+          yield* llm.tool("task_complete", {})
+
+          const result = yield* prompt.loop({ sessionID: chat.id })
+
+          const msgs = yield* Effect.promise(() => Session.messages({ sessionID: chat.id }))
+          const checklist = msgs.flatMap((m) =>
+            m.parts.filter(
+              (p): p is MessageV2.ToolPart =>
+                p.type === "tool" &&
+                p.tool === "task_complete" &&
+                p.state.status === "completed" &&
+                p.state.output.includes("Checklist"),
+            ),
+          )
+          expect(checklist.length).toBeGreaterThan(0)
+          const part = checklist[0]!
+          expect(part.state.status).toBe("completed")
+          if (part.state.status === "completed") {
+            expect(part.state.output).toContain("authentication middleware")
+          }
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
   )
 
   it.live(
