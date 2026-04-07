@@ -15,7 +15,7 @@ import PROMPT_EVAL from "./prompt/eval.txt"
 import PROMPT_PLAN from "./prompt/plan.txt"
 import PROMPT_EXTRACT from "./prompt/extract.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
-import PROMPT_KIRA from "../session/prompt/kira.txt"
+import PROMPT_TASK from "../session/prompt/task.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
@@ -112,7 +112,7 @@ export namespace Agent {
             build: {
               name: "build",
               description: "The default agent. Executes tools based on configured permissions.",
-              prompt: PROMPT_KIRA,
+              prompt: PROMPT_TASK,
               options: {},
               permission: Permission.merge(
                 defaults,
@@ -184,7 +184,7 @@ export namespace Agent {
             auto: {
               name: "auto",
               description: "Autonomous mode. Plans, builds, and evaluates automatically.",
-              prompt: PROMPT_KIRA,
+              prompt: PROMPT_TASK,
               options: {},
               permission: Permission.merge(
                 defaults,
@@ -202,7 +202,7 @@ export namespace Agent {
             "voice-build": {
               name: "voice-build",
               description: "Voice build agent. Same as build but responses are optimized for text-to-speech output.",
-              prompt: PROMPT_KIRA,
+              prompt: PROMPT_TASK,
               options: {},
               permission: Permission.merge(
                 defaults,
@@ -274,7 +274,7 @@ export namespace Agent {
             general: {
               name: "general",
               description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
-              prompt: PROMPT_KIRA,
+              prompt: PROMPT_TASK,
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({
@@ -290,7 +290,7 @@ export namespace Agent {
             explore: {
               name: "explore",
               description: `Fast agent specialized for exploring codebases. Use this when you need to find files, search code, or answer questions about the codebase. Specify thoroughness: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis.`,
-              prompt: PROMPT_KIRA,
+              prompt: PROMPT_TASK,
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({

@@ -74,9 +74,8 @@ function isBuild(name: string) {
   return name === "build" || name === "voice-build"
 }
 
-/** Returns true for agents that use the KIRA prompt flow (terminal-state
- *  injection and the lean toolset driven by execute_commands). */
-function usesKiraPrompt(agent: { prompt?: string }) {
+/** Returns true for agents whose prompt is templated with terminal state. */
+function usesTerminalPrompt(agent: { prompt?: string }) {
   return !!agent.prompt?.includes("{terminal_state}")
 }
 
@@ -87,7 +86,7 @@ function buildFromPlan(name: string) {
 const ACTION_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "bash", "eval_rebuttal"])
 const MAX_TODO_NUDGES = 3
 const MAX_EVAL_NUDGES = 2
-const MAX_KIRA_NUDGES = 5
+const MAX_EMPTY_NUDGES = 5
 
 function incompleteTodos(sessionID: SessionID) {
   const todos = Todo.get(sessionID)
@@ -1425,7 +1424,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
           let nudged = false
           let todoNudges = 0
           let evalNudges = 0
-          let kiraNudges = 0
+          let nudges = 0
           let remind = false
           const session = yield* sessions.get(sessionID)
           TaskComplete.reset(sessionID)
@@ -1629,8 +1628,8 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
               // Empty tool calls feedback: nudge the agent to use
               // execute_commands when it finishes without calling any tools.
               // Only for primary sessions — subagents finish naturally.
-              if (step > 0 && kiraNudges < MAX_KIRA_NUDGES && !session.parentID) {
-                kiraNudges++
+              if (step > 0 && nudges < MAX_EMPTY_NUDGES && !session.parentID) {
+                nudges++
                 const mid = MessageID.ascending()
                 yield* sessions.updateMessage({
                   id: mid,
@@ -1879,18 +1878,18 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
 
                 yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-                const kira = usesKiraPrompt(agent)
+                const managed = usesTerminalPrompt(agent)
                 const [skills, env, instructions, modelMsgs] = yield* Effect.promise(() =>
                   Promise.all([
-                    kira ? undefined : SystemPrompt.skills(agent),
-                    kira ? ([] as string[]) : SystemPrompt.environment(model),
-                    kira ? ([] as string[]) : Instruction.system(),
+                    managed ? undefined : SystemPrompt.skills(agent),
+                    managed ? ([] as string[]) : SystemPrompt.environment(model),
+                    managed ? ([] as string[]) : Instruction.system(),
                     MessageV2.toModelMessages(msgs, model),
                   ]),
                 )
 
                 let effectiveAgent = agent
-                if (kira && agent.prompt) {
+                if (managed && agent.prompt) {
                   const task = TaskComplete.instruction(msgs)
                   const terminal = yield* Effect.promise(() => Tmux.capture(sessionID))
                   effectiveAgent = {
@@ -1901,7 +1900,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   }
                 }
 
-                const system = kira ? [] : [...env, ...(skills ? [skills] : []), ...instructions]
+                const system = managed ? [] : [...env, ...(skills ? [skills] : []), ...instructions]
                 const evalPart = msgs
                   .findLast((msg) => msg.info.id === lastUser.id)
                   ?.parts.findLast(

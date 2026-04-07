@@ -74,6 +74,7 @@ export namespace Tmux {
     const name = `oc-${id.slice(0, 8)}`
     log.info("creating tmux session", { name, cwd })
     await run(["tmux", "new-session", "-d", "-s", name, "-x", "200", "-y", "50"])
+    await run(["tmux", "set-option", "-t", name, "history-limit", "50000"])
     await sendKeys(name, `cd ${shellEscape(cwd)}\n`)
     await Bun.sleep(300)
     const prior = await capturePane(name)
@@ -115,6 +116,9 @@ export namespace Tmux {
       const start = performance.now()
 
       await sendKeys(state.name, cmd.keystrokes)
+      if (!cmd.keystrokes.endsWith("\n")) {
+        await run(["tmux", "send-keys", "-t", state.name, "Enter"])
+      }
       await sendKeys(state.name, `echo '${marker}'\n`)
 
       const wait = Math.min(0.3, cmd.duration) * 1000
