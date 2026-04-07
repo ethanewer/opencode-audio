@@ -255,6 +255,10 @@ export const ReadTool = Tool.define<typeof ReadParams, ReadMeta>("read", async (
           const buf = await Bun.file(filepath).arrayBuffer()
           const url = `data:${mime};base64,${Buffer.from(buf).toString("base64")}`
           const language = await Provider.getLanguage(target)
+          const providerOptions: Record<string, any> = {}
+          if (target.api?.npm === "@openrouter/ai-sdk-provider") {
+            providerOptions.openrouter = { reasoning: { effort: "high" } }
+          }
           const result = await retry(() =>
             generateText({
               model: language,
@@ -264,13 +268,14 @@ export const ReadTool = Tool.define<typeof ReadParams, ReadMeta>("read", async (
                   content: [
                     {
                       type: "text",
-                      text: "Describe this image in detail, including all text, layout, and visual elements.",
+                      text: "Analyze this image carefully and thoroughly. Describe every visual element, spatial relationship, text, symbol, and structural detail you can identify. Be precise about positions, labels, and values.",
                     },
                     { type: "image", image: url },
                   ],
                 },
               ],
               maxOutputTokens: ProviderTransform.maxOutputTokens(target),
+              providerOptions,
             }),
           )
           const output = `Image description for '${filepath}':\n${result.text}`
