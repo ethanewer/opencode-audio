@@ -438,6 +438,44 @@ const parser = lazy(async () => {
   return { bash, ps }
 })
 
+/**
+ * Parse a list of shell command strings, check for external directories and
+ * bash permission rules using the same tree-sitter analysis as the standalone
+ * bash tool. When every rule resolves to "allow", this is a no-op (the
+ * permission.ask calls return immediately without prompting the user).
+ */
+export async function checkCommandPermissions(commandTexts: string[], cwd: string, ctx: Tool.Context): Promise<void> {
+  const shell = Shell.acceptable()
+  const name = Shell.name(shell)
+  const ps = PS.has(name)
+
+  const merged: Scan = {
+    dirs: new Set<string>(),
+    patterns: new Set<string>(),
+    always: new Set<string>(),
+  }
+
+  for (const text of commandTexts) {
+    if (!text) continue
+    try {
+      const root = await parse(text, ps)
+      const scan = await collect(root, cwd, ps, shell)
+      for (const dir of scan.dirs) merged.dirs.add(dir)
+      for (const p of scan.patterns) merged.patterns.add(p)
+      for (const a of scan.always) merged.always.add(a)
+    } catch {
+      // If tree-sitter cannot parse the text (special keys, partial input,
+      // interactive prompts like "y"), fall back to a raw pattern so the
+      // permission system can still evaluate it.
+      merged.patterns.add(text)
+      merged.always.add(text + " *")
+    }
+  }
+
+  if (!Instance.containsPath(cwd)) merged.dirs.add(cwd)
+  await ask(ctx, merged)
+}
+
 // TODO: we may wanna rename this tool so it works better on other shells
 export const BashTool = Tool.define("bash", async () => {
   const shell = Shell.acceptable()

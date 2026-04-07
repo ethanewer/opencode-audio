@@ -10,9 +10,9 @@ import { ProviderTransform } from "../provider/transform"
 
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
-import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_EVAL from "./prompt/eval.txt"
+import PROMPT_PLAN from "./prompt/plan.txt"
 import PROMPT_EXTRACT from "./prompt/extract.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import PROMPT_KIRA from "../session/prompt/kira.txt"
@@ -87,6 +87,8 @@ export namespace Agent {
 
           const defaults = Permission.fromConfig({
             "*": "allow",
+            task: "deny",
+            task_complete: "deny",
             doom_loop: "ask",
             external_directory: {
               "*": "ask",
@@ -117,6 +119,7 @@ export namespace Agent {
                 Permission.fromConfig({
                   question: "allow",
                   plan_enter: "allow",
+                  task_complete: "allow",
                 }),
                 user,
               ),
@@ -126,13 +129,15 @@ export namespace Agent {
             },
             plan: {
               name: "plan",
-              description: "Plan mode. Disallows all edit tools.",
+              description: "Plan mode. Disallows all edit tools. Shell commands restricted to read-only operations.",
+              prompt: PROMPT_PLAN,
               options: {},
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({
                   question: "allow",
                   plan_exit: "allow",
+                  task: "allow",
                   external_directory: {
                     [path.join(Global.Path.data, "plans", "*")]: "allow",
                   },
@@ -141,6 +146,33 @@ export namespace Agent {
                     [path.join(".opencode", "plans", "*.md")]: "allow",
                     [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]:
                       "allow",
+                  },
+                  bash: {
+                    "*": "deny",
+                    "grep *": "allow",
+                    "rg *": "allow",
+                    "find *": "allow",
+                    "cat *": "allow",
+                    "ls *": "allow",
+                    "head *": "allow",
+                    "tail *": "allow",
+                    "wc *": "allow",
+                    "sort *": "allow",
+                    "uniq *": "allow",
+                    "diff *": "allow",
+                    "file *": "allow",
+                    "stat *": "allow",
+                    "du *": "allow",
+                    "tree *": "allow",
+                    "pwd *": "allow",
+                    "echo *": "allow",
+                    "git *": "allow",
+                    "which *": "allow",
+                    "env *": "allow",
+                    "awk *": "allow",
+                    "jq *": "allow",
+                    "cut *": "allow",
+                    "tr *": "allow",
                   },
                 }),
                 user,
@@ -152,12 +184,14 @@ export namespace Agent {
             auto: {
               name: "auto",
               description: "Autonomous mode. Plans, builds, and evaluates automatically.",
+              prompt: PROMPT_KIRA,
               options: {},
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({
                   question: "allow",
                   plan_enter: "allow",
+                  task_complete: "allow",
                 }),
                 user,
               ),
@@ -175,6 +209,7 @@ export namespace Agent {
                 Permission.fromConfig({
                   question: "allow",
                   plan_enter: "allow",
+                  task_complete: "allow",
                 }),
                 user,
               ),
@@ -185,12 +220,14 @@ export namespace Agent {
             "voice-plan": {
               name: "voice-plan",
               description: "Voice plan agent. Same as plan but responses are optimized for text-to-speech output.",
+              prompt: PROMPT_PLAN,
               options: {},
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({
                   question: "allow",
                   plan_exit: "allow",
+                  task: "allow",
                   external_directory: {
                     [path.join(Global.Path.data, "plans", "*")]: "allow",
                   },
@@ -199,6 +236,33 @@ export namespace Agent {
                     [path.join(".opencode", "plans", "*.md")]: "allow",
                     [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]:
                       "allow",
+                  },
+                  bash: {
+                    "*": "deny",
+                    "grep *": "allow",
+                    "rg *": "allow",
+                    "find *": "allow",
+                    "cat *": "allow",
+                    "ls *": "allow",
+                    "head *": "allow",
+                    "tail *": "allow",
+                    "wc *": "allow",
+                    "sort *": "allow",
+                    "uniq *": "allow",
+                    "diff *": "allow",
+                    "file *": "allow",
+                    "stat *": "allow",
+                    "du *": "allow",
+                    "tree *": "allow",
+                    "pwd *": "allow",
+                    "echo *": "allow",
+                    "git *": "allow",
+                    "which *": "allow",
+                    "env *": "allow",
+                    "awk *": "allow",
+                    "jq *": "allow",
+                    "cut *": "allow",
+                    "tr *": "allow",
                   },
                 }),
                 user,
@@ -210,9 +274,11 @@ export namespace Agent {
             general: {
               name: "general",
               description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
+              prompt: PROMPT_KIRA,
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({
+                  task: "allow",
                   todowrite: "deny",
                 }),
                 user,
@@ -223,18 +289,41 @@ export namespace Agent {
             },
             explore: {
               name: "explore",
+              description: `Fast agent specialized for exploring codebases. Use this when you need to find files, search code, or answer questions about the codebase. Specify thoroughness: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis.`,
+              prompt: PROMPT_KIRA,
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({
                   "*": "deny",
-                  grep: "allow",
-                  glob: "allow",
-                  list: "allow",
-                  bash: "allow",
-                  webfetch: "allow",
-                  websearch: "allow",
-                  codesearch: "allow",
+                  execute_commands: "allow",
                   read: "allow",
+                  bash: {
+                    "*": "deny",
+                    "grep *": "allow",
+                    "rg *": "allow",
+                    "find *": "allow",
+                    "cat *": "allow",
+                    "ls *": "allow",
+                    "head *": "allow",
+                    "tail *": "allow",
+                    "wc *": "allow",
+                    "sort *": "allow",
+                    "uniq *": "allow",
+                    "diff *": "allow",
+                    "file *": "allow",
+                    "stat *": "allow",
+                    "du *": "allow",
+                    "tree *": "allow",
+                    "pwd *": "allow",
+                    "echo *": "allow",
+                    "git *": "allow",
+                    "which *": "allow",
+                    "env *": "allow",
+                    "awk *": "allow",
+                    "jq *": "allow",
+                    "cut *": "allow",
+                    "tr *": "allow",
+                  },
                   external_directory: {
                     "*": "ask",
                     ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
@@ -242,8 +331,6 @@ export namespace Agent {
                 }),
                 user,
               ),
-              description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
-              prompt: PROMPT_EXPLORE,
               options: {},
               mode: "subagent",
               native: true,

@@ -74,6 +74,12 @@ function isBuild(name: string) {
   return name === "build" || name === "voice-build"
 }
 
+/** Returns true for agents that use the KIRA prompt flow (terminal-state
+ *  injection and the lean toolset driven by execute_commands). */
+function usesKiraPrompt(agent: { prompt?: string }) {
+  return !!agent.prompt?.includes("{terminal_state}")
+}
+
 function buildFromPlan(name: string) {
   return name === "voice-plan" ? "voice-build" : "build"
 }
@@ -1620,11 +1626,10 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   }
                 }
               }
-              // KIRA empty tool calls feedback: nudge the build agent to use
+              // Empty tool calls feedback: nudge the agent to use
               // execute_commands when it finishes without calling any tools.
-              // The build agent exits via task_complete double-confirmation.
-              // Guard on step > 0 so pre-existing finished assistants don't trigger a nudge.
-              if (step > 0 && kiraNudges < MAX_KIRA_NUDGES && isBuild(lastUser.agent)) {
+              // Only for primary sessions — subagents finish naturally.
+              if (step > 0 && kiraNudges < MAX_KIRA_NUDGES && !session.parentID) {
                 kiraNudges++
                 const mid = MessageID.ascending()
                 yield* sessions.updateMessage({
@@ -1806,10 +1811,16 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 let visionModel: Provider.Model | undefined
                 const vision =
                   lastUser.vision ??
-                  (msgs.findLast((m) => m.info.role === "user" && (m.info as MessageV2.User).vision)?.info as MessageV2.User | undefined)?.vision
+                  (
+                    msgs.findLast((m) => m.info.role === "user" && (m.info as MessageV2.User).vision)?.info as
+                      | MessageV2.User
+                      | undefined
+                  )?.vision
                 if (vision) {
                   const vp = Provider.parseModel(vision)
-                  visionModel = yield* Effect.promise(() => Provider.getModel(vp.providerID, vp.modelID).catch(() => undefined))
+                  visionModel = yield* Effect.promise(() =>
+                    Provider.getModel(vp.providerID, vp.modelID).catch(() => undefined),
+                  )
                 }
                 if (!visionModel) {
                   const cfg = yield* Effect.promise(() => Config.get())
@@ -1817,7 +1828,9 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                     for (const sys of Object.values(cfg.system)) {
                       if (sys.vision && sys.model === `${model.providerID}/${model.api.id}`) {
                         const vp = Provider.parseModel(sys.vision)
-                        visionModel = yield* Effect.promise(() => Provider.getModel(vp.providerID, vp.modelID).catch(() => undefined))
+                        visionModel = yield* Effect.promise(() =>
+                          Provider.getModel(vp.providerID, vp.modelID).catch(() => undefined),
+                        )
                         break
                       }
                     }
@@ -1866,7 +1879,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
 
                 yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-                const kira = isBuild(agent.name)
+                const kira = usesKiraPrompt(agent)
                 const [skills, env, instructions, modelMsgs] = yield* Effect.promise(() =>
                   Promise.all([
                     kira ? undefined : SystemPrompt.skills(agent),
@@ -1882,8 +1895,8 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   const terminal = yield* Effect.promise(() => Tmux.capture(sessionID))
                   effectiveAgent = {
                     ...agent,
-                    prompt: agent.prompt!
-                      .replace("{instruction}", task)
+                    prompt: agent
+                      .prompt!.replace("{instruction}", task)
                       .replace("{terminal_state}", terminal || "(empty)"),
                   }
                 }

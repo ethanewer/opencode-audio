@@ -17,7 +17,6 @@ import { ProviderTransform } from "../provider/transform"
 import { transcribe as transcribeAudio } from "../audio/transcribe"
 import { Config } from "../config/config"
 import { Log } from "../util/log"
-import type { Agent } from "../agent/agent"
 
 const log = Log.create({ service: "read-tool" })
 
@@ -49,7 +48,8 @@ type AudioMode = "none" | "aux" | "native"
 const VISION_DESC: Record<VisionMode, string> = {
   none: "",
   aux: "- For image files (PNG, JPG, GIF, WEBP): the image is analyzed by a vision model and a text description is returned.",
-  native: "- For image files (PNG, JPG, GIF, WEBP): the file content is returned as a native attachment for direct visual analysis.",
+  native:
+    "- For image files (PNG, JPG, GIF, WEBP): the file content is returned as a native attachment for direct visual analysis.",
 }
 
 const PDF_DESC = "- For PDF files: the content is returned as a native attachment for direct analysis."
@@ -57,7 +57,8 @@ const PDF_DESC = "- For PDF files: the content is returned as a native attachmen
 const AUDIO_DESC: Record<AudioMode, string> = {
   none: "",
   aux: "- For audio files (flac, mp3, mp4, m4a, ogg, wav, webm): the audio is transcribed and returned as text. Max 25MB.",
-  native: "- For audio files (flac, mp3, mp4, m4a, ogg, wav, webm): the audio content is returned as a native attachment. Max 25MB.",
+  native:
+    "- For audio files (flac, mp3, mp4, m4a, ogg, wav, webm): the audio content is returned as a native attachment. Max 25MB.",
 }
 
 const SEARCH_HINTS = [
@@ -74,16 +75,13 @@ function describe(vision: VisionMode, audio: AudioMode, pdf: boolean, search: bo
   return parts.join("\n")
 }
 
-function isKira(agent?: Agent.Info) {
-  return agent?.name === "build" || agent?.name === "voice-build"
-}
-
 export const ReadTool = Tool.define<typeof ReadParams, ReadMeta>("read", async (initCtx) => {
   const caps = initCtx?.capabilities
   const vision: VisionMode = caps?.imageInput ? "native" : caps?.hasVisionModel ? "aux" : "none"
   const audio: AudioMode = caps?.audioInput ? "native" : caps?.hasTranscription ? "aux" : "none"
   const pdf = caps?.pdfInput === true
-  const search = !isKira(initCtx?.agent)
+  // All agents use execute_commands for searching; standalone grep/glob hints are not needed.
+  const search = false
 
   return {
     description: describe(vision, audio, pdf, search),

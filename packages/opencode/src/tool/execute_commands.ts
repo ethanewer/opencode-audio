@@ -3,6 +3,7 @@ import { Tool } from "./tool"
 import { Instance } from "../project/instance"
 import { Log } from "../util/log"
 import { Tmux } from "@/tmux/tmux"
+import { checkCommandPermissions } from "./bash"
 
 const log = Log.create({ service: "execute-commands-tool" })
 const MAX_OUTPUT_BYTES = 30_000
@@ -16,12 +17,11 @@ function preview(text: string) {
 function limit(text: string) {
   if (text.length <= MAX_OUTPUT_BYTES) return text
   const half = Math.floor(MAX_OUTPUT_BYTES / 2)
-  return (
-    text.slice(0, half) +
-    `\n\n... (${text.length - MAX_OUTPUT_BYTES} bytes truncated) ...\n\n` +
-    text.slice(-half)
-  )
+  return text.slice(0, half) + `\n\n... (${text.length - MAX_OUTPUT_BYTES} bytes truncated) ...\n\n` + text.slice(-half)
 }
+
+/** Tmux escape sequences that are not real shell commands. */
+const TMUX_ESCAPE = /^C-[a-z]$/i
 
 export const ExecuteCommandsTool = Tool.define("execute_commands", {
   description: "Call this to execute commands in the terminal with your analysis and plan.",
@@ -88,12 +88,11 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
       },
     })
 
-    await ctx.ask({
-      permission: "bash",
-      patterns: labels,
-      always: labels.map((c) => c + " *"),
-      metadata: {},
-    })
+    // Check permissions using the same tree-sitter parsing and external-directory
+    // detection as the standalone bash tool. When every rule resolves to "allow"
+    // (the common case for the build agent) this returns immediately — no prompt.
+    const commandTexts = labels.filter((l) => !TMUX_ESCAPE.test(l))
+    await checkCommandPermissions(commandTexts, cwd, ctx)
 
     log.info("execute_commands", { commands: labels.length, sessionID: ctx.sessionID })
 
