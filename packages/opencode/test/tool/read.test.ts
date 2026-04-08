@@ -426,7 +426,7 @@ describe("tool.read truncation", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const read = await ReadTool.init()
+        const read = await ReadTool.init({ capabilities: { imageInput: true } })
         const result = await read.execute({ filePath: path.join(tmp.path, "image.png") }, ctx)
         expect(result.metadata.truncated).toBe(false)
         expect(result.attachments).toBeDefined()
@@ -442,7 +442,7 @@ describe("tool.read truncation", () => {
     await Instance.provide({
       directory: FIXTURES_DIR,
       fn: async () => {
-        const read = await ReadTool.init()
+        const read = await ReadTool.init({ capabilities: { imageInput: true } })
         const result = await read.execute({ filePath: path.join(FIXTURES_DIR, "large-image.png") }, ctx)
         expect(result.metadata.truncated).toBe(false)
         expect(result.attachments).toBeDefined()

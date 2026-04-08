@@ -23,47 +23,47 @@ describe("eval agent prompt (agent/prompt/eval.txt)", () => {
 
   test("has Restrictions section", async () => {
     const t = await readPrompt("agent/prompt/eval.txt")
-    expect(t).toContain("## Restrictions")
+    expect(t).toContain("<restrictions>")
   })
 
   test("forbids modifying repository files", async () => {
     const t = await readPrompt("agent/prompt/eval.txt")
-    expect(t).toContain("MUST NOT modify any repository files")
+    expect(t).toContain("Do NOT modify repository files")
   })
 
   test("forbids destructive shell commands", async () => {
     const t = await readPrompt("agent/prompt/eval.txt")
-    expect(t).toContain("MUST NOT use shell commands that create, overwrite, delete")
+    expect(t).toContain("Do NOT run commands that write to the repository")
   })
 
   test("instructs not to ask user questions", async () => {
     const t = await readPrompt("agent/prompt/eval.txt")
-    expect(t).toContain("Do not ask the user questions")
+    expect(t).toContain("Do not ask questions")
   })
 
   test("requires calling eval_result exactly once", async () => {
     const t = await readPrompt("agent/prompt/eval.txt")
-    expect(t).toContain("eval_result tool exactly once")
+    expect(t).toContain("eval_result exactly once")
   })
 
   test("has Evaluation process section", async () => {
     const t = await readPrompt("agent/prompt/eval.txt")
-    expect(t).toContain("## Evaluation process")
+    expect(t).toContain("<process>")
   })
 
   test("has Guidelines section", async () => {
     const t = await readPrompt("agent/prompt/eval.txt")
-    expect(t).toContain("## Guidelines")
+    expect(t).toContain("<guidelines>")
   })
 
   test("has Calling eval_result section", async () => {
     const t = await readPrompt("agent/prompt/eval.txt")
-    expect(t).toContain("## Calling eval_result")
+    expect(t).toContain("<eval_result>")
   })
 
   test("mentions failing tests as clear failure", async () => {
     const t = await readPrompt("agent/prompt/eval.txt")
-    expect(t).toContain("Failing tests are a clear failure")
+    expect(t).toContain("failing tests")
   })
 })
 
