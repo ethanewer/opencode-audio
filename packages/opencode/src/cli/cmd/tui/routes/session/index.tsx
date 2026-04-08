@@ -2092,11 +2092,14 @@ function BlockTool(props: {
 }
 
 function Bash(props: ToolProps<typeof BashTool>) {
+  const ctx = use()
   const { theme } = useTheme()
   const isRunning = createMemo(() => props.part.state.status === "running")
   const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
   const [expanded, setExpanded] = createSignal(false)
   const lines = createMemo(() => output().split("\n"))
+  const compressed = createMemo(() => ctx.tui?.shell_view !== "expanded")
+
   const overflow = createMemo(() => lines().length > 10)
   const limited = createMemo(() => {
     if (expanded() || !overflow()) return output()
@@ -2105,6 +2108,28 @@ function Bash(props: ToolProps<typeof BashTool>) {
 
   return (
     <Switch>
+      <Match when={compressed()}>
+        <>
+          <InlineTool
+            icon="$"
+            iconColor={theme.secondary}
+            pending="Writing command..."
+            complete={props.input.command}
+            spinner={isRunning()}
+            part={props.part}
+            onClick={output() ? () => setExpanded((prev) => !prev) : undefined}
+          >
+            {props.input.command}
+          </InlineTool>
+          <Show when={expanded() && output()}>
+            <box paddingLeft={3}>
+              <text paddingLeft={5} fg={theme.textMuted}>
+                {output()}
+              </text>
+            </box>
+          </Show>
+        </>
+      </Match>
       <Match when={props.metadata.output !== undefined}>
         <BlockTool
           part={props.part}
@@ -2179,7 +2204,9 @@ function execCmds(state: Record<string, any>): string[] {
 }
 
 function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; groupOutput?: string }) {
+  const ctx = use()
   const { theme } = useTheme()
+  const compressed = createMemo(() => ctx.tui?.shell_view !== "expanded")
 
   const cmds = createMemo(() => {
     const c = props.metadata.commands
@@ -2281,6 +2308,28 @@ function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; grou
         >
           {plan()}
         </InlineTool>
+      </Match>
+      <Match when={compressed() && cmds().length > 0}>
+        <>
+          <InlineTool
+            icon="$"
+            iconColor={theme.secondary}
+            pending={plan()}
+            complete={cmds().join(" && ")}
+            spinner={active()}
+            part={props.part}
+            onClick={output() ? () => setExpanded((prev) => !prev) : undefined}
+          >
+            {cmds().join(" && ")}
+          </InlineTool>
+          <Show when={expanded() && output()}>
+            <box paddingLeft={3}>
+              <text paddingLeft={5} fg={theme.textMuted}>
+                {output()}
+              </text>
+            </box>
+          </Show>
+        </>
       </Match>
       <Match when={true}>
         <BlockTool
