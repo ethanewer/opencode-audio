@@ -1,11 +1,16 @@
-import { test, expect } from "bun:test"
+import { test, expect, afterEach } from "bun:test"
 import path from "path"
+import { generateText } from "ai"
 
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Provider } from "../../src/provider/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Env } from "../../src/env"
+
+afterEach(async () => {
+  await Instance.disposeAll()
+})
 
 test("provider loaded from env variable", async () => {
   await using tmp = await tmpdir({
@@ -2281,4 +2286,80 @@ test("cloudflare-ai-gateway forwards config metadata options", async () => {
       })
     },
   })
+})
+
+test("openai audio model does not get modalities injected for Responses API requests", async () => {
+  const captured: any[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = await req.json()
+      captured.push(body)
+      return Response.json({
+        id: "resp_test",
+        object: "response",
+        model: body.model,
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] }],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      })
+    },
+  })
+
+  try {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            provider: {
+              openai: {
+                models: {
+                  "gpt-4o-audio-preview": {
+                    name: "GPT-4o Audio",
+                    tool_call: true,
+                    modalities: {
+                      input: ["text", "audio"],
+                      output: ["text", "audio"],
+                    },
+                    limit: { context: 128000, output: 16384 },
+                  },
+                },
+                options: {
+                  apiKey: "test-key",
+                  baseURL: `http://127.0.0.1:${server.port}/v1`,
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("OPENAI_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const model = await Provider.getModel(ProviderID.openai, ModelID.make("gpt-4o-audio-preview"))
+        expect(model.capabilities.output.audio).toBe(true)
+        expect(model.api.npm).toBe("@ai-sdk/openai")
+
+        const language = await Provider.getLanguage(model)
+        try {
+          await generateText({ model: language, prompt: "test" })
+        } catch {
+          // response format mismatch is expected with a minimal mock
+        }
+
+        expect(captured.length).toBeGreaterThan(0)
+        const body = captured[0]
+        expect(body.modalities).toBeUndefined()
+        expect(body.audio).toBeUndefined()
+      },
+    })
+  } finally {
+    server.stop()
+  }
 })
