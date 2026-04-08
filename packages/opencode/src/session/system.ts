@@ -18,6 +18,34 @@ import { Skill } from "@/skill"
 import { get as getTmpdir } from "./tmpdir"
 
 export namespace SystemPrompt {
+  export function permissionEnv(input: {
+    sessionID: string
+    permission?: Permission.Ruleset
+    interactive?: boolean
+  }): { envLines: string[]; guidance: string } | undefined {
+    const restricted = input.permission
+      ? Permission.evaluate("external_directory", "*", input.permission).action !== "allow"
+      : false
+    if (!restricted) return undefined
+
+    const tmpdir = getTmpdir(input.sessionID)
+    const paths = [
+      Instance.directory,
+      ...(Instance.worktree !== "/" && Instance.worktree !== Instance.directory ? [Instance.worktree] : []),
+      tmpdir,
+    ]
+    const quoted = paths.map((p) => `\`${p}\``).join(", ")
+
+    // TODO: if read and write path sets differ, return separate lines
+    const envLines = [`  Temporary directory: ${tmpdir}`, `  Readable and writable paths: ${quoted}`]
+
+    const guidance = input.interactive
+      ? "You need permission from the user to read/write/edit outside these paths, only do so if needed."
+      : "You are not allowed to read/write/edit outside these paths."
+
+    return { envLines, guidance }
+  }
+
   export function provider(model: Provider.Model) {
     if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
       return [PROMPT_BEAST]
@@ -34,9 +62,13 @@ export namespace SystemPrompt {
     return [PROMPT_DEFAULT]
   }
 
-  export async function environment(model: Provider.Model, sessionID?: string) {
+  export async function environment(
+    model: Provider.Model,
+    sessionID?: string,
+    options?: { permission?: Permission.Ruleset; interactive?: boolean },
+  ) {
     const project = Instance.project
-    const tmpdir = sessionID ? getTmpdir(sessionID) : undefined
+    const perm = sessionID ? permissionEnv({ sessionID, ...options }) : undefined
     return [
       [
         `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
@@ -47,9 +79,9 @@ export namespace SystemPrompt {
         `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
         `  Platform: ${process.platform}`,
         `  Today's date: ${new Date().toDateString()}`,
-        ...(tmpdir ? [`  Temporary directory: ${tmpdir}`] : []),
+        ...(perm?.envLines ?? []),
         `</env>`,
-        `IMPORTANT: Only read or access files outside the working directory or workspace root if the task specifically requires it. Avoid accessing the root filesystem or unrelated directories.`,
+        ...(perm?.guidance ? [perm.guidance] : []),
         `<directories>`,
         `  ${
           project.vcs === "git" && false
