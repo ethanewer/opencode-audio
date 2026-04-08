@@ -174,7 +174,7 @@ export function useVoice(opts: {
       const elapsed = Math.floor((tick() * 80) / 1000)
       const min = String(Math.floor(elapsed / 60)).padStart(2, "0")
       const sec = String(elapsed % 60).padStart(2, "0")
-      return t`${icon} ${fg(opts.color)(frames[tick() % frames.length])} ${fg(opts.color)(`Recording ${min}:${sec}`)} ${dim("— press space to send, or type to edit")}`
+      return t`${icon} ${fg(opts.color)(frames[tick() % frames.length])} ${fg(opts.color)(`Recording ${min}:${sec}`)} ${dim("— space to send, shift+space to edit")}`
     }
     return t`${icon} ${dim("Press space to record, or start typing")}`
   }
@@ -195,7 +195,7 @@ export function useVoice(opts: {
             {" "}
             {frame()} Recording {min()}:{sec()}
           </span>
-          <span style={{ dim: true }}> — press space to send, or type to edit</span>
+          <span style={{ dim: true }}> — space to send, shift+space to edit</span>
         </Show>
         <Show when={!transcribing() && !rec()}>
           <span style={{ dim: true }}> Press space to record, or start typing</span>

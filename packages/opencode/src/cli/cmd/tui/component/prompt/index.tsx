@@ -1389,6 +1389,16 @@ export function Prompt(props: PromptProps) {
                     props.cancelSpeech?.()
                     return
                   }
+                  if (e.name === "space" && e.shift) {
+                    e.preventDefault()
+                    if (voice.transcribing()) return
+                    if (voice.recording()) {
+                      voice.finish()
+                      setStore("returnToVoice", true)
+                      setStore("mode", "normal")
+                    }
+                    return
+                  }
                   if (e.name === "space") {
                     e.preventDefault()
                     if (voice.transcribing()) return
@@ -1718,6 +1728,11 @@ export function Prompt(props: PromptProps) {
                       {voice.recording() ? "stop + send" : voice.transcribing() ? "transcribing..." : "record"}
                     </span>
                   </text>
+                  <Show when={voice.recording()}>
+                    <text fg={theme.text}>
+                      shift+space <span style={{ fg: theme.textMuted }}>stop + edit</span>
+                    </text>
+                  </Show>
                   <text fg={theme.text}>
                     type <span style={{ fg: theme.textMuted }}>edit</span>
                   </text>
