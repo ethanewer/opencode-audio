@@ -1166,3 +1166,177 @@ test("ask - abort should clear pending request", async () => {
     },
   })
 })
+
+// nudge tests
+
+test("ask - nudges first external_directory ask with NudgeError", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      await expect(
+        Permission.ask({
+          sessionID: SessionID.make("session_nudge1"),
+          permission: "external_directory",
+          patterns: ["/outside/path/*"],
+          metadata: {},
+          always: ["/outside/path/*"],
+          ruleset: [{ permission: "external_directory", pattern: "*", action: "ask" }],
+        }),
+      ).rejects.toBeInstanceOf(Permission.NudgeError)
+
+      expect(await Permission.list()).toHaveLength(0)
+    },
+  })
+})
+
+test("ask - second external_directory ask creates pending after nudge", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const sid = SessionID.make("session_nudge2")
+
+      // First call: nudge
+      await Permission.ask({
+        sessionID: sid,
+        permission: "external_directory",
+        patterns: ["/outside/*"],
+        metadata: {},
+        always: ["/outside/*"],
+        ruleset: [{ permission: "external_directory", pattern: "*", action: "ask" }],
+      }).catch(() => {})
+
+      // Second call: should create pending entry
+      const ask = Permission.ask({
+        sessionID: sid,
+        permission: "external_directory",
+        patterns: ["/other/path/*"],
+        metadata: {},
+        always: ["/other/path/*"],
+        ruleset: [{ permission: "external_directory", pattern: "*", action: "ask" }],
+      })
+
+      const pending = await waitForPending(1)
+      expect(pending).toHaveLength(1)
+      expect(pending[0].permission).toBe("external_directory")
+
+      await rejectAll()
+      await ask.catch(() => {})
+    },
+  })
+})
+
+test("ask - does not nudge non-external_directory permissions", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      // bash with ask should go straight to pending (no nudge)
+      const ask = Permission.ask({
+        sessionID: SessionID.make("session_nudge3"),
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        ruleset: [{ permission: "bash", pattern: "*", action: "ask" }],
+      })
+
+      const pending = await waitForPending(1)
+      expect(pending).toHaveLength(1)
+      expect(pending[0].permission).toBe("bash")
+
+      await rejectAll()
+      await ask.catch(() => {})
+    },
+  })
+})
+
+test("ask - does not nudge doom_loop permission", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const ask = Permission.ask({
+        sessionID: SessionID.make("session_nudge4"),
+        permission: "doom_loop",
+        patterns: ["bash"],
+        metadata: {},
+        always: ["bash"],
+        ruleset: [{ permission: "doom_loop", pattern: "*", action: "ask" }],
+      })
+
+      const pending = await waitForPending(1)
+      expect(pending).toHaveLength(1)
+      expect(pending[0].permission).toBe("doom_loop")
+
+      await rejectAll()
+      await ask.catch(() => {})
+    },
+  })
+})
+
+test("ask - nudge is per-session", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      // Session A gets nudged
+      await expect(
+        Permission.ask({
+          sessionID: SessionID.make("session_nudge_a"),
+          permission: "external_directory",
+          patterns: ["/outside/*"],
+          metadata: {},
+          always: [],
+          ruleset: [{ permission: "external_directory", pattern: "*", action: "ask" }],
+        }),
+      ).rejects.toBeInstanceOf(Permission.NudgeError)
+
+      // Session B also gets nudged (independent)
+      await expect(
+        Permission.ask({
+          sessionID: SessionID.make("session_nudge_b"),
+          permission: "external_directory",
+          patterns: ["/outside/*"],
+          metadata: {},
+          always: [],
+          ruleset: [{ permission: "external_directory", pattern: "*", action: "ask" }],
+        }),
+      ).rejects.toBeInstanceOf(Permission.NudgeError)
+
+      expect(await Permission.list()).toHaveLength(0)
+    },
+  })
+})
+
+test("ask - nudge does not interfere with allow or deny", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      // external_directory with allow should resolve immediately (no nudge)
+      const result = await Permission.ask({
+        sessionID: SessionID.make("session_nudge5"),
+        permission: "external_directory",
+        patterns: ["/allowed/*"],
+        metadata: {},
+        always: [],
+        ruleset: [{ permission: "external_directory", pattern: "*", action: "allow" }],
+      })
+      expect(result).toBeUndefined()
+
+      // external_directory with deny should throw DeniedError (no nudge)
+      await expect(
+        Permission.ask({
+          sessionID: SessionID.make("session_nudge5"),
+          permission: "external_directory",
+          patterns: ["/denied/*"],
+          metadata: {},
+          always: [],
+          ruleset: [{ permission: "external_directory", pattern: "*", action: "deny" }],
+        }),
+      ).rejects.toBeInstanceOf(Permission.DeniedError)
+    },
+  })
+})

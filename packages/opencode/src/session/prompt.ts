@@ -1882,7 +1882,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 const [skills, env, instructions, modelMsgs] = yield* Effect.promise(() =>
                   Promise.all([
                     managed ? undefined : SystemPrompt.skills(agent),
-                    managed ? ([] as string[]) : SystemPrompt.environment(model),
+                    managed ? ([] as string[]) : SystemPrompt.environment(model, sessionID),
                     managed ? ([] as string[]) : Instruction.system(),
                     MessageV2.toModelMessages(msgs, model),
                   ]),

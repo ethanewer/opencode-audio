@@ -102,7 +102,15 @@ export namespace Permission {
     }
   }
 
-  export type Error = DeniedError | RejectedError | CorrectedError
+  export class NudgeError extends Schema.TaggedErrorClass<NudgeError>()("PermissionNudgeError", {
+    permission: Schema.String,
+  }) {
+    override get message() {
+      return `This action requires user permission (${this.permission}). Try an alternative approach that does not require this permission. If this action is essential, rerun the exact same tool call to request explicit permission from the user.`
+    }
+  }
+
+  export type Error = DeniedError | RejectedError | CorrectedError | NudgeError
 
   export const AskInput = Request.partial({ id: true }).extend({
     ruleset: Ruleset,
@@ -128,6 +136,7 @@ export namespace Permission {
   interface State {
     pending: Map<PermissionID, PendingEntry>
     approved: Ruleset
+    nudged: Map<string, Set<string>>
   }
 
   export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
@@ -148,6 +157,7 @@ export namespace Permission {
           const state = {
             pending: new Map<PermissionID, PendingEntry>(),
             approved: row?.data ?? [],
+            nudged: new Map<string, Set<string>>(),
           }
 
           yield* Effect.addFinalizer(() =>
@@ -164,7 +174,7 @@ export namespace Permission {
       )
 
       const ask = Effect.fn("Permission.ask")(function* (input: z.infer<typeof AskInput>) {
-        const { approved, pending } = yield* InstanceState.get(state)
+        const { approved, pending, nudged } = yield* InstanceState.get(state)
         const { ruleset, ...request } = input
         let needsAsk = false
 
@@ -181,6 +191,16 @@ export namespace Permission {
         }
 
         if (!needsAsk) return
+
+        if (NUDGE_PERMISSIONS.has(request.permission)) {
+          const session = nudged.get(request.sessionID) ?? new Set<string>()
+          if (!nudged.has(request.sessionID)) nudged.set(request.sessionID, session)
+          if (!session.has(request.permission)) {
+            session.add(request.permission)
+            log.info("nudge", { permission: request.permission, sessionID: request.sessionID })
+            return yield* new NudgeError({ permission: request.permission })
+          }
+        }
 
         const id = request.id ?? PermissionID.ascending()
         const info: Request = {
@@ -293,6 +313,7 @@ export namespace Permission {
     return rulesets.flat()
   }
 
+  const NUDGE_PERMISSIONS = new Set(["external_directory"])
   const EDIT_TOOLS = ["edit", "write", "apply_patch", "multiedit"]
   const SAFE_TOOLS = ["speak"]
 
