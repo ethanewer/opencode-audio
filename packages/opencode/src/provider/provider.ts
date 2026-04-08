@@ -1359,7 +1359,7 @@ export namespace Provider {
 
               // Audio output models: inject modalities/audio into the request,
               // force non-streaming, capture audio from response, rewrite as SSE stream with transcript text
-              if (s.audioModels.has(body.model)) {
+              if (s.audioModels.has(body.model) && !Array.isArray(body.input)) {
                 const wasStream = body.stream === true
                 const correlation =
                   opts.headers instanceof Headers
