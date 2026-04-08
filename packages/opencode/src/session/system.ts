@@ -37,7 +37,7 @@ export namespace SystemPrompt {
     const quoted = paths.map((p) => `\`${p}\``).join(", ")
 
     // TODO: if read and write path sets differ, return separate lines
-    const envLines = [`  Temporary directory: ${tmpdir}`, `  Readable and writable paths: ${quoted}`]
+    const envLines = [`  Readable and writable paths: ${quoted}`]
 
     const guidance = input.interactive
       ? "You need permission from the user to read/write/edit outside these paths, only do so if needed."

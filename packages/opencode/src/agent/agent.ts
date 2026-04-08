@@ -120,7 +120,6 @@ export namespace Agent {
                 Permission.fromConfig({
                   question: "allow",
                   plan_enter: "allow",
-                  task: "allow",
                   task_complete: "allow",
                 }),
                 user,
@@ -284,7 +283,6 @@ export namespace Agent {
                 Permission.fromConfig({
                   question: "allow",
                   plan_enter: "allow",
-                  task: "allow",
                   task_complete: "allow",
                 }),
                 user,
@@ -303,7 +301,6 @@ export namespace Agent {
                 Permission.fromConfig({
                   question: "allow",
                   plan_enter: "allow",
-                  task: "allow",
                   task_complete: "allow",
                 }),
                 user,
