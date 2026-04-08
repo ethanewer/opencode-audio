@@ -5,6 +5,7 @@ import { ModelID, ProviderID } from "../provider/schema"
 import { generateObject, streamObject, type ModelMessage } from "ai"
 import { Instance } from "../project/instance"
 import { Truncate } from "../tool/truncate"
+import { GLOB as TmpdirGlob } from "../session/tmpdir"
 import { Auth } from "../auth"
 import { ProviderTransform } from "../provider/transform"
 
@@ -83,7 +84,7 @@ export namespace Agent {
         Effect.fn("Agent.state")(function* (ctx) {
           const cfg = yield* config.get()
           const skillDirs = yield* skill.dirs()
-          const whitelistedDirs = [Truncate.GLOB, ...skillDirs.map((dir) => path.join(dir, "*"))]
+          const whitelistedDirs = [Truncate.GLOB, TmpdirGlob, ...skillDirs.map((dir) => path.join(dir, "*"))]
 
           const defaults = Permission.fromConfig({
             "*": "allow",
