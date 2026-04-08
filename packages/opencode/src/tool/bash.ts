@@ -252,6 +252,12 @@ async function collect(root: Node, cwd: string, ps: boolean, shell: string): Pro
     }
   }
 
+  // Detect bare redirections (e.g., "> file.txt") which have no command node
+  for (const node of root.descendantsOfType("redirected_statement")) {
+    if (!node || commands(node).length > 0) continue
+    scan.patterns.add(node.text.trim())
+  }
+
   return scan
 }
 

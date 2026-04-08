@@ -7,6 +7,7 @@ import {
   For,
   Match,
   on,
+  onCleanup,
   onMount,
   Show,
   Switch,
@@ -73,7 +74,6 @@ import stripAnsi from "strip-ansi"
 import { usePromptRef } from "../../context/prompt"
 import { useExit } from "../../context/exit"
 import { Filesystem } from "@/util/filesystem"
-import { Global } from "@/global"
 import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { useSpeech } from "@tui/util/speech"
@@ -1851,8 +1851,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
               const exec: ToolPart[] = []
               for (const msg of msgs) {
                 for (const p of (sync.data.part[msg.id] ?? []) as Part[]) {
-                  if (p.type === "tool" && (p as ToolPart).tool === "execute_commands")
-                    exec.push(p as ToolPart)
+                  if (p.type === "tool" && (p as ToolPart).tool === "execute_commands") exec.push(p as ToolPart)
                 }
               }
               const me = exec.findIndex((p) => p.callID === props.part.callID)
@@ -1861,7 +1860,10 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
               let follower = false
               if (myCmds.length === 0) {
                 for (let j = me - 1; j >= 0; j--) {
-                  if (execCmds(exec[j]!.state as any).length > 0) { follower = true; break }
+                  if (execCmds(exec[j]!.state as any).length > 0) {
+                    follower = true
+                    break
+                  }
                 }
               }
               let output = ((props.part.state as any).metadata?.output ?? "").trim()
@@ -1872,13 +1874,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
               }
               return { follower, output }
             })
-            return (
-              <ExecuteCommands
-                {...toolprops}
-                groupFollower={group().follower}
-                groupOutput={group().output}
-              />
-            )
+            return <ExecuteCommands {...toolprops} groupFollower={group().follower} groupOutput={group().output} />
           })()}
         </Match>
         <Match when={props.part.tool === "task_complete"}>
@@ -1956,6 +1952,7 @@ function InlineTool(props: {
   complete: any
   pending: string
   spinner?: boolean
+  spinnerSuffix?: JSX.Element
   children: JSX.Element
   part: ToolPart
   onClick?: () => void
@@ -2025,7 +2022,7 @@ function InlineTool(props: {
     >
       <Switch>
         <Match when={props.spinner}>
-          <Spinner color={fg()} children={props.children} />
+          <Spinner color={fg()} children={props.children} suffix={props.spinnerSuffix} />
         </Match>
         <Match when={true}>
           <text paddingLeft={3} fg={fg()} attributes={denied() ? TextAttributes.STRIKETHROUGH : undefined}>
@@ -2043,11 +2040,12 @@ function InlineTool(props: {
 }
 
 function BlockTool(props: {
-  title: string
+  title?: string
   children: JSX.Element
   onClick?: () => void
   part?: ToolPart
   spinner?: boolean
+  spinnerSuffix?: JSX.Element
 }) {
   const { theme } = useTheme()
   const renderer = useRenderer()
@@ -2071,15 +2069,19 @@ function BlockTool(props: {
         props.onClick?.()
       }}
     >
-      <Show
-        when={props.spinner}
-        fallback={
-          <text paddingLeft={3} fg={theme.textMuted}>
-            {props.title}
-          </text>
-        }
-      >
-        <Spinner color={theme.textMuted}>{props.title.replace(/^# /, "")}</Spinner>
+      <Show when={props.title}>
+        <Show
+          when={props.spinner}
+          fallback={
+            <text paddingLeft={3} fg={theme.textMuted}>
+              {props.title}
+            </text>
+          }
+        >
+          <Spinner color={theme.textMuted} suffix={props.spinnerSuffix}>
+            {props.title!.replace(/^# /, "")}
+          </Spinner>
+        </Show>
       </Show>
       {props.children}
       <Show when={error()}>
@@ -2091,7 +2093,6 @@ function BlockTool(props: {
 
 function Bash(props: ToolProps<typeof BashTool>) {
   const { theme } = useTheme()
-  const sync = useSync()
   const isRunning = createMemo(() => props.part.state.status === "running")
   const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
   const [expanded, setExpanded] = createSignal(false)
@@ -2102,36 +2103,10 @@ function Bash(props: ToolProps<typeof BashTool>) {
     return [...lines().slice(0, 10), "…"].join("\n")
   })
 
-  const workdirDisplay = createMemo(() => {
-    const workdir = props.input.workdir
-    if (!workdir || workdir === ".") return undefined
-
-    const base = sync.data.path.directory
-    if (!base) return undefined
-
-    const absolute = path.resolve(base, workdir)
-    if (absolute === base) return undefined
-
-    const home = Global.Path.home
-    if (!home) return absolute
-
-    const match = absolute === home || absolute.startsWith(home + path.sep)
-    return match ? absolute.replace(home, "~") : absolute
-  })
-
-  const title = createMemo(() => {
-    const desc = props.input.description ?? "Shell"
-    const wd = workdirDisplay()
-    if (!wd) return `# ${desc}`
-    if (desc.includes(wd)) return `# ${desc}`
-    return `# ${desc} in ${wd}`
-  })
-
   return (
     <Switch>
       <Match when={props.metadata.output !== undefined}>
         <BlockTool
-          title={title()}
           part={props.part}
           spinner={isRunning()}
           onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
@@ -2160,12 +2135,16 @@ const CMDEND_RE = /__CMDEND__\d+__/
 const CMDEND_ECHO_RE = /echo\s+'__CMDEND__\d+__'/
 const CD_SETUP_RE = /cd\s+'\/[^']*'\s*$/
 const PROMPT_RE = /^\S+@\S+\s.*?%\s?/
+const CHO_ERROR_RE = /^.*command not found:\s*cho\b.*$/
 
 function cleanTerminal(text: string, cmds: string[]) {
   const set = new Set(cmds)
   const lines = text
     .split("\n")
-    .filter((line) => !CMDEND_RE.test(line) && !CMDEND_ECHO_RE.test(line) && !CD_SETUP_RE.test(line))
+    .filter(
+      (line) =>
+        !CMDEND_RE.test(line) && !CMDEND_ECHO_RE.test(line) && !CD_SETUP_RE.test(line) && !CHO_ERROR_RE.test(line),
+    )
     .map((line) => {
       const m = line.match(PROMPT_RE)
       if (!m) return line
@@ -2178,7 +2157,10 @@ function cleanTerminal(text: string, cmds: string[]) {
       return true
     })
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === "$") lines.pop()
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim()
+  return lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
 }
 
 function execCmds(state: Record<string, any>): string[] {
@@ -2186,13 +2168,17 @@ function execCmds(state: Record<string, any>): string[] {
   if (Array.isArray(c) && c.length > 0) return c as string[]
   const raw = state.input?.commands
   if (Array.isArray(raw))
-    return raw.map((cmd: any) => String(cmd.keystrokes ?? "").replace(/\n$/, "").trim()).filter(Boolean)
+    return raw
+      .map((cmd: any) =>
+        String(cmd.keystrokes ?? "")
+          .replace(/\n$/, "")
+          .trim(),
+      )
+      .filter(Boolean)
   return []
 }
 
-function ExecuteCommands(
-  props: ToolProps<any> & { groupFollower?: boolean; groupOutput?: string },
-) {
+function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; groupOutput?: string }) {
   const { theme } = useTheme()
 
   const cmds = createMemo(() => {
@@ -2201,7 +2187,11 @@ function ExecuteCommands(
     const raw = (props.input as Record<string, unknown>).commands
     if (Array.isArray(raw))
       return raw
-        .map((cmd: any) => String(cmd.keystrokes ?? "").replace(/\n$/, "").trim())
+        .map((cmd: any) =>
+          String(cmd.keystrokes ?? "")
+            .replace(/\n$/, "")
+            .trim(),
+        )
         .filter(Boolean)
     return []
   })
@@ -2225,22 +2215,85 @@ function ExecuteCommands(
     return st === "running" || st === "pending"
   })
 
+  const totalDuration = createMemo(() => {
+    const raw = (props.input as Record<string, unknown>).commands
+    if (!Array.isArray(raw)) return 0
+    return raw.reduce((sum: number, cmd: any) => sum + Math.min(cmd.duration ?? 1.0, 60), 0)
+  })
+
+  const [tick, setTick] = createSignal(0)
+  let countdownTimer: ReturnType<typeof setInterval> | undefined
+  createEffect(() => {
+    if (active()) {
+      setTick(0)
+      countdownTimer = setInterval(() => setTick((t) => t + 1), 80)
+    } else {
+      if (countdownTimer) clearInterval(countdownTimer)
+      countdownTimer = undefined
+    }
+  })
+  onCleanup(() => {
+    if (countdownTimer) clearInterval(countdownTimer)
+  })
+
+  const isWaitOnly = createMemo(() => {
+    const raw = (props.input as Record<string, unknown>).commands
+    if (!Array.isArray(raw) || raw.length === 0) return true
+    return raw.every(
+      (cmd: any) =>
+        !String(cmd.keystrokes ?? "")
+          .replace(/\n$/, "")
+          .trim(),
+    )
+  })
+
+  const timerSuffix = createMemo(() => {
+    tick() // subscribe to tick for reactivity
+    if (!active()) return undefined
+    if (!isWaitOnly()) return undefined
+    const state = props.part.state
+    const start = state.status === "running" ? state.time.start : undefined
+    const total = totalDuration()
+    if (start === undefined || total <= 0) return undefined
+    const elapsed = (Date.now() - start) / 1000
+    const remaining = Math.max(0, Math.ceil(total - elapsed))
+    const min = String(Math.floor(remaining / 60)).padStart(2, "0")
+    const sec = String(remaining % 60).padStart(2, "0")
+    return `${min}:${sec}`
+  })
+
+  const timerEl = createMemo(() => {
+    const t = timerSuffix()
+    if (!t) return undefined
+    return <text fg={theme.textMuted}>{t}</text>
+  })
+
   return (
     <Switch>
       <Match when={cmds().length === 0}>
-        <InlineTool icon="~" pending={plan()} complete={plan()} spinner={active()} part={props.part}>
+        <InlineTool
+          icon="~"
+          pending={plan()}
+          complete={plan()}
+          spinner={active()}
+          spinnerSuffix={timerEl()}
+          part={props.part}
+        >
           {plan()}
         </InlineTool>
       </Match>
       <Match when={true}>
         <BlockTool
-          title={`# ${plan()}`}
           part={props.part}
           spinner={active()}
           onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
         >
           <box>
-            <text fg={theme.text}>{cmds().map((c) => `$ ${c}`).join("\n")}</text>
+            <text fg={theme.text}>
+              {cmds()
+                .map((c) => `$ ${c}`)
+                .join("\n")}
+            </text>
             <Show when={output()}>
               <text fg={theme.textMuted}>{limited()}</text>
             </Show>

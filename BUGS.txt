@@ -1,0 +1,4 @@
+- `Unknown parameter: 'modalities'` shows up in the TUI
+- When `/eval` returns its result to the build agent, the build agent does not keep working (note every time)
+  - This could be a more general but with subagents, but I am not sure of this
+- Eval can stop without calling the end eval tool, causing the agent to hang. (could be related to the issue above)

@@ -201,7 +201,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         const hasVoice = hasTts || hasAudioOutput
         // Resolve separate vision model if configured
         const visionParsed = entry.vision ? Provider.parseModel(entry.vision) : undefined
-        const visionProvider = visionParsed ? sync.data.provider.find((x) => x.id === visionParsed.providerID) : undefined
+        const visionProvider = visionParsed
+          ? sync.data.provider.find((x) => x.id === visionParsed.providerID)
+          : undefined
         const visionModel = visionParsed && visionProvider ? visionProvider.models[visionParsed.modelID] : undefined
         const hasVision = !!entry.vision
         return {
@@ -358,7 +360,16 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         },
         color(name: string) {
           const index = visibleAgents().findIndex((x) => x.name === name)
-          if (index === -1) return colors()[0]
+          if (index === -1) {
+            // Fall back to all agents (including hidden) for color lookup
+            const all = sync.data.agent.find((x) => x.name === name)
+            if (all?.color) {
+              const color = all.color
+              if (color.startsWith("#")) return RGBA.fromHex(color)
+              return theme[color as keyof typeof theme] as RGBA
+            }
+            return colors()[0]
+          }
           const a = visibleAgents()[index]
 
           if (a?.color) {

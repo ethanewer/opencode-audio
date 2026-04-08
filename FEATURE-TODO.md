@@ -1,0 +1,3 @@
+- shift + space to stop recording in voice mode, but not submit the message. this should workslike when the user starts typing, but without the user needing to append chars to the current message
+- Optional compressed view for shell tool.
+  - 1 line per shell command only (faded text like display for read tool)

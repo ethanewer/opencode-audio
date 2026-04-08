@@ -7,7 +7,7 @@ import "opentui-spinner/solid"
 
 const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-export function Spinner(props: { children?: JSX.Element; color?: RGBA }) {
+export function Spinner(props: { children?: JSX.Element; color?: RGBA; suffix?: JSX.Element }) {
   const { theme } = useTheme()
   const kv = useKV()
   const color = () => props.color ?? theme.textMuted
@@ -15,6 +15,7 @@ export function Spinner(props: { children?: JSX.Element; color?: RGBA }) {
     <Show when={kv.get("animations_enabled", true)} fallback={<text fg={color()}>⋯ {props.children}</text>}>
       <box flexDirection="row" gap={1}>
         <spinner frames={frames} interval={80} color={color()} />
+        <Show when={props.suffix}>{props.suffix}</Show>
         <Show when={props.children}>
           <text fg={color()}>{props.children}</text>
         </Show>

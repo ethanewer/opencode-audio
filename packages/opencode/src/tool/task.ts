@@ -68,6 +68,13 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
       const hasTodoWritePermission = agent.permission.some((rule) => rule.permission === "todowrite")
 
+      // Inherit caller's edit and bash restrictions so subagents
+      // respect the parent agent's read-only constraints
+      const callerAgent = await Agent.get(ctx.agent)
+      const inheritedRules = callerAgent
+        ? callerAgent.permission.filter((r) => r.permission === "edit" || r.permission === "bash")
+        : []
+
       const session = await iife(async () => {
         if (params.task_id) {
           const found = await Session.get(SessionID.make(params.task_id)).catch(() => {})
@@ -101,6 +108,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
               action: "allow" as const,
               permission: t,
             })) ?? []),
+            ...inheritedRules,
           ],
         })
       })

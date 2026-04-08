@@ -40,6 +40,7 @@ async function capturePane(name: string) {
 }
 
 const MARKER_OUTPUT_RE = new RegExp(`${MARKER}\\d+__`)
+const CHO_ERROR_RE = /command not found:\s*cho\b/
 
 function filterMarkers(text: string) {
   return text
@@ -47,6 +48,7 @@ function filterMarkers(text: string) {
     .filter((line) => {
       if (MARKER_ECHO_RE.test(line)) return false
       if (MARKER_OUTPUT_RE.test(line)) return false
+      if (CHO_ERROR_RE.test(line)) return false
       return true
     })
     .join("\n")
@@ -119,6 +121,7 @@ export namespace Tmux {
       if (!cmd.keystrokes.endsWith("\n")) {
         await run(["tmux", "send-keys", "-t", state.name, "Enter"])
       }
+      await Bun.sleep(50)
       await sendKeys(state.name, `echo '${marker}'\n`)
 
       const wait = Math.min(0.3, cmd.duration) * 1000
@@ -126,12 +129,7 @@ export namespace Tmux {
 
       while ((performance.now() - start) / 1000 < cmd.duration) {
         const pane = await capturePane(state.name)
-        if (
-          pane
-            .split("\n")
-            .some((line) => line.includes(marker) && !MARKER_ECHO_RE.test(line))
-        )
-          break
+        if (pane.split("\n").some((line) => line.includes(marker) && !MARKER_ECHO_RE.test(line))) break
         if (update) {
           update(filterMarkers(delta(before, pane)))
         }
