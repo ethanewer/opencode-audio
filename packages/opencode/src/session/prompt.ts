@@ -1424,6 +1424,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
           let nudged = false
           let todoNudges = 0
           let evalNudges = 0
+          let evalFinishNudges = 0
           let nudges = 0
           let remind = false
           const session = yield* sessions.get(sessionID)
@@ -1623,6 +1624,37 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                     } satisfies MessageV2.TextPart)
                     continue
                   }
+                }
+              }
+              // Eval agent nudge: if the eval agent finished without calling
+              // eval_result, nudge it to produce a result before exiting.
+              if (lastUser.agent === "eval" && session.parentID && evalFinishNudges < MAX_EVAL_NUDGES) {
+                if (
+                  !msgs.some((m) =>
+                    m.parts.some(
+                      (p) => p.type === "tool" && p.tool === "eval_result" && p.state.status === "completed",
+                    ),
+                  )
+                ) {
+                  evalFinishNudges++
+                  const mid = MessageID.ascending()
+                  yield* sessions.updateMessage({
+                    id: mid,
+                    sessionID,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: lastUser.agent,
+                    model: lastUser.model,
+                  } satisfies MessageV2.User)
+                  yield* sessions.updatePart({
+                    id: PartID.ascending(),
+                    messageID: mid,
+                    sessionID,
+                    type: "text",
+                    text: "You finished without calling eval_result. You MUST call eval_result to complete your evaluation.",
+                    synthetic: true,
+                  } satisfies MessageV2.TextPart)
+                  continue
                 }
               }
               // Empty tool calls feedback: nudge the agent to use
