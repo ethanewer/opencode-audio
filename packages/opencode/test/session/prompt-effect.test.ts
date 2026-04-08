@@ -943,6 +943,183 @@ it.live("eval command can submit a rebuttal and reuse the same eval session", ()
   ),
 )
 
+// Eval finish nudge tests — exercise the nudge added to runLoop that
+// reminds the eval agent to call eval_result when it finishes with text.
+
+it.live(
+  "eval agent is nudged to call eval_result when it finishes with text only",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+
+        const parent = yield* sessions.create({ title: "Build" })
+        const child = yield* sessions.create({ parentID: parent.id, title: "Eval" })
+
+        const msg = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: child.id,
+          agent: "eval",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: child.id,
+          type: "text",
+          text: "Evaluate the build output",
+        })
+
+        // First call: text only — triggers the eval finish nudge
+        yield* llm.text("The code looks correct")
+        // Second call: after nudge, model calls eval_result
+        yield* llm.tool("eval_result", { pass: true, summary: "All checks pass" })
+
+        yield* prompt.loop({ sessionID: child.id })
+
+        const all = yield* Effect.promise(() => Session.messages({ sessionID: child.id }))
+        // Nudge should have been injected
+        expect(
+          all.some(
+            (entry) =>
+              entry.info.role === "user" &&
+              entry.parts.some(
+                (part) => part.type === "text" && part.synthetic === true && part.text.includes("MUST call eval_result"),
+              ),
+          ),
+        ).toBe(true)
+        // eval_result should have been called
+        expect(
+          all.some((entry) =>
+            entry.parts.some(
+              (part) => part.type === "tool" && part.tool === "eval_result" && part.state.status === "completed",
+            ),
+          ),
+        ).toBe(true)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
+it.live(
+  "eval agent exits after exhausting eval_result nudges",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+
+        const parent = yield* sessions.create({ title: "Build" })
+        const child = yield* sessions.create({ parentID: parent.id, title: "Eval" })
+
+        const msg = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: child.id,
+          agent: "eval",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: child.id,
+          type: "text",
+          text: "Evaluate the build output",
+        })
+
+        // 3 text responses: initial + 2 nudge responses (MAX_EVAL_NUDGES = 2)
+        yield* llm.text("looks fine")
+        yield* llm.text("everything passes")
+        yield* llm.text("all good")
+
+        yield* prompt.loop({ sessionID: child.id })
+
+        const all = yield* Effect.promise(() => Session.messages({ sessionID: child.id }))
+        // Both nudges should have fired
+        const nudges = all.filter(
+          (entry) =>
+            entry.info.role === "user" &&
+            entry.parts.some(
+              (part) => part.type === "text" && part.synthetic === true && part.text.includes("MUST call eval_result"),
+            ),
+        )
+        expect(nudges.length).toBe(2)
+        // eval_result should NOT be present
+        expect(
+          all.some((entry) =>
+            entry.parts.some(
+              (part) => part.type === "tool" && part.tool === "eval_result" && part.state.status === "completed",
+            ),
+          ),
+        ).toBe(false)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
+it.live(
+  "eval agent calling eval_result immediately is not affected by nudge",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+
+        const parent = yield* sessions.create({ title: "Build" })
+        const child = yield* sessions.create({ parentID: parent.id, title: "Eval" })
+
+        const msg = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: child.id,
+          agent: "eval",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: child.id,
+          type: "text",
+          text: "Evaluate the build output",
+        })
+
+        // eval_result called immediately — no nudge needed
+        yield* llm.tool("eval_result", { pass: false, summary: "Missing tests" })
+
+        yield* prompt.loop({ sessionID: child.id })
+
+        const all = yield* Effect.promise(() => Session.messages({ sessionID: child.id }))
+        // No nudge should have fired
+        expect(
+          all.some(
+            (entry) =>
+              entry.info.role === "user" &&
+              entry.parts.some(
+                (part) => part.type === "text" && part.synthetic === true && part.text.includes("MUST call eval_result"),
+              ),
+          ),
+        ).toBe(false)
+        // eval_result should be present
+        expect(
+          all.some((entry) =>
+            entry.parts.some(
+              (part) => part.type === "tool" && part.tool === "eval_result" && part.state.status === "completed",
+            ),
+          ),
+        ).toBe(true)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
 it.live(
   "loop sets status to busy then idle",
   () =>
