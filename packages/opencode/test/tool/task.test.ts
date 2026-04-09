@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
-import { Agent } from "../../src/agent/agent"
 import { Command } from "../../src/command"
 import { Instance } from "../../src/project/instance"
 import { ProviderID, ModelID } from "../../src/provider/schema"
@@ -38,9 +37,8 @@ describe("tool.task", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const build = await Agent.get("build")
-        const first = await TaskTool.init({ agent: build })
-        const second = await TaskTool.init({ agent: build })
+        const first = await TaskTool.init()
+        const second = await TaskTool.init()
 
         expect(first.description).toBe(second.description)
 

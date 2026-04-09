@@ -423,7 +423,8 @@ describe("tool.plan_exit", () => {
 
     const server = await llm([
       { type: "tool", tool: "plan_exit", input: {} },
-      { type: "text", text: "implemented" },
+      { type: "tool", tool: "task_complete", input: {} },
+      { type: "tool", tool: "task_complete", input: {} },
     ])
 
     try {
@@ -459,7 +460,7 @@ describe("tool.plan_exit", () => {
           )
           const next = JSON.stringify(server.hits()[1])
 
-          expect(server.hits()).toHaveLength(2)
+          expect(server.hits()).toHaveLength(3)
           expect(result.info.role).toBe("assistant")
           expect(turn && turn.info.role === "assistant" ? turn.info.finish : undefined).toBe("tool-calls")
           expect(handoff?.info.agent).toBe("build")
@@ -480,7 +481,8 @@ describe("tool.plan_exit", () => {
     const server = await llm([
       { type: "text", text: "Plan:\n1. Run bun typecheck.\n2. Run bun test." },
       { type: "tool", tool: "plan_exit", input: {} },
-      { type: "text", text: "implemented" },
+      { type: "tool", tool: "task_complete", input: {} },
+      { type: "tool", tool: "task_complete", input: {} },
     ])
 
     try {
@@ -515,7 +517,7 @@ describe("tool.plan_exit", () => {
           )
           const retry = JSON.stringify(server.hits()[1])
 
-          expect(server.hits()).toHaveLength(3)
+          expect(server.hits()).toHaveLength(4)
           expect(result.info.role).toBe("assistant")
           expect(handoff?.info.agent).toBe("build")
           expect(retry).toContain("Your previous plan-mode turn ended incorrectly")

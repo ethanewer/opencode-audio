@@ -126,7 +126,20 @@ function tool(name: string, input: unknown, seq: number) {
 
 async function llm() {
   let seq = 0
-  let step = 0
+  const steps: Array<(s: number) => string> = [
+    // Build: finish with task_complete double-confirmation
+    () => { seq++; return tool("task_complete", {}, seq) },
+    () => { seq++; return tool("task_complete", {}, seq) },
+    // Eval attempt 1: fail
+    () => { seq++; return tool("eval_result", { pass: false, summary: "missing guard" }, seq) },
+    // Build rebuttal: eval_rebuttal then task_complete twice
+    () => { seq++; return tool("eval_rebuttal", { content: "the guard already exists" }, seq) },
+    () => { seq++; return tool("task_complete", {}, seq) },
+    () => { seq++; return tool("task_complete", {}, seq) },
+    // Eval re-review: pass
+    () => { seq++; return tool("eval_result", { pass: true, summary: "ok" }, seq) },
+  ]
+  let idx = 0
   const server = http.createServer(async (req, res) => {
     if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
       res.writeHead(404)
@@ -137,32 +150,14 @@ async function llm() {
     for await (const _ of req) {
     }
 
+    const fn = steps[idx++]
+    if (!fn) {
+      res.writeHead(500)
+      res.end("unexpected request")
+      return
+    }
     res.writeHead(200, { "content-type": "text/event-stream" })
-    if (step === 0) {
-      step += 1
-      res.end(text("implemented"))
-      return
-    }
-    if (step === 1) {
-      step += 1
-      seq += 1
-      res.end(tool("eval_result", { pass: false, summary: "missing guard" }, seq))
-      return
-    }
-    if (step === 2) {
-      step += 1
-      seq += 1
-      res.end(tool("eval_rebuttal", { content: "the guard already exists" }, seq))
-      return
-    }
-    if (step === 3) {
-      step += 1
-      res.end(text("rebutted"))
-      return
-    }
-    step += 1
-    seq += 1
-    res.end(tool("eval_result", { pass: true, summary: "ok" }, seq))
+    res.end(fn(idx))
   })
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))

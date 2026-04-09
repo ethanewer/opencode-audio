@@ -411,7 +411,9 @@ export const RunCommand = cmd({
     }
 
     const auto = args.agent === "auto"
-    const agent = auto ? "plan" : args.agent
+    const implicit =
+      Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && !args.agent && !args.attach && !args.command && !args.continue && !args.session
+    const agent = auto || implicit ? "plan" : args.agent
 
     const rules: Permission.Ruleset = [
       {
