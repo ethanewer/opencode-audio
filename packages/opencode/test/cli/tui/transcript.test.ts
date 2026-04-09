@@ -164,27 +164,6 @@ describe("transcript", () => {
       expect(result).toContain("**Output:**\n```\n```hello```\n```")
     })
 
-    test("formats eval rebuttal tool distinctly", () => {
-      const part: Part = {
-        id: "part_1",
-        sessionID: "ses_123",
-        messageID: "msg_123",
-        type: "tool",
-        callID: "call_1",
-        tool: "eval_rebuttal",
-        state: {
-          status: "completed",
-          input: { content: "the evaluator missed the existing behavior" },
-          output: "the evaluator missed the existing behavior",
-          title: "Evaluation Rebuttal",
-          metadata: { content: "the evaluator missed the existing behavior" },
-          time: { start: 1000, end: 1100 },
-        },
-      }
-      const result = formatPart(part, options)
-      expect(result).toBe("**Build Rebuttal:**\n\nthe evaluator missed the existing behavior\n\n")
-    })
-
     test("formats tool part without details when disabled", () => {
       const part: Part = {
         id: "part_1",

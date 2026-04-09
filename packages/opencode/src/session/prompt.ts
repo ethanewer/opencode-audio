@@ -83,7 +83,7 @@ function buildFromPlan(name: string) {
   return name === "voice-plan" ? "voice-build" : "build"
 }
 
-const ACTION_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "bash", "eval_rebuttal"])
+const ACTION_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "bash"])
 const MAX_TODO_NUDGES = 3
 const MAX_EVAL_NUDGES = 2
 const MAX_EMPTY_NUDGES = 5
@@ -594,9 +594,6 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
             )
           tools[key] = item
         }
-
-        const pending = Eval.pending(input.messages)
-        if (!pending || pending.state.round > Eval.MAX_REBUT) delete tools[Eval.REBUT]
 
         return tools
       })
@@ -1704,7 +1701,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 const evalResult = sub?.verdict
                 const passed = evalResult?.pass === true
                 const summary = evalResult?.summary ?? "The evaluation agent did not return a valid result."
-                const feedback = Eval.feedback(evalResult ?? { summary, issues: undefined }, !!sub?.childID)
+                const feedback = Eval.feedback(evalResult ?? { summary, issues: undefined })
                 if (passed) {
                   const mid = MessageID.ascending()
                   yield* sessions.updateMessage({
@@ -1822,22 +1819,6 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
                 const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
 
-                const evalActive =
-                  isBuild(agent.name) &&
-                  msgs.some(
-                    (m) =>
-                      m.info.role === "user" &&
-                      m.parts.some((p) => p.type === "text" && !p.ignored && Eval.state(p)?.phase === "failed"),
-                  )
-                const toolAgent = evalActive
-                  ? {
-                      ...agent,
-                      options: {
-                        ...agent.options,
-                        tools: [...(Array.isArray(agent.options?.tools) ? agent.options.tools : []), "eval_rebuttal"],
-                      },
-                    }
-                  : agent
                 // Resolve separate vision model: check user messages first, then config
                 let visionModel: Provider.Model | undefined
                 const vision =
@@ -1868,7 +1849,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   }
                 }
                 const tools = yield* resolveTools({
-                  agent: toolAgent,
+                  agent,
                   session,
                   model,
                   visionModel,
@@ -1912,8 +1893,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
 
                 const managed = usesTerminalPrompt(agent)
                 const mergedPermission = Permission.merge(agent.permission, session.permission ?? [])
-                const isHeadless =
-                  Permission.evaluate("question", "*", session.permission ?? []).action === "deny"
+                const isHeadless = Permission.evaluate("question", "*", session.permission ?? []).action === "deny"
                 const [skills, env, instructions, modelMsgs] = yield* Effect.promise(() =>
                   Promise.all([
                     SystemPrompt.skills(agent),
@@ -1952,7 +1932,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   )
                 const evalState = Eval.state(evalPart)
                 if (evalState?.phase === "failed") {
-                  system.push(Eval.reminder(evalState.round <= Eval.MAX_REBUT))
+                  system.push(Eval.reminder())
                 }
                 const format = lastUser.format ?? { type: "text" as const }
                 if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
@@ -2014,7 +1994,6 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 Eval.state(part)?.phase === "failed",
             )
             if (active) {
-              const meta = Eval.state(active)!
               const branch = yield* Effect.promise(() =>
                 Session.messages({ sessionID }).then((all) =>
                   all
@@ -2022,9 +2001,8 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                     .flatMap((item) => item.parts),
                 ),
               )
-              const note = Eval.rebut(branch)
-              // Eval action nudge: if agent responded without side-effect tools or rebuttal, nudge it
-              if (!note && evalNudges < MAX_EVAL_NUDGES) {
+              // Eval action nudge: if agent responded without side-effect tools, nudge it
+              if (evalNudges < MAX_EVAL_NUDGES) {
                 const acted = branch.some(
                   (part) => part.type === "tool" && part.state.status === "completed" && ACTION_TOOLS.has(part.tool),
                 )
@@ -2046,10 +2024,8 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                     type: "text",
                     text: [
                       "<system-reminder>",
-                      "You acknowledged the evaluation feedback but did not make any changes or submit a rebuttal.",
-                      "You must either:",
-                      "1. Fix the issues by editing files and running verification commands",
-                      "2. Call eval_rebuttal if you disagree with the findings",
+                      "You acknowledged the evaluation feedback but did not make any changes.",
+                      "You must fix the issues by editing files and running verification commands.",
                       "Do not simply state your intentions. Take action now.",
                       "</system-reminder>",
                     ].join("\n"),
@@ -2059,70 +2035,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 }
               }
               yield* Effect.promise(() => Eval.resolve(active))
-              if (!note) break
-              const child = SessionID.make(meta.sessionId)
-              const verdict = yield* Effect.promise(() =>
-                SessionPrompt.prompt({
-                  sessionID: child,
-                  agent: "eval",
-                  parts: [
-                    {
-                      type: "text",
-                      text: Eval.followup({ summary: meta.summary ?? "", issues: meta.issues }, note.content),
-                    },
-                  ],
-                }).then(async () => Eval.parse(await Session.messages({ sessionID: child }))),
-              )
-              if (verdict?.pass) {
-                const mid = MessageID.ascending()
-                yield* sessions.updateMessage({
-                  id: mid,
-                  sessionID,
-                  role: "user",
-                  time: { created: Date.now() },
-                  agent: lastUser.agent,
-                  model: lastUser.model,
-                })
-                yield* sessions.updatePart({
-                  id: PartID.ascending(),
-                  messageID: mid,
-                  sessionID,
-                  type: "text",
-                  text: "Eval passed.",
-                  eval: true,
-                } as MessageV2.TextPart)
-                break
-              }
-              const summary = verdict?.summary ?? "The evaluation agent did not return a valid result."
-              const mid = MessageID.ascending()
-              yield* sessions.updateMessage({
-                id: mid,
-                sessionID,
-                role: "user",
-                time: { created: Date.now() },
-                agent: lastUser.agent,
-                model: lastUser.model,
-              })
-              const round = meta.round + 1
-              yield* sessions.updatePart({
-                id: PartID.ascending(),
-                messageID: mid,
-                sessionID,
-                type: "text",
-                text: Eval.feedback(verdict ?? { summary, issues: undefined }, round <= Eval.MAX_REBUT),
-                metadata: Eval.metadata({
-                  sessionId: meta.sessionId,
-                  mode: "interactive",
-                  policy: "stop_on_accept",
-                  phase: "failed",
-                  round,
-                  summary,
-                  pass: false,
-                  rebutted: true,
-                  issues: verdict?.issues,
-                }),
-              } satisfies MessageV2.TextPart)
-              continue
+              break
             }
             // eval_result: stop immediately so the eval agent doesn't waste a follow-up turn
             const evalDone =

@@ -119,9 +119,9 @@ describe("eval command template (command/template/eval.txt)", () => {
     expect(t).toContain("eval_result")
   })
 
-  test("mentions rebuttal handling", async () => {
+  test("does not mention rebuttal", async () => {
     const t = await readPrompt("command/template/eval.txt")
-    expect(t).toContain("rebuttal")
+    expect(t).not.toContain("rebuttal")
   })
 })
 
@@ -151,40 +151,6 @@ describe("eval_result tool description (tool/eval.txt)", () => {
   test("mentions severity levels", async () => {
     const t = await readPrompt("tool/eval.txt")
     expect(t).toContain("severity")
-  })
-})
-
-// ── eval_rebuttal tool description ────────────────────────────────
-
-describe("eval_rebuttal tool description (tool/eval.ts REBUT)", () => {
-  // Import the constant indirectly by reading the source
-  let rebut: string
-  test.each([0])("load", async () => {
-    const src = await Bun.file(path.join(SRC, "tool/eval.ts")).text()
-    const match = src.match(/const REBUT = \[([\s\S]*?)\]\.join/)
-    expect(match).toBeTruthy()
-    // Reconstruct the string from the array literal
-    rebut = src
-  })
-
-  test("requires concrete evidence", async () => {
-    const src = await Bun.file(path.join(SRC, "tool/eval.ts")).text()
-    expect(src).toContain("concrete evidence")
-  })
-
-  test("forbids using rebuttal as substitute for fixing", async () => {
-    const src = await Bun.file(path.join(SRC, "tool/eval.ts")).text()
-    expect(src).toContain("Do not use this as a substitute for fixing")
-  })
-
-  test("mentions evidence types", async () => {
-    const src = await Bun.file(path.join(SRC, "tool/eval.ts")).text()
-    expect(src).toContain("test output, file contents, or logical arguments")
-  })
-
-  test("does not contain old text", async () => {
-    const src = await Bun.file(path.join(SRC, "tool/eval.ts")).text()
-    expect(src).not.toContain("substitute for doing the requested work")
   })
 })
 

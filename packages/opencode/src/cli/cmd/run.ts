@@ -188,15 +188,6 @@ function task(info: ToolProps<typeof TaskTool>) {
   })
 }
 
-function rebuttal(info: ToolProps<any>) {
-  const input = info.input as Record<string, unknown>
-  inline({
-    icon: "!",
-    title: "Evaluation rebuttal",
-    description: typeof input.content === "string" ? input.content : undefined,
-  })
-}
-
 function skill(info: ToolProps<typeof SkillTool>) {
   inline({
     icon: "→",
@@ -412,7 +403,12 @@ export const RunCommand = cmd({
 
     const auto = args.agent === "auto"
     const implicit =
-      Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && !args.agent && !args.attach && !args.command && !args.continue && !args.session
+      Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE &&
+      !args.agent &&
+      !args.attach &&
+      !args.command &&
+      !args.continue &&
+      !args.session
     const agent = auto || implicit ? "plan" : args.agent
 
     const rules: Permission.Ruleset = [
@@ -498,7 +494,6 @@ export const RunCommand = cmd({
           if (part.tool === "codesearch") return codesearch(props<typeof CodeSearchTool>(part))
           if (part.tool === "websearch") return websearch(props<typeof WebSearchTool>(part))
           if (part.tool === "task") return task(props<typeof TaskTool>(part))
-          if (part.tool === "eval_rebuttal") return rebuttal(props<any>(part))
           if (part.tool === "todowrite") return todo(props<typeof TodoWriteTool>(part))
           if (part.tool === "skill") return skill(props<typeof SkillTool>(part))
           if (part.tool === "execute_commands") return executeCommands(props<any>(part))
@@ -808,16 +803,6 @@ export const RunCommand = cmd({
             onBuild() {
               listen(sessionID)
             },
-            onRebuttal(_sid, round) {
-              if (!emit("eval_rebuttal", { round })) {
-                UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Build rebuttal submitted")
-              }
-            },
-            onReview(_sid, round) {
-              if (!emit("eval_review", { round })) {
-                UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Evaluator reconsidering rebuttal")
-              }
-            },
             onAttempt(attempt, max) {
               if (!emit("eval_attempt", { attempt, max })) {
                 UI.empty()
@@ -825,7 +810,15 @@ export const RunCommand = cmd({
               }
             },
             onResult(result) {
-              if (emit("eval_result", { pass: result.pass, summary: result.summary, issues: result.issues, attempt: result.attempt, round: result.round })) return
+              if (
+                emit("eval_result", {
+                  pass: result.pass,
+                  summary: result.summary,
+                  issues: result.issues,
+                  attempt: result.attempt,
+                })
+              )
+                return
               if (result.pass) {
                 UI.println(UI.Style.TEXT_INFO_BOLD + "✓  " + UI.Style.TEXT_NORMAL + "Eval passed: " + result.summary)
               } else {
@@ -842,7 +835,13 @@ export const RunCommand = cmd({
             },
           })
 
-          emit("eval_complete", { pass: result.pass, summary: result.summary, issues: result.issues, attempt: result.attempt, round: result.round, phase: result.phase })
+          emit("eval_complete", {
+            pass: result.pass,
+            summary: result.summary,
+            issues: result.issues,
+            attempt: result.attempt,
+            phase: result.phase,
+          })
 
           if (!result.pass) {
             code = 1

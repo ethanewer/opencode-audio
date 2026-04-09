@@ -1829,9 +1829,6 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "task"}>
           <Task {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "eval_rebuttal"}>
-          <EvalRebuttal {...toolprops} />
-        </Match>
         <Match when={props.part.tool === "apply_patch"}>
           <ApplyPatch {...toolprops} />
         </Match>
@@ -1931,18 +1928,6 @@ function GenericTool(props: ToolProps<any>) {
         </box>
       </BlockTool>
     </Show>
-  )
-}
-
-function EvalRebuttal(props: ToolProps<any>) {
-  const content =
-    typeof (props.input as Record<string, unknown>).content === "string"
-      ? String((props.input as Record<string, unknown>).content)
-      : undefined
-  return (
-    <InlineTool icon="!" pending="Preparing rebuttal..." complete={true} part={props.part}>
-      Evaluation rebuttal <Show when={content}>- {content}</Show>
-    </InlineTool>
   )
 }
 

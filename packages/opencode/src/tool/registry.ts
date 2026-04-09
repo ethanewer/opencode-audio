@@ -17,10 +17,8 @@ import { Flag } from "@/flag/flag"
 import { Log } from "@/util/log"
 import { Truncate } from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
-import { TranscribeTool } from "./transcribe"
-import { ReadAudioTool } from "./read_audio"
 import { SpeakTool } from "./speak"
-import { EvalRebuttalTool, EvalTool } from "./eval"
+import { EvalTool } from "./eval"
 import { ExecuteCommandsTool } from "./execute_commands"
 import { TaskCompleteTool } from "./task_complete"
 import { TaskTool } from "./task"
@@ -117,20 +115,15 @@ export namespace ToolRegistry {
       )
 
       const all = Effect.fn("ToolRegistry.all")(function* (custom: Tool.Info[]) {
-        const question = ["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT) || Flag.OPENCODE_ENABLE_QUESTION_TOOL
-
         return [
           InvalidTool,
-          ...(question ? [QuestionTool] : []),
+          QuestionTool,
           ReadTool,
           EditTool,
           WriteTool,
           ApplyPatchTool,
-          TranscribeTool,
-          ReadAudioTool,
           SpeakTool,
           EvalTool,
-          EvalRebuttalTool,
           ExecuteCommandsTool,
           TaskCompleteTool,
           TaskTool,
@@ -179,10 +172,6 @@ export namespace ToolRegistry {
             return agent?.name === "eval"
           }
 
-          if (tool.id === "eval_rebuttal") {
-            return agent?.name !== "eval"
-          }
-
           if (tool.id === "task") {
             if (!agent?.permission) return false
             return evaluate("task", "*", agent.permission).action !== "deny"
@@ -197,9 +186,6 @@ export namespace ToolRegistry {
             model.modelID.includes("gpt-") && !model.modelID.includes("oss") && !model.modelID.includes("gpt-4")
           if (tool.id === "apply_patch") return usePatch
           if (tool.id === "edit" || tool.id === "write") return !usePatch
-
-          if (tool.id === "read_audio") return model.audioInput === true
-          if (tool.id === "transcribe") return model.audioInput !== true
 
           if (tool.id === "speak") return voice && model.audioOutput !== true
           if (tool.id === "question") return !voice

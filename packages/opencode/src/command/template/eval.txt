@@ -15,4 +15,3 @@ __EVAL_CONTEXT__
 5. If a verification step fails or a tool call is denied, continue with available evidence
 6. Call eval_result with your verdict — you must call it exactly once
 
-If a build agent later submits a rebuttal, review each point against the evidence and revise your verdict only where the rebuttal is correct.

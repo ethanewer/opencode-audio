@@ -40,7 +40,6 @@ describe("kira tool filtering", () => {
         expect(ids).toContain("write")
         expect(ids).toContain("edit")
         expect(ids).toContain("invalid")
-        expect(ids).toContain("eval_rebuttal")
         expect(ids).not.toContain("bash")
         expect(ids).not.toContain("grep")
         expect(ids).not.toContain("glob")
@@ -86,49 +85,6 @@ describe("kira tool filtering", () => {
     })
   })
 
-  test("transcribe vs read_audio toggled by audioInput capability", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const without = await ToolRegistry.tools(
-          { providerID: provider, modelID: model, audioInput: false },
-          agent("build") as never,
-        )
-        expect(without.map((t) => t.id)).toContain("transcribe")
-        expect(without.map((t) => t.id)).not.toContain("read_audio")
-
-        const with_ = await ToolRegistry.tools(
-          { providerID: provider, modelID: model, audioInput: true },
-          agent("build") as never,
-        )
-        expect(with_.map((t) => t.id)).not.toContain("transcribe")
-        expect(with_.map((t) => t.id)).toContain("read_audio")
-      },
-    })
-  })
-
-  test("eval_rebuttal included for non-eval agents, excluded for eval", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const build = await ToolRegistry.tools(
-          { providerID: provider, modelID: model },
-          agent("build") as never,
-        )
-        expect(build.map((t) => t.id)).toContain("eval_rebuttal")
-
-        const eval_ = await ToolRegistry.tools(
-          { providerID: provider, modelID: model },
-          agent("eval") as never,
-        )
-        expect(eval_.map((t) => t.id)).not.toContain("eval_rebuttal")
-        expect(eval_.map((t) => t.id)).toContain("eval_result")
-      },
-    })
-  })
-
   test("plan_exit only included for plan agent in CLI mode", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
@@ -137,17 +93,11 @@ describe("kira tool filtering", () => {
         const saved = process.env["OPENCODE_CLIENT"]
         process.env["OPENCODE_CLIENT"] = "cli"
         try {
-          const plan = await ToolRegistry.tools(
-            { providerID: provider, modelID: model },
-            agent("plan") as never,
-          )
+          const plan = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("plan") as never)
           expect(plan.map((t) => t.id)).toContain("plan_exit")
           expect(plan.map((t) => t.id)).toContain("read")
 
-          const build = await ToolRegistry.tools(
-            { providerID: provider, modelID: model },
-            agent("build") as never,
-          )
+          const build = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("build") as never)
           expect(build.map((t) => t.id)).not.toContain("plan_exit")
         } finally {
           if (saved === undefined) delete process.env["OPENCODE_CLIENT"]
@@ -157,18 +107,14 @@ describe("kira tool filtering", () => {
     })
   })
 
-  test("eval agent gets eval_result instead of eval_rebuttal", async () => {
+  test("eval agent gets eval_result", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const tools = await ToolRegistry.tools(
-          { providerID: provider, modelID: model },
-          agent("eval") as never,
-        )
+        const tools = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("eval") as never)
         const ids = tools.map((t) => t.id)
         expect(ids).toContain("eval_result")
-        expect(ids).not.toContain("eval_rebuttal")
         expect(ids).toContain("read")
       },
     })
@@ -188,15 +134,11 @@ describe("task_complete double-confirmation", () => {
     const msgs: MessageV2.WithParts[] = [
       {
         info: { role: "user", id: "m1" } as any,
-        parts: [
-          { type: "text", text: "Create a file", synthetic: false } as any,
-        ],
+        parts: [{ type: "text", text: "Create a file", synthetic: false } as any],
       },
       {
         info: { role: "user", id: "m2" } as any,
-        parts: [
-          { type: "text", text: "System reminder", synthetic: true } as any,
-        ],
+        parts: [{ type: "text", text: "System reminder", synthetic: true } as any],
       },
     ]
     expect(TaskComplete.instruction(msgs)).toBe("Create a file")
@@ -228,16 +170,19 @@ describe("task_complete double-confirmation", () => {
       },
     ]
     const tool = await TaskCompleteTool.init()
-    const result = await tool.execute({}, {
-      sessionID: id,
-      messageID: MessageID.make(""),
-      callID: "",
-      agent: "build",
-      abort: AbortSignal.any([]),
-      messages: msgs,
-      metadata: () => {},
-      ask: async () => {},
-    })
+    const result = await tool.execute(
+      {},
+      {
+        sessionID: id,
+        messageID: MessageID.make(""),
+        callID: "",
+        agent: "build",
+        abort: AbortSignal.any([]),
+        messages: msgs,
+        metadata: () => {},
+        ask: async () => {},
+      },
+    )
     expect(result.output).toContain("Build a REST API")
     expect(result.metadata.confirmed).toBe(false)
     TaskComplete.reset(id)
@@ -261,16 +206,19 @@ describe("task_complete double-confirmation", () => {
       },
     ]
     const tool = await TaskCompleteTool.init()
-    const result = await tool.execute({}, {
-      sessionID: id,
-      messageID: MessageID.make(""),
-      callID: "",
-      agent: "build",
-      abort: AbortSignal.any([]),
-      messages: msgs,
-      metadata: () => {},
-      ask: async () => {},
-    })
+    const result = await tool.execute(
+      {},
+      {
+        sessionID: id,
+        messageID: MessageID.make(""),
+        callID: "",
+        agent: "build",
+        abort: AbortSignal.any([]),
+        messages: msgs,
+        metadata: () => {},
+        ask: async () => {},
+      },
+    )
     expect(result.output).toContain("Fix the bug")
     expect(result.metadata.confirmed).toBe(false)
     TaskComplete.reset(id)
@@ -283,15 +231,10 @@ describe("execute_commands tool definition", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const tools = await ToolRegistry.tools(
-          { providerID: provider, modelID: model },
-          agent("build") as never,
-        )
+        const tools = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("build") as never)
         const exec = tools.find((t) => t.id === "execute_commands")
         expect(exec).toBeDefined()
-        expect(exec!.description).toBe(
-          "Call this to execute commands in the terminal with your analysis and plan.",
-        )
+        expect(exec!.description).toBe("Call this to execute commands in the terminal with your analysis and plan.")
       },
     })
   })
@@ -301,15 +244,11 @@ describe("execute_commands tool definition", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const tools = await ToolRegistry.tools(
-          { providerID: provider, modelID: model },
-          agent("build") as never,
-        )
+        const tools = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("build") as never)
         const tc = tools.find((t) => t.id === "task_complete")
         expect(tc).toBeDefined()
         expect(tc!.description).toBe("Call this when the task is complete.")
       },
     })
   })
-
 })

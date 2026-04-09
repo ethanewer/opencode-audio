@@ -1,6 +1,0 @@
-Read an audio file from the local filesystem and return the raw audio data as a file attachment.
-
-Usage:
-- The filePath parameter should be an absolute path to an audio file.
-- Returns the audio data directly for native processing by the model.
-- Use this tool when you need to process or analyze audio content.

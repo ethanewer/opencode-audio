@@ -86,15 +86,6 @@ export function formatPart(part: Part, options: TranscriptOptions): string {
   }
 
   if (part.type === "tool") {
-    if (part.tool === "eval_rebuttal") {
-      const content =
-        typeof part.state.input?.content === "string"
-          ? part.state.input.content
-          : part.state.status === "completed" && typeof part.state.metadata?.content === "string"
-            ? part.state.metadata.content
-            : ""
-      return `**Build Rebuttal:**\n\n${content}\n\n`
-    }
     let result = `**Tool: ${part.tool}**\n`
     if (options.toolDetails && part.state.input) {
       result += `\n**Input:**\n\`\`\`json\n${JSON.stringify(part.state.input, null, 2)}\n\`\`\`\n`

@@ -7,10 +7,7 @@ import { mkdir, mkdtemp, writeFile } from "fs/promises"
 const root = path.resolve(import.meta.dir, "..")
 const cli = path.join(root, "src/index.ts")
 const list = process.argv.includes("--list") || process.argv.includes("--no-open")
-const pick = (process.argv.slice(2).find((item) => !item.startsWith("--")) ?? "failed") as
-  | "failed"
-  | "rebuttal"
-  | "passed"
+const pick = (process.argv.slice(2).find((item) => !item.startsWith("--")) ?? "failed") as "failed"
 const dir = process.env.OPENCODE_EVAL_TUI_DIR ?? (await mkdtemp(path.join(os.tmpdir(), "opencode-eval-tui-")))
 const db = process.env.OPENCODE_DB ?? path.join(dir, ".opencode", "eval-tui.sqlite")
 
@@ -189,7 +186,7 @@ const seed = async () => {
         })
       }
 
-      const make = async (name: "failed" | "rebuttal" | "passed") => {
+      const make = async (name: "failed") => {
         const session = (await Session.create({ title: `Eval Demo · ${name}` })) as { id: string }
         const root = await msg({ sessionID: session.id, role: "user", agent: "build" })
         await text({
@@ -262,20 +259,16 @@ const seed = async () => {
         await text({
           sessionID: session.id,
           messageID: fail.id,
-          text: Eval.feedback(
-            {
-              summary: "Missing guard around the rebuttal flow.",
-              issues: [
-                {
-                  severity: "error",
-                  file: "src/session/eval.ts",
-                  description: "A failed evaluation can no longer be challenged with evidence.",
-                },
-              ],
-            },
-            true,
-          ),
-          ...(name === "passed" ? { ignored: true } : {}),
+          text: Eval.feedback({
+            summary: "Missing guard around the rebuttal flow.",
+            issues: [
+              {
+                severity: "error",
+                file: "src/session/eval.ts",
+                description: "A failed evaluation can no longer be challenged with evidence.",
+              },
+            ],
+          }),
           metadata: Eval.metadata({
             sessionId: child.id,
             mode: "interactive",
@@ -287,108 +280,11 @@ const seed = async () => {
           }),
         })
 
-        if (name === "failed") return { session: session.id, child: child.id }
-
-        const rebut = await msg({
-          sessionID: session.id,
-          role: "assistant",
-          parentID: fail.id,
-          agent: "build",
-          mode: "build",
-          finish: "tool-calls",
-        })
-        await tool({
-          sessionID: session.id,
-          messageID: rebut.id,
-          tool: Eval.REBUT,
-          callID: `rebut_${name}`,
-          state: {
-            status: "completed",
-            input: { content: "The guard already exists and the evaluator missed the retained state." },
-            title: "Evaluation Rebuttal",
-            output: "The guard already exists and the evaluator missed the retained state.",
-            metadata: { content: "The guard already exists and the evaluator missed the retained state." },
-            time: { start: tick(), end: tick() },
-          },
-        })
-        await text({
-          sessionID: child.id,
-          messageID: (await msg({ sessionID: child.id, role: "user", agent: "build" })).id,
-          text: Eval.followup(
-            {
-              summary: "Missing guard around the rebuttal flow.",
-              issues: [
-                {
-                  severity: "error",
-                  file: "src/session/eval.ts",
-                  description: "A failed evaluation can no longer be challenged with evidence.",
-                },
-              ],
-            },
-            "The guard already exists and the evaluator missed the retained state.",
-          ),
-        })
-
-        if (name === "rebuttal") {
-          await verdict({
-            sessionID: child.id,
-            parentID: evalReq.id,
-            pass: false,
-            summary: "The rebuttal is not convincing yet.",
-            round: 2,
-          })
-          const again = await msg({ sessionID: session.id, role: "user", agent: "build" })
-          await text({
-            sessionID: session.id,
-            messageID: again.id,
-            text: Eval.feedback(
-              {
-                summary: "The rebuttal is not convincing yet.",
-                issues: [
-                  {
-                    severity: "warning",
-                    file: "src/session/prompt.ts",
-                    description: "The rebuttal flow still needs clearer phase handling.",
-                  },
-                ],
-              },
-              true,
-            ),
-            metadata: Eval.metadata({
-              sessionId: child.id,
-              mode: "interactive",
-              policy: "stop_on_accept",
-              phase: "failed",
-              round: 2,
-              summary: "The rebuttal is not convincing yet.",
-              pass: false,
-              rebutted: true,
-            }),
-          })
-          return { session: session.id, child: child.id }
-        }
-
-        await verdict({
-          sessionID: child.id,
-          parentID: evalReq.id,
-          pass: true,
-          summary: "The rebuttal is correct and the implementation is acceptable.",
-          round: 2,
-        })
-        const ok = await msg({ sessionID: session.id, role: "user", agent: "build" })
-        await text({
-          sessionID: session.id,
-          messageID: ok.id,
-          text: "Eval passed.",
-          eval: true,
-        })
         return { session: session.id, child: child.id }
       }
 
       const out = {
         failed: await make("failed"),
-        rebuttal: await make("rebuttal"),
-        passed: await make("passed"),
       }
 
       return out
@@ -399,24 +295,14 @@ const seed = async () => {
 const out = await seed()
 if (!(pick in out)) {
   console.error(`Unknown scenario: ${pick}`)
-  console.error("Use one of: failed, rebuttal, passed")
+  console.error("Use one of: failed")
   process.exit(1)
 }
-
-const rel =
-  path.relative(process.cwd(), path.join(root, "script/eval-tui-demo.ts")) || path.join(root, "script/eval-tui-demo.ts")
 
 console.log(`Demo workspace: ${dir}`)
 console.log(`Database: ${db}`)
 console.log(`Scenarios:`)
 console.log(`  failed   -> ${out.failed.session}`)
-console.log(`  rebuttal -> ${out.rebuttal.session}`)
-console.log(`  passed   -> ${out.passed.session}`)
-console.log(``)
-console.log(`Open another scenario later:`)
-console.log(`  ${rel} failed`)
-console.log(`  ${rel} rebuttal`)
-console.log(`  ${rel} passed`)
 
 if (list) process.exit(0)
 

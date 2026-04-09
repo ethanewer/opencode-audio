@@ -3,16 +3,6 @@ import { Tool } from "./tool"
 
 import DESCRIPTION from "./eval.txt"
 
-const REBUT = [
-  "Submit a rebuttal to the most recent failed evaluation.",
-  "",
-  "Use this when you have concrete evidence that the evaluator is wrong about one or more issues.",
-  "Your rebuttal must address specific issues and include evidence: test output, file contents, or logical arguments proving the evaluator's finding is incorrect.",
-  "",
-  "Do not use this as a substitute for fixing legitimate issues. Always fix issues first when they are valid.",
-  "Only rebut issues where you have genuine evidence the evaluator made a mistake.",
-].join("\n")
-
 export const EvalTool = Tool.define("eval_result", {
   description: DESCRIPTION,
   parameters: z.object({
@@ -39,22 +29,6 @@ export const EvalTool = Tool.define("eval_result", {
         pass: args.pass,
         summary: args.summary,
         issues: args.issues,
-      },
-    }
-  },
-})
-
-export const EvalRebuttalTool = Tool.define("eval_rebuttal", {
-  description: REBUT,
-  parameters: z.object({
-    content: z.string().describe("The rebuttal to send back to the evaluator"),
-  }),
-  async execute(args) {
-    return {
-      title: "Evaluation Rebuttal",
-      output: args.content,
-      metadata: {
-        content: args.content,
       },
     }
   },

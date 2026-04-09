@@ -141,7 +141,6 @@ async function call(
     attempt: opts?.eval?.attempt ?? 1,
     sessionID: "ses_eval" as never,
     sessions: [],
-    round: 1,
     phase: (opts?.eval?.pass ?? true) ? "passed" : "failed",
   })
   spyOn(SessionModule.Session, "setPermission").mockImplementation(

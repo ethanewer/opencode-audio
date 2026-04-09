@@ -128,16 +128,33 @@ async function llm() {
   let seq = 0
   const steps: Array<(s: number) => string> = [
     // Build: finish with task_complete double-confirmation
-    () => { seq++; return tool("task_complete", {}, seq) },
-    () => { seq++; return tool("task_complete", {}, seq) },
+    () => {
+      seq++
+      return tool("task_complete", {}, seq)
+    },
+    () => {
+      seq++
+      return tool("task_complete", {}, seq)
+    },
     // Eval attempt 1: fail
-    () => { seq++; return tool("eval_result", { pass: false, summary: "missing guard" }, seq) },
-    // Build rebuttal: eval_rebuttal then task_complete twice
-    () => { seq++; return tool("eval_rebuttal", { content: "the guard already exists" }, seq) },
-    () => { seq++; return tool("task_complete", {}, seq) },
-    () => { seq++; return tool("task_complete", {}, seq) },
-    // Eval re-review: pass
-    () => { seq++; return tool("eval_result", { pass: true, summary: "ok" }, seq) },
+    () => {
+      seq++
+      return tool("eval_result", { pass: false, summary: "missing guard" }, seq)
+    },
+    // Build fixes: task_complete twice (pending, then eval nudge fires, then confirmed)
+    () => {
+      seq++
+      return tool("task_complete", {}, seq)
+    },
+    () => {
+      seq++
+      return tool("task_complete", {}, seq)
+    },
+    // Eval attempt 2: pass
+    () => {
+      seq++
+      return tool("eval_result", { pass: true, summary: "ok" }, seq)
+    },
   ]
   let idx = 0
   const server = http.createServer(async (req, res) => {
@@ -219,7 +236,7 @@ async function start(extra: Record<string, string>, args: string[]) {
 }
 
 describe("cli.run.eval.e2e", () => {
-  test("headless run supports eval rebuttal loop", async () => {
+  test("headless run supports eval retry loop", async () => {
     await using tmp = await tmpdir({ git: true })
     const server = await llm()
 
@@ -243,8 +260,7 @@ describe("cli.run.eval.e2e", () => {
       expect(res.code).toBe(0)
       expect(res.out).toContain("Running eval...")
       expect(res.out).toContain("Eval attempt 1/2")
-      expect(res.out).toContain("Build rebuttal submitted")
-      expect(res.out).toContain("Evaluator reconsidering rebuttal")
+      expect(res.out).toContain("Eval found issues: missing guard")
       expect(res.out).toContain("Eval passed: ok")
     } finally {
       await server.close()

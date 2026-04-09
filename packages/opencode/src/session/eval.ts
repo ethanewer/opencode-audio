@@ -13,10 +13,8 @@ export namespace Eval {
   const log = Log.create({ service: "session.eval" })
 
   const WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"])
-  export const REBUT = "eval_rebuttal"
-  export const MAX_REBUT = 3
 
-  export type Phase = "evaluating" | "failed" | "rebutting" | "passed"
+  export type Phase = "evaluating" | "failed" | "passed"
 
   export type Issue = {
     file?: string
@@ -32,12 +30,7 @@ export namespace Eval {
     round: number
     summary?: string
     pass?: boolean
-    rebutted?: boolean
     issues?: Issue[]
-  }
-
-  export type Rebuttal = {
-    content: string
   }
 
   export type Result = {
@@ -47,9 +40,7 @@ export namespace Eval {
     attempt: number
     sessionID: SessionID
     sessions: SessionID[]
-    round: number
     phase: Phase
-    rebutted?: boolean
   }
 
   function parseState(input: unknown) {
@@ -58,8 +49,7 @@ export namespace Eval {
     if (typeof data.sessionId !== "string") return
     if (data.mode !== "interactive" && data.mode !== "headless") return
     if (data.policy !== "stop_on_accept" && data.policy !== "rerun_on_accept") return
-    if (data.phase !== "evaluating" && data.phase !== "failed" && data.phase !== "rebutting" && data.phase !== "passed")
-      return
+    if (data.phase !== "evaluating" && data.phase !== "failed" && data.phase !== "passed") return
     if (typeof data.round !== "number") return
     return {
       sessionId: data.sessionId,
@@ -69,7 +59,6 @@ export namespace Eval {
       round: data.round,
       ...(typeof data.summary === "string" ? { summary: data.summary } : {}),
       ...(typeof data.pass === "boolean" ? { pass: data.pass } : {}),
-      ...(typeof data.rebutted === "boolean" ? { rebutted: data.rebutted } : {}),
       ...(Array.isArray(data.issues) ? { issues: data.issues as Issue[] } : {}),
     } satisfies State
   }
@@ -233,23 +222,6 @@ export namespace Eval {
     return undefined
   }
 
-  export function rebut(parts: MessageV2.Part[]) {
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const part = parts[i]
-      if (part.type !== "tool") continue
-      if (part.tool !== REBUT) continue
-      if (part.state.status !== "completed") continue
-      const meta = part.state.metadata
-      if (meta && typeof meta === "object" && typeof meta.content === "string") {
-        return { content: meta.content } satisfies Rebuttal
-      }
-      const input = part.state.input as Record<string, unknown> | undefined
-      if (input && typeof input.content === "string") {
-        return { content: input.content } satisfies Rebuttal
-      }
-    }
-  }
-
   function turn(msgs: MessageV2.WithParts[]) {
     for (let i = msgs.length - 1; i >= 0; i--) {
       const msg = msgs[i]
@@ -349,7 +321,7 @@ export namespace Eval {
     return parts.join("\n")
   }
 
-  export function feedback(result: { summary: string; issues?: Issue[] }, rebut = true): string {
+  export function feedback(result: { summary: string; issues?: Issue[] }): string {
     const parts = [
       "The evaluator reviewed your work and found issues that must be resolved.",
       "",
@@ -378,60 +350,21 @@ export namespace Eval {
     parts.push("", "## Required action")
     parts.push("")
     parts.push("Fix every error listed above. Warnings should also be fixed unless you have a specific reason not to.")
-    if (rebut) {
-      parts.push("If you believe any issue is incorrect, call the eval_rebuttal tool with concrete evidence explaining why.")
-    } else {
-      parts.push("You have exhausted your rebuttals. Fix every remaining issue before ending your turn.")
-    }
+    parts.push("Fix every remaining issue before ending your turn.")
     return parts.join("\n")
   }
 
-  export function reminder(rebut = true) {
-    const parts = [
+  export function reminder() {
+    return [
       "<system-reminder>",
       "The latest user message contains evaluator feedback with specific issues you must address.",
       "Do not simply acknowledge the feedback. You must take concrete action:",
       "1. Read the relevant files to understand each issue",
       "2. Fix every issue by editing the affected files",
       "3. Run tests or verification to confirm your fixes work",
-    ]
-    if (rebut) {
-      parts.push(
-        "If you believe any issue is incorrect, call eval_rebuttal with specific evidence (e.g. test output, file contents) proving the evaluator is wrong.",
-      )
-    } else {
-      parts.push("You have used all rebuttals. You must fix every remaining issue before ending your turn.")
-    }
-    parts.push("</system-reminder>")
-    return parts.join("\n")
-  }
-
-  export function followup(result: { summary: string; issues?: Issue[] }, rebuttal: string): string {
-    const parts = [
-      "The build agent submitted a rebuttal to your most recent failed evaluation.",
-      "",
-      "## Instructions",
-      "",
-      "1. Review each rebuttal point against the original issues",
-      "2. Re-examine the relevant files and test output if needed",
-      "3. For each issue: accept the rebuttal (if evidence is convincing) or maintain the failure (if evidence is insufficient)",
-      "4. Call eval_result with your revised verdict",
-      "",
-      "Only change your verdict on issues where the rebuttal provides concrete evidence. Do not flip your verdict based on assertions alone.",
-      "",
-      "## Previous Evaluation Summary",
-      "",
-      result.summary,
-    ]
-    if (result.issues?.length) {
-      parts.push("", "## Previous Issues")
-      for (const issue of result.issues) {
-        const loc = issue.file ? ` in \`${issue.file}\`` : ""
-        parts.push(`- [${issue.severity}]${loc}: ${issue.description}`)
-      }
-    }
-    parts.push("", "## Build Agent Rebuttal", "", rebuttal)
-    return parts.join("\n")
+      "Fix every remaining issue before ending your turn.",
+      "</system-reminder>",
+    ].join("\n")
   }
 
   async function review(input: {
@@ -458,8 +391,6 @@ export namespace Eval {
     onResult?: (result: Result) => void
     onEval?: (sessionID: SessionID) => void | Promise<void>
     onBuild?: (sessionID: SessionID) => void | Promise<void>
-    onRebuttal?: (sessionID: SessionID, round: number) => void | Promise<void>
-    onReview?: (sessionID: SessionID, round: number) => void | Promise<void>
   }): Promise<Result> {
     const max = input.max ?? 5
     const rules: Permission.Ruleset = [
@@ -479,7 +410,6 @@ export namespace Eval {
       attempt: 0,
       sessionID: input.sessionID,
       sessions: tracked,
-      round: 0,
       phase: "failed",
     }
 
@@ -501,81 +431,60 @@ export namespace Eval {
       tracked.push(evalSession.id)
       await input.onEval?.(evalSession.id)
 
-      let round = 1
-      let verdict = await review({
+      const verdict = await review({
         sessionID: evalSession.id,
         model: resolved,
         prompt: compose(input.instruction, extra.diff, extra.files, hasDiff || !!extra.diff),
       })
 
-      while (true) {
-        last = {
-          pass: verdict?.pass ?? false,
-          summary: verdict?.summary ?? "Eval agent did not call eval_result",
-          issues: verdict?.issues,
-          attempt,
-          sessionID: evalSession.id,
-          sessions: tracked,
-          round,
-          phase: verdict?.pass ? "passed" : "failed",
-          ...(round > 1 ? { rebutted: true } : {}),
-        }
-
-        input.onResult?.(last)
-
-        if (last.pass) {
-          log.info("eval passed", { attempt, round })
-          return last
-        }
-
-        if (attempt >= max) {
-          log.info("max eval iterations reached", { attempt, max })
-          return last
-        }
-
-        log.info("eval failed, sending feedback to build", { attempt, round })
-        await input.onBuild?.(input.sessionID)
-        const build = await SessionPrompt.prompt({
-          sessionID: input.sessionID,
-          agent: ctx?.agent,
-          model: ctx?.model ?? resolved,
-          parts: [
-            {
-              type: "text",
-              text: feedback(last, round <= MAX_REBUT),
-              metadata: metadata({
-                sessionId: evalSession.id,
-                mode: "headless",
-                policy: "rerun_on_accept",
-                phase: "failed",
-                round,
-                summary: last.summary,
-                pass: false,
-                rebutted: round > 1,
-              }),
-            },
-          ],
-        })
-
-        const root = await Session.messages({ sessionID: input.sessionID })
-        const active = pending(root)
-        await resolve(active?.part)
-        const note = rebut(
-          root
-            .filter((msg) => msg.info.role === "assistant" && msg.info.parentID === active?.message.info.id)
-            .flatMap((msg) => msg.parts),
-        )
-        if (!note || round > MAX_REBUT) break
-
-        await input.onRebuttal?.(input.sessionID, round)
-        round++
-        await input.onReview?.(evalSession.id, round)
-        verdict = await review({
-          sessionID: evalSession.id,
-          model: resolved,
-          prompt: followup(last, note.content),
-        })
+      last = {
+        pass: verdict?.pass ?? false,
+        summary: verdict?.summary ?? "Eval agent did not call eval_result",
+        issues: verdict?.issues,
+        attempt,
+        sessionID: evalSession.id,
+        sessions: tracked,
+        phase: verdict?.pass ? "passed" : "failed",
       }
+
+      input.onResult?.(last)
+
+      if (last.pass) {
+        log.info("eval passed", { attempt })
+        return last
+      }
+
+      if (attempt >= max) {
+        log.info("max eval iterations reached", { attempt, max })
+        return last
+      }
+
+      log.info("eval failed, sending feedback to build", { attempt })
+      await input.onBuild?.(input.sessionID)
+      await SessionPrompt.prompt({
+        sessionID: input.sessionID,
+        agent: ctx?.agent,
+        model: ctx?.model ?? resolved,
+        parts: [
+          {
+            type: "text",
+            text: feedback(last),
+            metadata: metadata({
+              sessionId: evalSession.id,
+              mode: "headless",
+              policy: "rerun_on_accept",
+              phase: "failed",
+              round: 1,
+              summary: last.summary,
+              pass: false,
+            }),
+          },
+        ],
+      })
+
+      const root = await Session.messages({ sessionID: input.sessionID })
+      const active = pending(root)
+      await resolve(active?.part)
     }
 
     return last

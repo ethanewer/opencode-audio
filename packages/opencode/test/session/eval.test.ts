@@ -116,7 +116,6 @@ async function build(
     model?: { providerID: ProviderID; modelID: ModelID }
     parts: Array<{ type: string; text?: string; metadata?: Record<string, unknown> }>
   },
-  rebuttal?: string,
 ) {
   const userMsg = await Session.updateMessage({
     id: MessageID.ascending(),
@@ -149,35 +148,16 @@ async function build(
     modelID: ref.modelID,
     providerID: ref.providerID,
     time: { created: Date.now(), completed: Date.now() },
-    finish: rebuttal ? "tool-calls" : "stop",
+    finish: "stop",
   })
 
-  if (rebuttal) {
-    await Session.updatePart({
-      id: PartID.ascending(),
-      messageID: msg.id,
-      sessionID,
-      type: "tool",
-      callID: "call_rebuttal",
-      tool: Eval.REBUT,
-      state: {
-        status: "completed",
-        input: { content: rebuttal },
-        title: "Evaluation Rebuttal",
-        output: rebuttal,
-        metadata: { content: rebuttal },
-        time: { start: Date.now(), end: Date.now() },
-      },
-    })
-  } else {
-    await Session.updatePart({
-      id: PartID.ascending(),
-      messageID: msg.id,
-      sessionID,
-      type: "text",
-      text: "fixing",
-    })
-  }
+  await Session.updatePart({
+    id: PartID.ascending(),
+    messageID: msg.id,
+    sessionID,
+    type: "text",
+    text: "fixing",
+  })
 
   return (await Session.messages({ sessionID })).at(-1)!
 }
@@ -187,9 +167,7 @@ describe("Eval.instruction", () => {
     const msgs = [
       {
         info: { role: "user" as const, id: "m1", sessionID: "s1", agent: "build", model: ref, time: { created: 1 } },
-        parts: [
-          { type: "text" as const, id: "p1", messageID: "m1", sessionID: "s1", text: "build a feature" },
-        ],
+        parts: [{ type: "text" as const, id: "p1", messageID: "m1", sessionID: "s1", text: "build a feature" }],
       },
       {
         info: { role: "user" as const, id: "m2", sessionID: "s1", agent: "build", model: ref, time: { created: 2 } },
@@ -351,46 +329,6 @@ describe("session.eval", () => {
       },
     })
   })
-
-  test("reuses the same eval session when build submits a rebuttal", async () => {
-    await using tmp = await tmpdir({ git: true })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const chat = await Session.create({})
-        await user(chat.id, "ship it")
-
-        spyOn(SessionSummary.SessionSummary, "computeDiff").mockResolvedValue([])
-
-        let child: SessionID | undefined
-        let evals = 0
-
-        spyOn(SessionPrompt.SessionPrompt, "prompt").mockImplementation(async (input) => {
-          if (input.sessionID === chat.id) {
-            return build(chat.id, input as never, "the requirement is already satisfied")
-          }
-
-          evals++
-          if (!child) child = input.sessionID
-          expect(input.sessionID).toBe(child)
-          await verdict(input.sessionID, evals > 1, evals > 1 ? "ok" : "bad")
-          return (await Session.messages({ sessionID: input.sessionID })).at(-1)!
-        })
-
-        const result = await Eval.run({
-          sessionID: chat.id,
-          instruction: "ship it",
-          max: 2,
-        })
-
-        expect(result.pass).toBe(true)
-        expect(result.attempt).toBe(1)
-        expect(result.round).toBe(2)
-        expect(result.rebutted).toBe(true)
-        expect(evals).toBe(2)
-      },
-    })
-  })
 })
 
 describe("session.eval.feedback", () => {
@@ -411,35 +349,10 @@ describe("session.eval.feedback", () => {
     expect(result).toContain("## Required action")
   })
 
-  test("feedback mentions rebuttal when allowed", () => {
-    const withRebut = Eval.feedback({ summary: "issue", issues: [] }, true)
-    expect(withRebut).toContain("eval_rebuttal")
-
-    const noRebut = Eval.feedback({ summary: "issue", issues: [] }, false)
-    expect(noRebut).toContain("exhausted your rebuttals")
-    expect(noRebut).not.toContain("eval_rebuttal")
-  })
-
-  test("followup includes issues when provided", () => {
-    const text = Eval.followup(
-      {
-        summary: "Test failure",
-        issues: [{ file: "x.ts", description: "assertion fails", severity: "error" }],
-      },
-      "The test was actually passing",
-    )
-    expect(text).toContain("## Previous Issues")
-    expect(text).toContain("assertion fails")
-    expect(text).toContain("`x.ts`")
-    expect(text).toContain("## Build Agent Rebuttal")
-    expect(text).toContain("The test was actually passing")
-  })
-
-  test("followup works without issues", () => {
-    const text = Eval.followup({ summary: "Test failure" }, "rebuttal text")
-    expect(text).not.toContain("## Previous Issues")
-    expect(text).toContain("Test failure")
-    expect(text).toContain("rebuttal text")
+  test("feedback always tells agent to fix remaining issues", () => {
+    const result = Eval.feedback({ summary: "issue", issues: [] })
+    expect(result).toContain("Fix every remaining issue")
+    expect(result).not.toContain("eval_rebuttal")
   })
 })
 

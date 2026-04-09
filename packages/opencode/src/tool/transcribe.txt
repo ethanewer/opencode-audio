@@ -1,6 +1,0 @@
-Transcribe an audio file from the local filesystem and return a text transcription.
-
-Usage:
-- The filePath parameter should be an absolute path to an audio file.
-- Returns the full text transcription of the audio content.
-- Use this tool when you need to understand the contents of an audio file.
