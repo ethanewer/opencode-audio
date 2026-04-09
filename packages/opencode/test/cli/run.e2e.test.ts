@@ -183,7 +183,6 @@ function env(dir: string, url: string) {
   return {
     ...process.env,
     NO_COLOR: "1",
-    OPENCODE_EXPERIMENTAL_PLAN_MODE: "1",
     OPENCODE_PURE: "1",
     OPENCODE_CONFIG_CONTENT: cfg(url),
     OPENCODE_DB: ":memory:",

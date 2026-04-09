@@ -10,7 +10,6 @@ import * as SessionModule from "../../src/session"
 import { tmpdir } from "../fixture/fixture"
 
 const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
-const plan = process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
 
 class ExitErr extends Error {
   constructor(readonly code: number | undefined) {
@@ -163,7 +162,6 @@ async function call(
 }
 
 beforeEach(() => {
-  delete process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
   Object.defineProperty(process.stdin, "isTTY", {
     configurable: true,
     value: true,
@@ -174,25 +172,12 @@ afterEach(() => {
   mock.restore()
   delete process.env.OPENCODE_CLI_PLAN_AUTO_BUILD
   process.exitCode = undefined
-  if (plan === undefined) delete process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
-  else process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = plan
   if (tty) Object.defineProperty(process.stdin, "isTTY", tty)
   else delete (process.stdin as { isTTY?: boolean }).isTTY
 })
 
 describe("cli.run", () => {
-  test("defaults local prompt runs to plan with auto handoff enabled", async () => {
-    const seen = await call()
-
-    expect(seen.agent).toBe("plan")
-    expect(seen.auto).toBe("1")
-    expect(process.env.OPENCODE_CLI_PLAN_AUTO_BUILD).toBeUndefined()
-    expect(seen.rules.some((item) => item.permission === "plan_exit")).toBe(false)
-  })
-
-  test("keeps the default build flow when plan mode is explicitly disabled", async () => {
-    process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = "0"
-
+  test("defaults local prompt to build agent", async () => {
     const seen = await call()
 
     expect(seen.agent).toBeUndefined()
@@ -200,7 +185,7 @@ describe("cli.run", () => {
     expect(seen.rules.some((item) => item.permission === "plan_exit" && item.action === "deny")).toBe(true)
   })
 
-  test("keeps audio input separate from the default plan handoff", async () => {
+  test("transcribes audio input and uses build agent by default", async () => {
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "prompt.wav")
     await Bun.write(file, new Uint8Array([82, 73, 70, 70]))
@@ -209,9 +194,26 @@ describe("cli.run", () => {
     const seen = await call({ message: [], audio: file })
 
     expect(transcribe).toHaveBeenCalledWith(file)
+    expect(seen.agent).toBeUndefined()
+    expect(seen.auto).toBeUndefined()
+    expect(seen.text).toBe("heard it")
+  })
+
+  test("--agent plan enables plan with auto handoff", async () => {
+    const seen = await call({ agent: "plan" })
+
     expect(seen.agent).toBe("plan")
     expect(seen.auto).toBe("1")
-    expect(seen.text).toBe("heard it")
+    expect(process.env.OPENCODE_CLI_PLAN_AUTO_BUILD).toBeUndefined()
+    expect(seen.rules.some((item) => item.permission === "plan_exit")).toBe(false)
+  })
+
+  test("--agent auto routes to plan with auto handoff", async () => {
+    const seen = await call({ agent: "auto" })
+
+    expect(seen.agent).toBe("plan")
+    expect(seen.auto).toBe("1")
+    expect(seen.rules.some((item) => item.permission === "plan_exit")).toBe(false)
   })
 
   test("auto-handoffs explicit voice-plan runs without changing the voice agent", async () => {
@@ -260,8 +262,6 @@ describe("cli.run", () => {
   })
 
   test("rejects headless questions so the agent proceeds without user interaction", async () => {
-    process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = "0"
-
     const seen = await call(
       {},
       {

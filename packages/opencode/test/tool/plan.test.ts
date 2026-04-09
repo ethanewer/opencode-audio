@@ -15,8 +15,6 @@ import { ToolRegistry } from "../../src/tool/registry"
 import { PlanExitTool } from "../../src/tool/plan"
 import { tmpdir } from "../fixture/fixture"
 
-const env = process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
-
 function providerCfg(url: string) {
   return {
     provider: {
@@ -226,8 +224,6 @@ async function latest(sessionID: SessionID) {
 
 afterEach(async () => {
   delete process.env.OPENCODE_CLI_PLAN_AUTO_BUILD
-  if (env === undefined) delete process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE
-  else process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = env
   mock.restore()
   await Instance.disposeAll()
 })
@@ -240,9 +236,7 @@ describe("tool.plan_exit", () => {
     )
   })
 
-  test("is available for the plan agent even when the experimental flag is off", async () => {
-    process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = "0"
-
+  test("is available for the plan agent in cli mode", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,

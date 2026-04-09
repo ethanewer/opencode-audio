@@ -223,7 +223,7 @@ async function start(extra: Record<string, string>, args: string[]) {
 }
 
 describe("cli.tui.plan_exit.e2e", () => {
-  test("interactive tui plan mode exposes plan_exit without the experimental flag", async () => {
+  test("interactive tui plan mode exposes plan_exit", async () => {
     await using tmp = await tmpdir({ git: true })
     const server = await llm(tmp.path)
     const proc = await start(env(tmp.path, server.url), [
