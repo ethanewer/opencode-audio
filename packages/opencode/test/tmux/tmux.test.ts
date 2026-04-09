@@ -38,17 +38,13 @@ describe("tmux", () => {
 
   test("execute runs a command and captures output", async () => {
     const sid = id()
-    const output = await Tmux.execute(sid, "/tmp", [
-      { keystrokes: "echo hello-world\n", duration: 2 },
-    ])
+    const output = await Tmux.execute(sid, "/tmp", [{ keystrokes: "echo hello-world\n", duration: 2 }])
     expect(output).toContain("hello-world")
   })
 
   test("execute filters out marker lines from output", async () => {
     const sid = id()
-    const output = await Tmux.execute(sid, "/tmp", [
-      { keystrokes: "echo test-marker-filter\n", duration: 2 },
-    ])
+    const output = await Tmux.execute(sid, "/tmp", [{ keystrokes: "echo test-marker-filter\n", duration: 2 }])
     expect(output).not.toContain("__CMDEND__")
     expect(output).toContain("test-marker-filter")
   })
@@ -130,17 +126,32 @@ describe("tmux", () => {
     const proc = Bun.spawn(["tmux", "kill-session", "-t", state.name], { stdout: "pipe", stderr: "pipe" })
     await proc.exited
     // Now execute should recreate it
-    const output = await Tmux.execute(sid, "/tmp", [
-      { keystrokes: "echo recovered\n", duration: 2 },
-    ])
+    const output = await Tmux.execute(sid, "/tmp", [{ keystrokes: "echo recovered\n", duration: 2 }])
     expect(output).toContain("recovered")
+  })
+
+  test("kill then execute creates fresh session", async () => {
+    const sid = id()
+    // Run a command to put some state into the session
+    await Tmux.execute(sid, "/tmp", [{ keystrokes: "echo before-reset\n", duration: 2 }])
+    const prior = await Tmux.capture(sid)
+    expect(prior).toContain("before-reset")
+
+    // Kill the session (simulates the reset parameter)
+    await Tmux.kill(sid)
+    expect(Tmux.has(sid)).toBe(false)
+
+    // Execute should create a brand new session
+    const output = await Tmux.execute(sid, "/tmp", [{ keystrokes: "echo after-reset\n", duration: 2 }])
+    expect(output).toContain("after-reset")
+    // The old session content should not appear in the new output
+    expect(output).not.toContain("before-reset")
+    expect(Tmux.has(sid)).toBe(true)
   })
 
   test("execute with cwd sets working directory", async () => {
     const sid = id()
-    const output = await Tmux.execute(sid, "/tmp", [
-      { keystrokes: "pwd\n", duration: 2 },
-    ])
+    const output = await Tmux.execute(sid, "/tmp", [{ keystrokes: "pwd\n", duration: 2 }])
     expect(output).toContain("/tmp")
   })
 })

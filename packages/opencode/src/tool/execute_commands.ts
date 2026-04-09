@@ -24,7 +24,9 @@ function limit(text: string) {
 const TMUX_ESCAPE = /^C-[a-z]$/i
 
 export const ExecuteCommandsTool = Tool.define("execute_commands", {
-  description: "Call this to execute commands in the terminal with your analysis and plan.",
+  description:
+    "Call this to execute commands in the terminal with your analysis and plan. " +
+    "Set reset to true to start a fresh shell session if the terminal is stuck (e.g., in a pager or interactive prompt).",
   parameters: z.object({
     analysis: z
       .string()
@@ -70,6 +72,13 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
         }),
       )
       .describe("The commands array can be empty if you want to wait without taking action."),
+    reset: z
+      .boolean()
+      .describe(
+        "If true, destroys the current shell session and starts a fresh one before running commands. " +
+          "Use this to recover from stuck states like pagers or interactive prompts.",
+      )
+      .optional(),
   }),
   async execute(params, ctx) {
     const cwd = Instance.directory
@@ -93,6 +102,11 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
     // (the common case for the build agent) this returns immediately — no prompt.
     const commandTexts = labels.filter((l) => !TMUX_ESCAPE.test(l))
     await checkCommandPermissions(commandTexts, cwd, ctx)
+
+    if (params.reset) {
+      await Tmux.kill(ctx.sessionID)
+      log.info("reset shell", { sessionID: ctx.sessionID })
+    }
 
     log.info("execute_commands", { commands: labels.length, sessionID: ctx.sessionID })
 
