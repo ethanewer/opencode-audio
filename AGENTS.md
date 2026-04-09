@@ -122,6 +122,11 @@ const table = sqliteTable("session", {
 - Avoid mocks as much as possible
 - Test actual implementation, do not duplicate logic into tests
 - Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package dirs like `packages/opencode`.
+- When running the full test suite, always filter the output to surface failures in a single pass:
+  ```bash
+  bun test 2>&1 | grep -E '\(fail\)|tests failed|Ran .* tests|Unhandled error' | head -50
+  ```
+  This shows only failure lines and the summary. Never re-run the full suite just to find which test failed.
 
 ## Type Checking
 

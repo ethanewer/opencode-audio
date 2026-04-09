@@ -2286,7 +2286,7 @@ function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; grou
       <Match when={compressed() || cmds().length === 0}>
         <>
           <Show when={reset()}>
-            <box paddingLeft={6}>
+            <box paddingLeft={3}>
               <text fg={theme.textMuted}>Shell session reset</text>
             </box>
           </Show>

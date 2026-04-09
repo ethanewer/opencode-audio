@@ -15,23 +15,23 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
   const msg = createMemo(() => props.api.state.session.messages(props.session_id))
   const cost = createMemo(() => msg().reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0))
 
-  // Cumulative token totals from all step-finish parts (persists through compaction)
-  const totals = createMemo(() => {
-    let input = 0
-    let output = 0
-    let cached = 0
+  // Cumulative cache stats from all step-finish parts (persists through compaction)
+  // tokens.input is adjusted (total - cache.read - cache.write), so
+  // total input = tokens.input + cache.read + cache.write (reconstructs raw inputTokens)
+  const cache = createMemo(() => {
+    let totalInput = 0
+    let cacheRead = 0
     for (const m of msg()) {
       if (m.role !== "assistant") continue
       const parts = props.api.state.part(m.id)
       for (const p of parts) {
         if (p.type !== "step-finish") continue
         const step = p as StepFinishPart
-        input += step.tokens.input + step.tokens.cache.read + step.tokens.cache.write
-        output += step.tokens.output
-        cached += step.tokens.cache.read
+        totalInput += step.tokens.input + step.tokens.cache.read + step.tokens.cache.write
+        cacheRead += step.tokens.cache.read
       }
     }
-    return { input, output, cached }
+    return totalInput > 0 ? Math.round((cacheRead / totalInput) * 100) : null
   })
 
   // Current context length from the last assistant message (resets on compaction)
@@ -53,13 +53,10 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
         <b>Context</b>
       </text>
       <text fg={theme().textMuted}>
-        {Locale.number(context().tokens)} tokens{context().percent != null ? ` (${context().percent}%)` : ""}
+        {Locale.number(context().tokens)} tokens ({context().percent ?? 0}%)
       </text>
       <text fg={theme().textMuted}>
-        In {Locale.number(totals().input)} · Out {Locale.number(totals().output)} · Cache {Locale.number(totals().cached)}
-      </text>
-      <text fg={theme().textMuted}>
-        {money.format(cost())} spent
+        {cache() ?? 0}% cached · {money.format(cost())} spent
       </text>
     </box>
   )

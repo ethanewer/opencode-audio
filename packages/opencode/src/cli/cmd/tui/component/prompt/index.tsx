@@ -1650,7 +1650,7 @@ export function Prompt(props: PromptProps) {
             </text>
           </box>
         </Show>
-        <box flexDirection="row" justifyContent="space-between">
+        <box flexDirection="row" justifyContent={status().type !== "idle" ? "space-between" : "center"}>
           <Show when={status().type !== "idle"} fallback={props.hint ?? <text />}>
             <box
               flexDirection="row"
@@ -1779,12 +1779,9 @@ export function Prompt(props: PromptProps) {
                   </text>
                   <Show when={voice.recording()}>
                     <text fg={theme.text}>
-                      shift+space <span style={{ fg: theme.textMuted }}>stop + edit</span>
+                      ctrl+space <span style={{ fg: theme.textMuted }}>stop + edit</span>
                     </text>
                   </Show>
-                  <text fg={theme.text}>
-                    type <span style={{ fg: theme.textMuted }}>edit</span>
-                  </text>
                   <text fg={theme.text}>
                     ! <span style={{ fg: theme.textMuted }}>shell</span>
                   </text>
