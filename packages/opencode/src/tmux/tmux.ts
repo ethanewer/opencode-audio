@@ -74,13 +74,17 @@ export namespace Tmux {
   export async function ensure(id: string, cwd: string) {
     let state = states.get(id)
     if (state) return state
-    const name = `oc-${id.slice(0, 8)}`
+    const name = `oc-${id.slice(0, 20)}`
     log.info("creating tmux session", { name, cwd })
-    await run(["tmux", "new-session", "-d", "-s", name, "-x", "200", "-y", "50"])
-    const check = Bun.spawn(["tmux", "has-session", "-t", name], { stdout: "pipe", stderr: "pipe" })
-    await check.exited
-    if (check.exitCode !== 0) {
-      throw new Error("Failed to create tmux session. Is tmux installed and working?")
+    // Kill any stale session with this name from a previous process or collision
+    await run(["tmux", "kill-session", "-t", name]).catch(() => {})
+    const proc = Bun.spawn(["tmux", "new-session", "-d", "-s", name, "-x", "200", "-y", "50"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    await proc.exited
+    if (proc.exitCode !== 0) {
+      throw new Error(`Failed to create tmux session '${name}'. Is tmux installed and working?`)
     }
     await run(["tmux", "set-option", "-t", name, "history-limit", "50000"])
     await sendKeys(name, `cd ${shellEscape(cwd)}\n`)
