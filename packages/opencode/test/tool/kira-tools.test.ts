@@ -235,7 +235,10 @@ describe("execute_commands tool definition", () => {
         const exec = tools.find((t) => t.id === "execute_commands")
         expect(exec).toBeDefined()
         expect(exec!.description).toBe(
-          "Call this to execute commands in the terminal with your analysis and plan. Set reset to true to start a fresh shell session if the terminal is stuck (e.g., in a pager or interactive prompt).",
+          "Call this to execute commands in the terminal with your analysis and plan. " +
+            "Returns only new terminal output since the last call, labeled [New output]. " +
+            "If nothing new was produced, returns the current visible terminal, labeled [No new output — showing current terminal]. " +
+            "Set reset to true to start a fresh shell session if the terminal is stuck (e.g., in a pager or interactive prompt).",
         )
       },
     })

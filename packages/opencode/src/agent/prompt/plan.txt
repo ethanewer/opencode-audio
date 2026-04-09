@@ -11,5 +11,5 @@ Ground your plan in evidence from the codebase — cite specific files, function
 Task Description:
 {instruction}
 
-Current terminal state:
+Initial terminal state:
 {terminal_state}

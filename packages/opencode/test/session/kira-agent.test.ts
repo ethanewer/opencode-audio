@@ -205,7 +205,7 @@ describe("kira agent integration", () => {
           expect(systemText).toContain("Create a hello world file")
           expect(systemText).toContain("AI assistant tasked with solving command-line tasks")
           expect(systemText).not.toContain("Available Skills")
-          expect(systemText).toContain("Current terminal state:")
+          expect(systemText).toContain("Initial terminal state:")
         }),
         { git: true, config: providerCfg },
       ),
@@ -447,6 +447,56 @@ describe("kira agent integration", () => {
           const system = (first.messages as any[]).filter((m: any) => m.role === "system")
           const systemText = system.map((m: any) => m.content).join("\n")
           expect(systemText).not.toContain("AI assistant tasked with solving command-line tasks")
+        }),
+        { git: true, config: providerCfg },
+      ),
+    10_000,
+  )
+
+  it.live(
+    "system prompt is identical across multiple LLM calls (append-only)",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const prompt = yield* SessionPrompt.Service
+          const session = yield* Session.Service
+          const chat = yield* session.create({
+            title: "System Prompt Stability Test",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+
+          yield* prompt.prompt({
+            sessionID: chat.id,
+            agent: "build",
+            noReply: true,
+            parts: [{ type: "text", text: "build a test project" }],
+          })
+
+          // First call returns text (triggers nudge), second call returns text, third exits
+          yield* llm.text("thinking about it")
+          yield* llm.text("still thinking")
+          yield* llm.text("done thinking")
+
+          // Run loop — it will make 3 LLM calls (initial + 2 nudges) then exit at MAX nudges
+          // We only need 3 to verify stability
+          yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.ignore, Effect.forkChild)
+          yield* llm.wait(3)
+
+          const inputs = yield* llm.inputs
+          expect(inputs.length).toBeGreaterThanOrEqual(3)
+
+          // Extract system messages from each call
+          const systemTexts = inputs.slice(0, 3).map((input) => {
+            const msgs = (input.messages as any[]).filter((m: any) => m.role === "system")
+            return msgs.map((m: any) => m.content).join("\n")
+          })
+
+          // All system prompts must be byte-identical
+          expect(systemTexts[0]).toBe(systemTexts[1])
+          expect(systemTexts[1]).toBe(systemTexts[2])
+
+          // Verify it contains the frozen initial terminal state
+          expect(systemTexts[0]).toContain("Initial terminal state:")
         }),
         { git: true, config: providerCfg },
       ),

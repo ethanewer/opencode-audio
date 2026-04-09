@@ -26,6 +26,8 @@ const TMUX_ESCAPE = /^C-[a-z]$/i
 export const ExecuteCommandsTool = Tool.define("execute_commands", {
   description:
     "Call this to execute commands in the terminal with your analysis and plan. " +
+    "Returns only new terminal output since the last call, labeled [New output]. " +
+    "If nothing new was produced, returns the current visible terminal, labeled [No new output — showing current terminal]. " +
     "Set reset to true to start a fresh shell session if the terminal is stuck (e.g., in a pager or interactive prompt).",
   parameters: z.object({
     analysis: z
@@ -123,6 +125,14 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
 
     const limited = limit(output)
 
+    let result: string
+    if (limited.trim()) {
+      result = `[New output]\n${limited}`
+    } else {
+      const pane = await Tmux.capture(ctx.sessionID)
+      result = `[No new output — showing current terminal]\n${limit(pane || "(empty)")}`
+    }
+
     return {
       title: params.plan.slice(0, 80),
       metadata: {
@@ -132,7 +142,7 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
         commands: labels,
         truncated: output.length > MAX_OUTPUT_BYTES,
       },
-      output: limited,
+      output: result,
     }
   },
 })

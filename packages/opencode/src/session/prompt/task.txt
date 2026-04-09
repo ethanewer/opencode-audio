@@ -12,5 +12,5 @@ Before calling task_complete, verify minimal state changes: Re-read the task ins
 Task Description:
 {instruction}
 
-Current terminal state:
+Initial terminal state:
 {terminal_state}

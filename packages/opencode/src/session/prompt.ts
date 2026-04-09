@@ -1427,6 +1427,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
           let remind = false
           const session = yield* sessions.get(sessionID)
           TaskComplete.reset(sessionID)
+          let initialTerminal: string | undefined
 
           while (true) {
             yield* status.set(sessionID, { type: "busy" })
@@ -1912,7 +1913,10 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 let effectiveAgent = agent
                 if (managed && agent.prompt) {
                   const task = TaskComplete.instruction(msgs)
-                  const terminal = yield* Effect.promise(() => Tmux.capture(sessionID))
+                  if (initialTerminal === undefined) {
+                    initialTerminal = (yield* Effect.promise(() => Tmux.capture(sessionID))) || "(empty)"
+                  }
+                  const terminal = initialTerminal
                   const note = isHeadless
                     ? "Your plan MUST account that you as an AI agent must complete the entire task without any human intervention, and you should NOT expect any human interventions. Also, you do NOT have eyes or ears, so you MUST resort to various programmatic/AI tools to understand multimedia files."
                     : ""
