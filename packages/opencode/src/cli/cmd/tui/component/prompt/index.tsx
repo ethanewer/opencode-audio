@@ -341,6 +341,51 @@ export function Prompt(props: PromptProps) {
       }
       prepend(text)
     },
+    onFinishAudio(audio) {
+      if (store.mode === "voice") {
+        batch(() => {
+          setStore("returnToVoice", true)
+          setStore("mode", "normal")
+        })
+      }
+      const url = `data:audio/wav;base64,${Buffer.from(audio).toString("base64")}`
+      const currentOffset = input.visualCursor.offset
+      const extmarkStart = currentOffset
+      const count = store.prompt.parts.filter((x) => x.type === "file" && x.mime?.startsWith("audio/")).length
+      const virtualText = `[Recording ${count + 1}]`
+      const extmarkEnd = extmarkStart + virtualText.length
+      input.insertText(virtualText + " ")
+
+      const extmarkId = input.extmarks.create({
+        start: extmarkStart,
+        end: extmarkEnd,
+        virtual: true,
+        styleId: pasteStyleId,
+        typeId: promptPartTypeId,
+      })
+
+      setStore(
+        produce((draft) => {
+          const partIndex = draft.prompt.parts.length
+          draft.prompt.parts.push({
+            type: "file" as const,
+            mime: "audio/wav",
+            url,
+            filename: "recording.wav",
+            source: {
+              type: "file",
+              path: "recording.wav",
+              text: {
+                start: extmarkStart,
+                end: extmarkEnd,
+                value: virtualText,
+              },
+            },
+          })
+          draft.extmarkToPartIndex.set(extmarkId, partIndex)
+        }),
+      )
+    },
     audioInput: () => !!local.system.info().hasAudioInput,
     async onAudio(audio) {
       if (store.mode !== "voice") return
@@ -542,6 +587,10 @@ export function Prompt(props: PromptProps) {
         category: "Prompt",
         hidden: true,
         onSelect: async () => {
+          if (store.mode === "voice") {
+            if (voice.recording()) voice.finish()
+            setStore("mode", "normal")
+          }
           const content = await Clipboard.read()
           if (content?.mime.startsWith("image/")) {
             await pasteImage({
@@ -1389,7 +1438,7 @@ export function Prompt(props: PromptProps) {
                     props.cancelSpeech?.()
                     return
                   }
-                  if (e.name === "space" && e.shift) {
+                  if (e.name === "space" && (e.shift || e.ctrl)) {
                     e.preventDefault()
                     if (voice.transcribing()) return
                     if (voice.recording()) {

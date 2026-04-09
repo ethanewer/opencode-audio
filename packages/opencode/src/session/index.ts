@@ -1,5 +1,6 @@
 import { Slug } from "@opencode-ai/util/slug"
 import path from "path"
+import { Tmux } from "@/tmux/tmux"
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { Decimal } from "decimal.js"
@@ -465,6 +466,7 @@ export namespace Session {
             yield* remove(child.id)
           }
           yield* unshare(sessionID).pipe(Effect.ignore)
+          yield* Effect.promise(() => Tmux.kill(sessionID)).pipe(Effect.ignore)
           yield* Effect.sync(() => {
             SyncEvent.run(Event.Deleted, { sessionID, info: session })
             SyncEvent.remove(sessionID)

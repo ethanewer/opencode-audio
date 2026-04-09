@@ -234,7 +234,9 @@ describe("execute_commands tool definition", () => {
         const tools = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("build") as never)
         const exec = tools.find((t) => t.id === "execute_commands")
         expect(exec).toBeDefined()
-        expect(exec!.description).toBe("Call this to execute commands in the terminal with your analysis and plan.")
+        expect(exec!.description).toBe(
+          "Call this to execute commands in the terminal with your analysis and plan. Set reset to true to start a fresh shell session if the terminal is stuck (e.g., in a pager or interactive prompt).",
+        )
       },
     })
   })

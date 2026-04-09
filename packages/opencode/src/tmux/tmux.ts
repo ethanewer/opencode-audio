@@ -3,6 +3,7 @@ import { Log } from "@/util/log"
 const log = Log.create({ service: "tmux" })
 const MARKER = "__CMDEND__"
 const MARKER_ECHO_RE = /^.*echo\s+'__CMDEND__\d+__'.*$/
+const SPECIAL_RE = /^C-[a-zA-Z]$/
 
 interface State {
   name: string
@@ -20,7 +21,7 @@ async function run(args: string[]): Promise<string> {
 }
 
 async function sendKeys(name: string, keystrokes: string) {
-  const special = /^C-[a-zA-Z]$/.test(keystrokes.trim())
+  const special = SPECIAL_RE.test(keystrokes.trim())
   if (special) {
     await run(["tmux", "send-keys", "-t", name, keystrokes.trim()])
     return
@@ -76,6 +77,11 @@ export namespace Tmux {
     const name = `oc-${id.slice(0, 8)}`
     log.info("creating tmux session", { name, cwd })
     await run(["tmux", "new-session", "-d", "-s", name, "-x", "200", "-y", "50"])
+    const check = Bun.spawn(["tmux", "has-session", "-t", name], { stdout: "pipe", stderr: "pipe" })
+    await check.exited
+    if (check.exitCode !== 0) {
+      throw new Error("Failed to create tmux session. Is tmux installed and working?")
+    }
     await run(["tmux", "set-option", "-t", name, "history-limit", "50000"])
     await sendKeys(name, `cd ${shellEscape(cwd)}\n`)
     await Bun.sleep(300)
@@ -99,11 +105,11 @@ export namespace Tmux {
     commands: Array<{ keystrokes: string; duration: number }>,
     update?: (output: string) => void,
   ) {
-    const state = await ensure(id, cwd)
+    let state = await ensure(id, cwd)
     if (!(await alive(id))) {
       log.info("tmux session dead, recreating", { id })
       states.delete(id)
-      await ensure(id, cwd)
+      state = await ensure(id, cwd)
     }
     const before = await capturePane(state.name)
 
@@ -118,7 +124,7 @@ export namespace Tmux {
       const start = performance.now()
 
       await sendKeys(state.name, cmd.keystrokes)
-      if (!cmd.keystrokes.endsWith("\n")) {
+      if (!SPECIAL_RE.test(cmd.keystrokes.trim()) && !cmd.keystrokes.endsWith("\n")) {
         await run(["tmux", "send-keys", "-t", state.name, "Enter"])
       }
       await Bun.sleep(50)
@@ -155,6 +161,16 @@ export namespace Tmux {
     log.info("killing tmux session", { name: state.name })
     await run(["tmux", "kill-session", "-t", state.name]).catch(() => {})
     states.delete(id)
+  }
+
+  export async function killAll() {
+    const entries = [...states.entries()]
+    await Promise.allSettled(
+      entries.map(async ([id, state]) => {
+        await run(["tmux", "kill-session", "-t", state.name]).catch(() => {})
+        states.delete(id)
+      }),
+    )
   }
 
   export function has(id: string) {

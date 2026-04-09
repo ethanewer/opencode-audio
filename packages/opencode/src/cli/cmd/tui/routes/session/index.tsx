@@ -2192,6 +2192,7 @@ function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; grou
   const ctx = use()
   const { theme } = useTheme()
   const compressed = createMemo(() => ctx.tui?.shell_view !== "expanded")
+  const reset = createMemo(() => !!(props.input as Record<string, unknown>).reset)
 
   const cmds = createMemo(() => {
     const c = props.metadata.commands
@@ -2284,6 +2285,11 @@ function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; grou
     <Switch>
       <Match when={compressed() || cmds().length === 0}>
         <>
+          <Show when={reset()}>
+            <box paddingLeft={6}>
+              <text fg={theme.textMuted}>Shell session reset</text>
+            </box>
+          </Show>
           <InlineTool
             icon={cmds().length > 0 ? "$" : "~"}
             iconColor={cmds().length > 0 ? theme.secondary : undefined}
@@ -2312,6 +2318,9 @@ function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; grou
           onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
         >
           <box>
+            <Show when={reset()}>
+              <text fg={theme.textMuted}>Shell session reset</text>
+            </Show>
             <text fg={theme.text}>
               {cmds()
                 .map((c) => `$ ${c}`)

@@ -315,6 +315,12 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         setVoiced(false)
         return
       }
+      if (evt.name === "space" && (evt.shift || evt.ctrl)) {
+        evt.preventDefault()
+        if (classifying()) return
+        if (voice.recording()) voice.finish()
+        return
+      }
       if (evt.name === "space") {
         evt.preventDefault()
         if (classifying()) return

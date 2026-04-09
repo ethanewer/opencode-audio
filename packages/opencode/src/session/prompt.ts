@@ -139,6 +139,7 @@ export namespace SessionPrompt {
             Effect.fnUntraced(function* () {
               yield* Effect.forEach(runners.values(), (r) => r.cancel, { concurrency: "unbounded", discard: true })
               runners.clear()
+              yield* Effect.promise(() => Tmux.killAll())
             }),
           )
           return { runners }

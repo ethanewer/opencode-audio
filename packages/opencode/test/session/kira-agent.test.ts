@@ -247,7 +247,7 @@ describe("kira agent integration", () => {
           expect(names).toContain("read")
           expect(names).toContain("edit")
           expect(names).toContain("write")
-          expect(names).toContain("transcribe")
+          expect(names).not.toContain("transcribe")
           expect(names).not.toContain("bash")
           expect(names).not.toContain("glob")
           expect(names).not.toContain("grep")

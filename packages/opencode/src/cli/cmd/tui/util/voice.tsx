@@ -12,6 +12,7 @@ const transcribeTimeoutMs = 120_000
 export function useVoice(opts: {
   onResult: (text: string) => void
   onFinish?: (text: string) => void
+  onFinishAudio?: (audio: Uint8Array) => void
   audioInput?: () => boolean
   onAudio?: (audio: Uint8Array) => void
   color: ColorInput
@@ -29,6 +30,7 @@ export function useVoice(opts: {
   let finishing = false
   const busy = createMemo(() => transcribing() || !!rec())
   const recording = createMemo(() => !!rec())
+  const editable = createMemo(() => !!opts.onFinish || !!opts.onFinishAudio)
 
   const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
   const [tick, setTick] = createSignal(0)
@@ -58,6 +60,24 @@ export function useVoice(opts: {
 
   function stop(r: ReturnType<typeof record>) {
     setRec(null)
+    if (finishing && opts.audioInput?.() && opts.onFinishAudio) {
+      finishing = false
+      r.stop()
+        .then((audio) => {
+          if (!active) return
+          opts.onFinishAudio!(audio)
+        })
+        .catch((err) => {
+          if (!active) return
+          toast.show({
+            variant: "error",
+            title: "Recording failed",
+            message: err instanceof Error ? err.message : "An unknown error occurred",
+            duration: 5000,
+          })
+        })
+      return
+    }
     if (!finishing && opts.audioInput?.() && opts.onAudio) {
       r.stop()
         .then((audio) => {
@@ -174,7 +194,8 @@ export function useVoice(opts: {
       const elapsed = Math.floor((tick() * 80) / 1000)
       const min = String(Math.floor(elapsed / 60)).padStart(2, "0")
       const sec = String(elapsed % 60).padStart(2, "0")
-      return t`${icon} ${fg(opts.color)(frames[tick() % frames.length])} ${fg(opts.color)(`Recording ${min}:${sec}`)} ${dim("— space to send, shift+space to edit")}`
+      const hint = editable() ? "— space to send, ctrl+space to edit" : "— space to send"
+      return t`${icon} ${fg(opts.color)(frames[tick() % frames.length])} ${fg(opts.color)(`Recording ${min}:${sec}`)} ${dim(hint)}`
     }
     return t`${icon} ${dim("Press space to record, or start typing")}`
   }
@@ -195,7 +216,7 @@ export function useVoice(opts: {
             {" "}
             {frame()} Recording {min()}:{sec()}
           </span>
-          <span style={{ dim: true }}> — space to send, shift+space to edit</span>
+          <span style={{ dim: true }}>{editable() ? " — space to send, ctrl+space to edit" : " — space to send"}</span>
         </Show>
         <Show when={!transcribing() && !rec()}>
           <span style={{ dim: true }}> Press space to record, or start typing</span>

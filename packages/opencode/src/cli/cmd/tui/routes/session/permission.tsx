@@ -830,6 +830,11 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         setVoiced(false)
         return
       }
+      if (evt.name === "space" && (evt.shift || evt.ctrl)) {
+        evt.preventDefault()
+        if (voice.recording()) voice.finish()
+        return
+      }
       if (evt.name === "space") {
         evt.preventDefault()
         voice.toggle()
