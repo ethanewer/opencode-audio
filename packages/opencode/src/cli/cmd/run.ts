@@ -402,14 +402,7 @@ export const RunCommand = cmd({
     }
 
     const auto = args.agent === "auto"
-    const implicit =
-      Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE &&
-      !args.agent &&
-      !args.attach &&
-      !args.command &&
-      !args.continue &&
-      !args.session
-    const agent = auto || implicit ? "plan" : args.agent
+    const agent = auto ? "plan" : args.agent
 
     const rules: Permission.Ruleset = [
       {
@@ -423,7 +416,7 @@ export const RunCommand = cmd({
         pattern: "*",
       },
     ]
-    if (!(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(agent))) {
+    if (!isPlan(agent)) {
       rules.push({
         permission: "plan_exit",
         action: "deny",
@@ -442,7 +435,7 @@ export const RunCommand = cmd({
 
       const apply = async (sessionID: string) => {
         if (args.attach) return
-        if (!(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(agent))) return
+        if (!isPlan(agent)) return
         await Session.setPermission({
           sessionID: SessionID.make(sessionID),
           permission: rules,
@@ -884,7 +877,7 @@ export const RunCommand = cmd({
       return await execute(sdk)
     }
 
-    if (Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && isPlan(agent)) {
+    if (isPlan(agent)) {
       process.env.OPENCODE_CLI_PLAN_AUTO_BUILD = "1"
     }
 

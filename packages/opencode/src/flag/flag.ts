@@ -66,7 +66,6 @@ export namespace Flag {
   export const OPENCODE_DISABLE_FILETIME_CHECK = Config.boolean("OPENCODE_DISABLE_FILETIME_CHECK").pipe(
     Config.withDefault(false),
   )
-  export declare const OPENCODE_EXPERIMENTAL_PLAN_MODE: boolean
   export const OPENCODE_EXPERIMENTAL_WORKSPACES = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_WORKSPACES")
   export const OPENCODE_EXPERIMENTAL_MARKDOWN = !falsy("OPENCODE_EXPERIMENTAL_MARKDOWN")
   export const OPENCODE_MODELS_URL = process.env["OPENCODE_MODELS_URL"]
@@ -123,17 +122,6 @@ Object.defineProperty(Flag, "OPENCODE_CONFIG_DIR", {
 Object.defineProperty(Flag, "OPENCODE_PURE", {
   get() {
     return truthy("OPENCODE_PURE")
-  },
-  enumerable: true,
-  configurable: false,
-})
-
-// Dynamic getter for OPENCODE_EXPERIMENTAL_PLAN_MODE
-// Default on so plain `opencode run` uses the plan handoff flow unless the
-// environment explicitly disables it with OPENCODE_EXPERIMENTAL_PLAN_MODE=0.
-Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_PLAN_MODE", {
-  get() {
-    return !falsy("OPENCODE_EXPERIMENTAL_PLAN_MODE")
   },
   enumerable: true,
   configurable: false,

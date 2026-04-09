@@ -2282,32 +2282,21 @@ function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; grou
 
   return (
     <Switch>
-      <Match when={cmds().length === 0}>
-        <InlineTool
-          icon="~"
-          pending={plan()}
-          complete={plan()}
-          spinner={active()}
-          spinnerSuffix={timerEl()}
-          part={props.part}
-        >
-          {plan()}
-        </InlineTool>
-      </Match>
-      <Match when={compressed() && cmds().length > 0}>
+      <Match when={compressed() || cmds().length === 0}>
         <>
           <InlineTool
-            icon="$"
-            iconColor={theme.secondary}
+            icon={cmds().length > 0 ? "$" : "~"}
+            iconColor={cmds().length > 0 ? theme.secondary : undefined}
             pending={plan()}
-            complete={cmds().join(" && ")}
+            complete={cmds().length > 0 ? cmds().join(" && ") : plan()}
             spinner={active()}
+            spinnerSuffix={cmds().length === 0 ? timerEl() : undefined}
             part={props.part}
-            onClick={output() ? () => setExpanded((prev) => !prev) : undefined}
+            onClick={cmds().length > 0 && output() ? () => setExpanded((prev) => !prev) : undefined}
           >
-            {cmds().join(" && ")}
+            {cmds().length > 0 ? cmds().join(" && ") : plan()}
           </InlineTool>
-          <Show when={expanded() && output()}>
+          <Show when={cmds().length > 0 && expanded() && output()}>
             <box paddingLeft={3}>
               <text paddingLeft={5} fg={theme.textMuted}>
                 {output()}
