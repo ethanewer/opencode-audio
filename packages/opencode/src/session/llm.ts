@@ -12,7 +12,7 @@ import { Instance } from "@/project/instance"
 import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
-import { SystemPrompt } from "./system"
+
 import { Flag } from "@/flag/flag"
 import { Permission } from "@/permission"
 import { Auth } from "@/auth"
@@ -102,8 +102,7 @@ export namespace LLM {
     const system: string[] = []
     system.push(
       [
-        // use agent prompt otherwise provider prompt
-        ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
+        ...(input.agent.prompt ? [input.agent.prompt] : []),
         // append voice prompt for voice agents using TTS (skip for models with native audio output)
         ...(input.agent.name.startsWith("voice-") && !input.model.capabilities.output.audio
           ? [PROMPT_VOICE]

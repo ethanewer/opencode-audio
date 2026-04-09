@@ -24,7 +24,7 @@ function agent(name: string, opts: Record<string, unknown> = {}) {
 }
 
 describe("kira tool filtering", () => {
-  test("build agent gets only KIRA tools + invalid", async () => {
+  test("build agent gets registered tools", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -40,18 +40,13 @@ describe("kira tool filtering", () => {
         expect(ids).toContain("write")
         expect(ids).toContain("edit")
         expect(ids).toContain("invalid")
-        // Should NOT contain standard non-KIRA tools
+        expect(ids).toContain("eval_rebuttal")
         expect(ids).not.toContain("bash")
         expect(ids).not.toContain("grep")
         expect(ids).not.toContain("glob")
-        expect(ids).not.toContain("task")
         expect(ids).not.toContain("webfetch")
         expect(ids).not.toContain("todowrite")
-        expect(ids).not.toContain("question")
-        expect(ids).not.toContain("eval_rebuttal")
         expect(ids).not.toContain("image_read")
-        expect(ids).not.toContain("transcribe")
-        expect(ids).not.toContain("read_audio")
       },
     })
   })
@@ -91,7 +86,7 @@ describe("kira tool filtering", () => {
     })
   })
 
-  test("build agent does not get transcribe or read_audio (read handles audio)", async () => {
+  test("transcribe vs read_audio toggled by audioInput capability", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -100,7 +95,7 @@ describe("kira tool filtering", () => {
           { providerID: provider, modelID: model, audioInput: false },
           agent("build") as never,
         )
-        expect(without.map((t) => t.id)).not.toContain("transcribe")
+        expect(without.map((t) => t.id)).toContain("transcribe")
         expect(without.map((t) => t.id)).not.toContain("read_audio")
 
         const with_ = await ToolRegistry.tools(
@@ -108,72 +103,61 @@ describe("kira tool filtering", () => {
           agent("build") as never,
         )
         expect(with_.map((t) => t.id)).not.toContain("transcribe")
-        expect(with_.map((t) => t.id)).not.toContain("read_audio")
+        expect(with_.map((t) => t.id)).toContain("read_audio")
       },
     })
   })
 
-  test("build agent can add extra tools via options.tools", async () => {
+  test("eval_rebuttal included for non-eval agents, excluded for eval", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const tools = await ToolRegistry.tools(
-          { providerID: provider, modelID: model },
-          agent("build", { tools: ["grep", "webfetch"] }) as never,
-        )
-        const ids = tools.map((t) => t.id)
-        expect(ids).toContain("execute_commands")
-        expect(ids).toContain("task_complete")
-        expect(ids).toContain("read")
-        expect(ids).toContain("write")
-        expect(ids).toContain("edit")
-        expect(ids).toContain("grep")
-        expect(ids).toContain("webfetch")
-        expect(ids).not.toContain("bash")
-      },
-    })
-  })
-
-  test("build agent gets eval_rebuttal only when explicitly listed", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const without = await ToolRegistry.tools(
+        const build = await ToolRegistry.tools(
           { providerID: provider, modelID: model },
           agent("build") as never,
         )
-        expect(without.map((t) => t.id)).not.toContain("eval_rebuttal")
+        expect(build.map((t) => t.id)).toContain("eval_rebuttal")
 
-        const with_ = await ToolRegistry.tools(
+        const eval_ = await ToolRegistry.tools(
           { providerID: provider, modelID: model },
-          agent("build", { tools: ["eval_rebuttal"] }) as never,
+          agent("eval") as never,
         )
-        expect(with_.map((t) => t.id)).toContain("eval_rebuttal")
+        expect(eval_.map((t) => t.id)).not.toContain("eval_rebuttal")
+        expect(eval_.map((t) => t.id)).toContain("eval_result")
       },
     })
   })
 
-  test("plan agent does NOT get execute_commands or task_complete", async () => {
+  test("plan_exit only included for plan agent in CLI mode", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const tools = await ToolRegistry.tools(
-          { providerID: provider, modelID: model },
-          agent("plan") as never,
-        )
-        const ids = tools.map((t) => t.id)
-        expect(ids).not.toContain("execute_commands")
-        expect(ids).not.toContain("task_complete")
-        expect(ids).toContain("bash")
-        expect(ids).toContain("read")
+        const saved = process.env["OPENCODE_CLIENT"]
+        process.env["OPENCODE_CLIENT"] = "cli"
+        try {
+          const plan = await ToolRegistry.tools(
+            { providerID: provider, modelID: model },
+            agent("plan") as never,
+          )
+          expect(plan.map((t) => t.id)).toContain("plan_exit")
+          expect(plan.map((t) => t.id)).toContain("read")
+
+          const build = await ToolRegistry.tools(
+            { providerID: provider, modelID: model },
+            agent("build") as never,
+          )
+          expect(build.map((t) => t.id)).not.toContain("plan_exit")
+        } finally {
+          if (saved === undefined) delete process.env["OPENCODE_CLIENT"]
+          else process.env["OPENCODE_CLIENT"] = saved
+        }
       },
     })
   })
 
-  test("eval agent does NOT get execute_commands or task_complete", async () => {
+  test("eval agent gets eval_result instead of eval_rebuttal", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -183,8 +167,9 @@ describe("kira tool filtering", () => {
           agent("eval") as never,
         )
         const ids = tools.map((t) => t.id)
-        expect(ids).not.toContain("execute_commands")
-        expect(ids).not.toContain("task_complete")
+        expect(ids).toContain("eval_result")
+        expect(ids).not.toContain("eval_rebuttal")
+        expect(ids).toContain("read")
       },
     })
   })

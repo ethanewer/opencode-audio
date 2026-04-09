@@ -1916,14 +1916,14 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   Permission.evaluate("question", "*", session.permission ?? []).action === "deny"
                 const [skills, env, instructions, modelMsgs] = yield* Effect.promise(() =>
                   Promise.all([
-                    managed ? undefined : SystemPrompt.skills(agent),
-                    managed
-                      ? ([] as string[])
-                      : SystemPrompt.environment(model, sessionID, {
-                          permission: mergedPermission,
-                          interactive: !isHeadless,
-                        }),
-                    managed ? ([] as string[]) : Instruction.system(),
+                    SystemPrompt.skills(agent),
+                    SystemPrompt.environment({
+                      model,
+                      sessionID,
+                      permission: mergedPermission,
+                      interactive: !isHeadless,
+                    }),
+                    Instruction.system(),
                     MessageV2.toModelMessages(msgs, model),
                   ]),
                 )
@@ -1932,30 +1932,18 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 if (managed && agent.prompt) {
                   const task = TaskComplete.instruction(msgs)
                   const terminal = yield* Effect.promise(() => Tmux.capture(sessionID))
+                  const note = isHeadless
+                    ? "Your plan MUST account that you as an AI agent must complete the entire task without any human intervention, and you should NOT expect any human interventions. Also, you do NOT have eyes or ears, so you MUST resort to various programmatic/AI tools to understand multimedia files."
+                    : ""
                   let prompt = agent
                     .prompt!.replace("{instruction}", task)
                     .replace("{terminal_state}", terminal || "(empty)")
-
-                  if (!isHeadless) {
-                    prompt = prompt.replace(
-                      "\n\nYour plan MUST account that you as an AI agent must complete the entire task without any human intervention, and you should NOT expect any human interventions. Also, you do NOT have eyes or ears, so you MUST resort to various programmatic/AI tools to understand multimedia files.\n",
-                      "\n",
-                    )
-                  }
-
-                  const perm = SystemPrompt.permissionEnv({
-                    sessionID,
-                    permission: mergedPermission,
-                    interactive: !isHeadless,
-                  })
-                  if (perm) {
-                    prompt += "\n\n" + ["<env>", ...perm.envLines, "</env>", perm.guidance].join("\n")
-                  }
+                    .replace(note ? "{headless_note}" : "\n{headless_note}\n", note || "")
 
                   effectiveAgent = { ...agent, prompt }
                 }
 
-                const system = managed ? [] : [...env, ...(skills ? [skills] : []), ...instructions]
+                const system = [...env, ...(skills ? [skills] : []), ...instructions]
                 const evalPart = msgs
                   .findLast((msg) => msg.info.id === lastUser.id)
                   ?.parts.findLast(

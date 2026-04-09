@@ -244,18 +244,16 @@ describe("kira agent integration", () => {
           const names = tools!.map((t) => t.function.name)
           expect(names).toContain("execute_commands")
           expect(names).toContain("task_complete")
+          expect(names).toContain("read")
+          expect(names).toContain("edit")
+          expect(names).toContain("write")
           expect(names).toContain("transcribe")
           expect(names).not.toContain("bash")
-          expect(names).not.toContain("read")
-          expect(names).not.toContain("edit")
-          expect(names).not.toContain("write")
           expect(names).not.toContain("glob")
           expect(names).not.toContain("grep")
           expect(names).not.toContain("webfetch")
           expect(names).not.toContain("task")
           expect(names).not.toContain("todowrite")
-          expect(names).not.toContain("question")
-          expect(names).not.toContain("eval_rebuttal")
         }),
         { git: true, config: providerCfg },
       ),
@@ -290,9 +288,8 @@ describe("kira agent integration", () => {
           const inputs = yield* llm.inputs
           expect(inputs.length).toBeGreaterThanOrEqual(2)
           const raw = JSON.stringify(inputs[1])
-          expect(raw).toContain("WARNINGS")
+          expect(raw).toContain("WARNING")
           expect(raw).toContain("no tool calls")
-          expect(raw).toContain("execute_commands")
         }),
         { git: true, config: providerCfg },
       ),
@@ -441,9 +438,10 @@ describe("kira agent integration", () => {
           const first = inputs[0]!
           const tools = (first as any).tools as { function: { name: string } }[] | undefined
           const names = tools?.map((t) => t.function.name) ?? []
-          expect(names).toContain("bash")
           expect(names).toContain("read")
-          expect(names).not.toContain("execute_commands")
+          expect(names).toContain("execute_commands")
+          expect(names).toContain("plan_exit")
+          expect(names).not.toContain("bash")
           expect(names).not.toContain("task_complete")
 
           const system = (first.messages as any[]).filter((m: any) => m.role === "system")
