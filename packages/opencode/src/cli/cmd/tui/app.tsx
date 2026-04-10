@@ -36,6 +36,7 @@ import { DialogAgent } from "@tui/component/dialog-agent"
 import { DialogSystem } from "@tui/component/dialog-system"
 import { DialogSessionList } from "@tui/component/dialog-session-list"
 import { DialogWorkspaceList } from "@tui/component/dialog-workspace-list"
+import { DialogWorktree } from "@tui/component/dialog-worktree"
 import { KeybindProvider, useKeybind } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
@@ -475,6 +476,17 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           },
         ]
       : []),
+    {
+      title: "Worktree",
+      value: "worktree",
+      category: "Workspace",
+      slash: {
+        name: "worktree",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogWorktree />)
+      },
+    },
     {
       title: "New session",
       suggested: route.data.type === "session",

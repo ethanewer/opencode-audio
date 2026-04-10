@@ -50,6 +50,7 @@ export namespace Workspace {
     id: WorkspaceID.zod.optional(),
     type: Info.shape.type,
     branch: Info.shape.branch,
+    name: z.string().nullish(),
     projectID: ProjectID.zod,
     extra: Info.shape.extra,
   })
@@ -58,7 +59,7 @@ export namespace Workspace {
     const id = WorkspaceID.ascending(input.id)
     const adaptor = await getAdaptor(input.type)
 
-    const config = await adaptor.configure({ ...input, id, name: null, directory: null })
+    const config = await adaptor.configure({ ...input, id, name: input.name ?? null, directory: null })
 
     const info: Info = {
       id,

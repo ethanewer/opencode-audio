@@ -925,6 +925,12 @@ export function Prompt(props: PromptProps) {
       return
     }
 
+    if (slash?.name === "worktree") {
+      command.trigger("worktree")
+      clear()
+      return
+    }
+
     const selectedModel = local.model.current()
     if (!selectedModel) {
       promptModelWarning()

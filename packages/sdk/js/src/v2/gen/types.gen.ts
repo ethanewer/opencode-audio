@@ -2836,6 +2836,7 @@ export type ExperimentalWorkspaceCreateData = {
     id?: string
     type: string
     branch: string | null
+    name?: string | null
     extra: unknown | null
   }
   path?: never

@@ -99,6 +99,13 @@ export namespace Worktree {
     }),
   )
 
+  export const NameExistsError = NamedError.create(
+    "WorktreeNameExistsError",
+    z.object({
+      name: z.string(),
+    }),
+  )
+
   export const CreateFailedError = NamedError.create(
     "WorktreeCreateFailedError",
     z.object({
@@ -227,7 +234,15 @@ export namespace Worktree {
         yield* fs.makeDirectory(root, { recursive: true }).pipe(Effect.orDie)
 
         const base = name ? slugify(name) : ""
-        return yield* candidate(root, base || undefined)
+        if (base) {
+          const directory = pathSvc.join(root, base)
+          if (yield* fs.exists(directory).pipe(Effect.orDie)) throw new NameExistsError({ name: base })
+          const ref = `refs/heads/opencode/${base}`
+          const check = yield* git(["show-ref", "--verify", "--quiet", ref], { cwd: ctx.worktree })
+          if (check.code === 0) throw new NameExistsError({ name: base })
+          return Info.parse({ name: base, branch: `opencode/${base}`, directory })
+        }
+        return yield* candidate(root)
       })
 
       const setup = Effect.fnUntraced(function* (info: Info) {

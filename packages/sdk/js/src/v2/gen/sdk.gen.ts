@@ -1089,6 +1089,7 @@ export class Workspace extends HeyApiClient {
       id?: string
       type?: string
       branch?: string | null
+      name?: string | null
       extra?: unknown | null
     },
     options?: Options<never, ThrowOnError>,
@@ -1103,6 +1104,7 @@ export class Workspace extends HeyApiClient {
             { in: "body", key: "id" },
             { in: "body", key: "type" },
             { in: "body", key: "branch" },
+            { in: "body", key: "name" },
             { in: "body", key: "extra" },
           ],
         },

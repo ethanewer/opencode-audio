@@ -178,9 +178,7 @@ export function Session() {
   })
 
   createEffect(() => {
-    if (session()?.workspaceID) {
-      sdk.setWorkspace(session()?.workspaceID)
-    }
+    sdk.setWorkspace(session()?.workspaceID)
   })
 
   createEffect(async () => {
