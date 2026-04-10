@@ -294,6 +294,10 @@ export namespace Eval {
 
   function compose(instruction: string, diff: string, files: string[], hasDiff: boolean): string {
     const parts = ["## Original User Instructions\n", instruction]
+    const text = instruction.toLowerCase()
+    const repo = ["sanitize", "decontamin", "api key", "token", "secret", "credential"].some((x) => text.includes(x))
+    const algo = ["implement", "parallel", "gradient", "extract", "elf", "compiler", "algorithm", "tensor"]
+      .some((x) => text.includes(x))
 
     parts.push(
       "\n\nThe original user instructions define pass/fail. Treat the modified-files list and diff as hints only, not as the scope boundary.",
@@ -304,6 +308,18 @@ export namespace Eval {
     parts.push(
       "Hidden tests may exist. Passing requires strong evidence of correctness, not just superficial checks or plausible-looking code.",
     )
+
+    if (repo) {
+      parts.push(
+        "\n\n## Task-specific evaluation guidance\nSearch the entire repository for any remaining secret-like literals, including metadata, diffs, JSON blobs, generated files, configs, and scripts. Any remaining contamination in scope is a failure, even if it appears outside the modified-files list.",
+      )
+    }
+
+    if (algo) {
+      parts.push(
+        "\n\n## Task-specific evaluation guidance\nThis task involves nontrivial behavior. Do not pass based only on comments, spot checks, or plausible reasoning. Prefer an independent end-to-end check. If you cannot run one and there is any unresolved semantic doubt, fail.",
+      )
+    }
 
     if (files.length > 0) {
       parts.push("\n\n## Files Created or Modified\n")
