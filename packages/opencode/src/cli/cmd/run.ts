@@ -240,6 +240,10 @@ function isPlan(agent?: string) {
   return agent === "plan" || agent === "voice-plan"
 }
 
+function isBuildAuto(agent?: string) {
+  return agent === "build-auto"
+}
+
 export const RunCommand = cmd({
   command: "run [message..]",
   describe: "run opencode with a message",
@@ -330,7 +334,7 @@ export const RunCommand = cmd({
       })
       .option("eval", {
         type: "boolean",
-        describe: "run eval agent after build completes (default: true with --agent auto)",
+        describe: "run eval agent after build completes (default: true with --agent auto or build-auto)",
       })
       .option("eval-iterations", {
         type: "number",
@@ -402,7 +406,8 @@ export const RunCommand = cmd({
     }
 
     const auto = args.agent === "auto"
-    const agent = auto ? "plan" : args.agent
+    const buildAuto = isBuildAuto(args.agent)
+    const agent = auto ? "plan" : buildAuto ? "build" : args.agent
 
     const rules: Permission.Ruleset = [
       {
@@ -772,9 +777,9 @@ export const RunCommand = cmd({
         await idle
 
         // Run eval if enabled
-        // Eval is on by default with --agent auto.
+        // Eval is on by default with --agent auto/build-auto.
         // It can be explicitly enabled/disabled with --eval.
-        const doEval = args.eval ?? auto
+        const doEval = args.eval ?? (auto || buildAuto)
         if (doEval && !error && !args.attach) {
           const maxIter = args.evalIterations ?? 5
           const model = args.model ? Provider.parseModel(args.model) : undefined

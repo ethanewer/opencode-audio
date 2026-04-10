@@ -75,6 +75,7 @@ async function call(
   const seen = {
     agent: undefined as string | undefined,
     auto: undefined as string | undefined,
+    evals: 0,
     rules: [] as { permission: string; action: string; pattern: string }[],
     text: undefined as string | undefined,
     updated: [] as { sessionID: string; permission: { permission: string; action: string; pattern: string }[] }[],
@@ -134,13 +135,16 @@ async function call(
   spyOn(UI, "empty").mockImplementation(() => {})
   spyOn(UI, "error").mockImplementation(() => {})
   spyOn(EvalModule.Eval, "extract").mockResolvedValue("ship it")
-  spyOn(EvalModule.Eval, "run").mockResolvedValue({
-    pass: opts?.eval?.pass ?? true,
-    summary: opts?.eval?.summary ?? "ok",
-    attempt: opts?.eval?.attempt ?? 1,
-    sessionID: "ses_eval" as never,
-    sessions: [],
-    phase: (opts?.eval?.pass ?? true) ? "passed" : "failed",
+  spyOn(EvalModule.Eval, "run").mockImplementation(async () => {
+    seen.evals++
+    return {
+      pass: opts?.eval?.pass ?? true,
+      summary: opts?.eval?.summary ?? "ok",
+      attempt: opts?.eval?.attempt ?? 1,
+      sessionID: "ses_eval" as never,
+      sessions: [],
+      phase: (opts?.eval?.pass ?? true) ? "passed" : "failed",
+    }
   })
   spyOn(SessionModule.Session, "setPermission").mockImplementation(
     Object.assign(async (input: Parameters<typeof SessionModule.Session.setPermission>[0]) => {
@@ -213,7 +217,17 @@ describe("cli.run", () => {
 
     expect(seen.agent).toBe("plan")
     expect(seen.auto).toBe("1")
+    expect(seen.evals).toBe(1)
     expect(seen.rules.some((item) => item.permission === "plan_exit")).toBe(false)
+  })
+
+  test("--agent build-auto routes to build with eval loop enabled", async () => {
+    const seen = await call({ agent: "build-auto" })
+
+    expect(seen.agent).toBe("build")
+    expect(seen.auto).toBeUndefined()
+    expect(seen.evals).toBe(1)
+    expect(seen.rules.some((item) => item.permission === "plan_exit" && item.action === "deny")).toBe(true)
   })
 
   test("auto-handoffs explicit voice-plan runs without changing the voice agent", async () => {
