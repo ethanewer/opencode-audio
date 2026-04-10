@@ -298,6 +298,9 @@ export namespace Eval {
     const repo = ["sanitize", "decontamin", "api key", "token", "secret", "credential"].some((x) => text.includes(x))
     const algo = ["implement", "parallel", "gradient", "extract", "elf", "compiler", "algorithm", "tensor"]
       .some((x) => text.includes(x))
+    const chess = text.includes("chess") && text.includes("best move")
+    const tensor = text.includes("tensor parallel") || text.includes("rowparallellinear")
+    const elf = text.includes("extract") && text.includes("elf")
 
     parts.push(
       "\n\nThe original user instructions define pass/fail. Treat the modified-files list and diff as hints only, not as the scope boundary.",
@@ -318,6 +321,24 @@ export namespace Eval {
     if (algo) {
       parts.push(
         "\n\n## Task-specific evaluation guidance\nThis task involves nontrivial behavior. Do not pass based only on comments, spot checks, or plausible reasoning. Prefer an independent end-to-end check. If you cannot run one and there is any unresolved semantic doubt, fail.",
+      )
+    }
+
+    if (chess) {
+      parts.push(
+        "\n\n## Task-specific evaluation guidance\nFor chess tasks, legal or plausible moves are not enough. Pass only if you directly verify that the proposed move set is actually winning/best according to the task requirements. If you cannot prove that, fail.",
+      )
+    }
+
+    if (tensor) {
+      parts.push(
+        "\n\n## Task-specific evaluation guidance\nFor tensor-parallel linear layers, do not assume the caller pre-shards inputs or gradients unless the instructions explicitly say so. If correctness depends on such an unstated assumption, fail and report it as an error.",
+      )
+    }
+
+    if (elf) {
+      parts.push(
+        "\n\n## Task-specific evaluation guidance\nFor ELF extraction/parsing tasks, hardcoded base addresses or architecture-specific assumptions are not acceptable without direct verification against a trusted reference or independent calculation. If the implementation depends on such an assumption, fail.",
       )
     }
 
