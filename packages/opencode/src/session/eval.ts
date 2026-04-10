@@ -295,6 +295,16 @@ export namespace Eval {
   function compose(instruction: string, diff: string, files: string[], hasDiff: boolean): string {
     const parts = ["## Original User Instructions\n", instruction]
 
+    parts.push(
+      "\n\nThe original user instructions define pass/fail. Treat the modified-files list and diff as hints only, not as the scope boundary.",
+    )
+    parts.push(
+      "If the task requires repository-wide cleanup or end-to-end behavioral correctness, inspect beyond the modified files when needed.",
+    )
+    parts.push(
+      "Hidden tests may exist. Passing requires strong evidence of correctness, not just superficial checks or plausible-looking code.",
+    )
+
     if (files.length > 0) {
       parts.push("\n\n## Files Created or Modified\n")
       parts.push(files.map((f) => `- ${f}`).join("\n"))
