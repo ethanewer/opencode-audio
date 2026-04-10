@@ -37,16 +37,13 @@ import type { Tool } from "@/tool/tool"
 import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
 import { BashTool } from "@/tool/bash"
-import type { GlobTool } from "@/tool/glob"
-import { TodoWriteTool } from "@/tool/todo"
-import type { GrepTool } from "@/tool/grep"
-import type { ListTool } from "@/tool/ls"
 import type { EditTool } from "@/tool/edit"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
 import type { WebFetchTool } from "@/tool/webfetch"
+import { TodoWriteTool } from "@/tool/todo"
+import { TodoItem } from "@tui/component/todo-item"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
-import type { SkillTool } from "@/tool/skill"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -54,7 +51,6 @@ import type { DialogContext } from "@tui/ui/dialog"
 import { useKeybind } from "@tui/context/keybind"
 import { parsePatch } from "diff"
 import { useDialog } from "../../ui/dialog"
-import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
@@ -69,7 +65,6 @@ import parsers from "../../../../../../parsers-config.ts"
 import { Clipboard } from "../../util/clipboard"
 import { Toast, useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv.tsx"
-import { Editor } from "../../util/editor"
 import stripAnsi from "strip-ansi"
 import { usePromptRef } from "../../context/prompt"
 import { useExit } from "../../context/exit"
@@ -77,8 +72,6 @@ import { Filesystem } from "@/util/filesystem"
 import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { useSpeech } from "@tui/util/speech"
-import { DialogExportOptions } from "../../ui/dialog-export-options"
-import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { Eval } from "@/session/eval"
@@ -157,7 +150,6 @@ export function Session() {
   const [showThinking, setShowThinking] = kv.signal("thinking_visibility", true)
   const [timestamps, setTimestamps] = kv.signal<"hide" | "show">("timestamps", "hide")
   const [showDetails, setShowDetails] = kv.signal("tool_details_visibility", true)
-  const [showAssistantMetadata, setShowAssistantMetadata] = kv.signal("assistant_metadata_visibility", true)
   const [showScrollbar, setShowScrollbar] = kv.signal("scrollbar_visible", true)
   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
   const [animationsEnabled, setAnimationsEnabled] = kv.signal("animations_enabled", true)
@@ -570,41 +562,6 @@ export function Session() {
   const command = useCommandDialog()
   command.register(() => [
     {
-      title: session()?.share?.url ? "Copy share link" : "Share session",
-      value: "session.share",
-      suggested: route.type === "session",
-      keybind: "session_share",
-      category: "Session",
-      enabled: sync.data.config.share !== "disabled",
-      slash: {
-        name: "share",
-      },
-      onSelect: async (dialog) => {
-        const copy = (url: string) =>
-          Clipboard.copy(url)
-            .then(() => toast.show({ message: "Share URL copied to clipboard!", variant: "success" }))
-            .catch(() => toast.show({ message: "Failed to copy URL to clipboard", variant: "error" }))
-        const url = session()?.share?.url
-        if (url) {
-          await copy(url)
-          dialog.clear()
-          return
-        }
-        await sdk.client.session
-          .share({
-            sessionID: route.sessionID,
-          })
-          .then((res) => copy(res.data!.share!.url))
-          .catch((error) => {
-            toast.show({
-              message: error instanceof Error ? error.message : "Failed to share session",
-              variant: "error",
-            })
-          })
-        dialog.clear()
-      },
-    },
-    {
       title: "Rename session",
       value: "session.rename",
       keybind: "session_rename",
@@ -738,30 +695,6 @@ export function Session() {
       },
     },
     {
-      title: "Unshare session",
-      value: "session.unshare",
-      keybind: "session_unshare",
-      category: "Session",
-      enabled: !!session()?.share?.url,
-      slash: {
-        name: "unshare",
-      },
-      onSelect: async (dialog) => {
-        await sdk.client.session
-          .unshare({
-            sessionID: route.sessionID,
-          })
-          .then(() => toast.show({ message: "Session unshared successfully", variant: "success" }))
-          .catch((error) => {
-            toast.show({
-              message: error instanceof Error ? error.message : "Failed to unshare session",
-              variant: "error",
-            })
-          })
-        dialog.clear()
-      },
-    },
-    {
       title: "Undo previous message",
       value: "session.undo",
       keybind: "messages_undo",
@@ -853,10 +786,6 @@ export function Session() {
       title: showTimestamps() ? "Hide timestamps" : "Show timestamps",
       value: "session.toggle.timestamps",
       category: "Session",
-      slash: {
-        name: "timestamps",
-        aliases: ["toggle-timestamps"],
-      },
       onSelect: (dialog) => {
         setTimestamps((prev) => (prev === "show" ? "hide" : "show"))
         dialog.clear()
@@ -867,10 +796,6 @@ export function Session() {
       value: "session.toggle.thinking",
       keybind: "display_thinking",
       category: "Session",
-      slash: {
-        name: "thinking",
-        aliases: ["toggle-thinking"],
-      },
       onSelect: (dialog) => {
         setShowThinking((prev) => !prev)
         dialog.clear()
@@ -1081,96 +1006,6 @@ export function Session() {
         Clipboard.copy(text)
           .then(() => toast.show({ message: "Message copied to clipboard!", variant: "success" }))
           .catch(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" }))
-        dialog.clear()
-      },
-    },
-    {
-      title: "Copy session transcript",
-      value: "session.copy",
-      category: "Session",
-      slash: {
-        name: "copy",
-      },
-      onSelect: async (dialog) => {
-        try {
-          const sessionData = session()
-          if (!sessionData) return
-          const sessionMessages = messages()
-          const transcript = formatTranscript(
-            sessionData,
-            sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
-            {
-              thinking: showThinking(),
-              toolDetails: showDetails(),
-              assistantMetadata: showAssistantMetadata(),
-            },
-          )
-          await Clipboard.copy(transcript)
-          toast.show({ message: "Session transcript copied to clipboard!", variant: "success" })
-        } catch (error) {
-          toast.show({ message: "Failed to copy session transcript", variant: "error" })
-        }
-        dialog.clear()
-      },
-    },
-    {
-      title: "Export session transcript",
-      value: "session.export",
-      keybind: "session_export",
-      category: "Session",
-      slash: {
-        name: "export",
-      },
-      onSelect: async (dialog) => {
-        try {
-          const sessionData = session()
-          if (!sessionData) return
-          const sessionMessages = messages()
-
-          const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
-
-          const options = await DialogExportOptions.show(
-            dialog,
-            defaultFilename,
-            showThinking(),
-            showDetails(),
-            showAssistantMetadata(),
-            false,
-          )
-
-          if (options === null) return
-
-          const transcript = formatTranscript(
-            sessionData,
-            sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
-            {
-              thinking: options.thinking,
-              toolDetails: options.toolDetails,
-              assistantMetadata: options.assistantMetadata,
-            },
-          )
-
-          if (options.openWithoutSaving) {
-            // Just open in editor without saving
-            await Editor.open({ value: transcript, renderer })
-          } else {
-            const exportDir = process.cwd()
-            const filename = options.filename.trim()
-            const filepath = path.join(exportDir, filename)
-
-            await Filesystem.write(filepath, transcript)
-
-            // Open with EDITOR if available
-            const result = await Editor.open({ value: transcript, renderer })
-            if (result !== undefined) {
-              await Filesystem.write(filepath, result)
-            }
-
-            toast.show({ message: `Session exported to ${filename}`, variant: "success" })
-          }
-        } catch (error) {
-          toast.show({ message: "Failed to export session", variant: "error" })
-        }
         dialog.clear()
       },
     },
@@ -1799,23 +1634,8 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "bash"}>
           <Bash {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "glob"}>
-          <Glob {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "read"}>
-          <Read {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "grep"}>
-          <Grep {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "list"}>
-          <List {...toolprops} />
-        </Match>
         <Match when={props.part.tool === "webfetch"}>
           <WebFetch {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "codesearch"}>
-          <CodeSearch {...toolprops} />
         </Match>
         <Match when={props.part.tool === "websearch"}>
           <WebSearch {...toolprops} />
@@ -1837,9 +1657,6 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         </Match>
         <Match when={props.part.tool === "question"}>
           <Question {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "skill"}>
-          <Skill {...toolprops} />
         </Match>
         <Match when={props.part.tool === "execute_commands"}>
           {(() => {
@@ -2385,13 +2202,25 @@ function Write(props: ToolProps<typeof WriteTool>) {
   )
 }
 
-function Glob(props: ToolProps<typeof GlobTool>) {
+function WebFetch(props: ToolProps<typeof WebFetchTool>) {
   return (
-    <InlineTool icon="✱" pending="Finding files..." complete={props.input.pattern} part={props.part}>
-      Glob "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
-      <Show when={props.metadata.count}>
-        ({props.metadata.count} {props.metadata.count === 1 ? "match" : "matches"})
-      </Show>
+    <InlineTool icon="%" pending="Fetching from the web..." complete={(props.input as any).url} part={props.part}>
+      WebFetch {(props.input as any).url}
+    </InlineTool>
+  )
+}
+
+function WebSearch(props: ToolProps<any>) {
+  const input = props.input as any
+  const metadata = props.metadata as any
+  return (
+    <InlineTool
+      icon="◈"
+      pending={`Searching the web for "${input.query}"...`}
+      complete={metadata.results ? `${metadata.results} results` : undefined}
+      part={props.part}
+    >
+      Web Search "{input.query}"
     </InlineTool>
   )
 }
@@ -2427,59 +2256,6 @@ function Read(props: ToolProps<typeof ReadTool>) {
         )}
       </For>
     </>
-  )
-}
-
-function Grep(props: ToolProps<typeof GrepTool>) {
-  return (
-    <InlineTool icon="✱" pending="Searching content..." complete={props.input.pattern} part={props.part}>
-      Grep "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
-      <Show when={props.metadata.matches}>
-        ({props.metadata.matches} {props.metadata.matches === 1 ? "match" : "matches"})
-      </Show>
-    </InlineTool>
-  )
-}
-
-function List(props: ToolProps<typeof ListTool>) {
-  const dir = createMemo(() => {
-    if (props.input.path) {
-      return normalizePath(props.input.path)
-    }
-    return ""
-  })
-  return (
-    <InlineTool icon="→" pending="Listing directory..." complete={props.input.path !== undefined} part={props.part}>
-      List {dir()}
-    </InlineTool>
-  )
-}
-
-function WebFetch(props: ToolProps<typeof WebFetchTool>) {
-  return (
-    <InlineTool icon="%" pending="Fetching from the web..." complete={(props.input as any).url} part={props.part}>
-      WebFetch {(props.input as any).url}
-    </InlineTool>
-  )
-}
-
-function CodeSearch(props: ToolProps<any>) {
-  const input = props.input as any
-  const metadata = props.metadata as any
-  return (
-    <InlineTool icon="◇" pending="Searching code..." complete={input.query} part={props.part}>
-      Exa Code Search "{input.query}" <Show when={metadata.results}>({metadata.results} results)</Show>
-    </InlineTool>
-  )
-}
-
-function WebSearch(props: ToolProps<any>) {
-  const input = props.input as any
-  const metadata = props.metadata as any
-  return (
-    <InlineTool icon="◈" pending="Searching web..." complete={input.query} part={props.part}>
-      Exa Web Search "{input.query}" <Show when={metadata.numResults}>({metadata.numResults} results)</Show>
-    </InlineTool>
   )
 }
 
@@ -2757,14 +2533,6 @@ function Question(props: ToolProps<typeof QuestionTool>) {
         </InlineTool>
       </Match>
     </Switch>
-  )
-}
-
-function Skill(props: ToolProps<typeof SkillTool>) {
-  return (
-    <InlineTool icon="→" pending="Loading skill..." complete={props.input.name} part={props.part}>
-      Skill "{props.input.name}"
-    </InlineTool>
   )
 }
 

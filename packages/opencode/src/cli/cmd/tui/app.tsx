@@ -29,7 +29,6 @@ import { SyncProvider, useSync } from "@tui/context/sync"
 import { LocalProvider, useLocal } from "@tui/context/local"
 import { DialogModel, useConnected } from "@tui/component/dialog-model"
 import { DialogMcp } from "@tui/component/dialog-mcp"
-import { DialogStatus } from "@tui/component/dialog-status"
 import { DialogThemeList } from "@tui/component/dialog-theme-list"
 import { DialogHelp } from "./ui/dialog-help"
 import { CommandProvider, useCommandDialog } from "@tui/component/dialog-command"
@@ -470,9 +469,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
             value: "workspace.list",
             category: "Workspace",
             suggested: true,
-            slash: {
-              name: "workspaces",
-            },
             onSelect: () => {
               dialog.replace(() => <DialogWorkspaceList />)
             },
@@ -519,9 +515,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       keybind: "system_list",
       suggested: true,
       category: "Agent",
-      slash: {
-        name: "systems",
-      },
       onSelect: () => {
         dialog.replace(() => <DialogSystem />)
       },
@@ -551,9 +544,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       value: "agent.list",
       keybind: "agent_list",
       category: "Agent",
-      slash: {
-        name: "agents",
-      },
       onSelect: () => {
         dialog.replace(() => <DialogAgent />)
       },
@@ -593,9 +583,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       value: "variant.list",
       category: "Agent",
       hidden: local.model.variant.list().length === 0,
-      slash: {
-        name: "variants",
-      },
       onSelect: () => {
         dialog.replace(() => <DialogVariant />)
       },
@@ -621,18 +608,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         dialog.replace(() => <DialogProviderList />)
       },
       category: "Provider",
-    },
-    {
-      title: "View status",
-      keybind: "status_view",
-      value: "opencode.status",
-      slash: {
-        name: "status",
-      },
-      onSelect: () => {
-        dialog.replace(() => <DialogStatus />)
-      },
-      category: "System",
     },
     {
       title: "Switch theme",

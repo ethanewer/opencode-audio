@@ -21,9 +21,7 @@ import { updateSchema } from "../util/update-schema"
 import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { InstanceState } from "@/effect/instance-state"
-import { SessionPrompt } from "./prompt"
 import { fn } from "@/util/fn"
-import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
 import { ProjectID } from "../project/schema"
 import { WorkspaceID } from "../control-plane/schema"
@@ -34,7 +32,7 @@ import { ModelID, ProviderID } from "@/provider/schema"
 import { Permission } from "@/permission"
 import { Global } from "@/global"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
-import { Effect, Layer, Scope, ServiceMap } from "effect"
+import { Effect, Layer, ServiceMap } from "effect"
 import { makeRuntime } from "@/effect/run-service"
 
 export namespace Session {
@@ -373,8 +371,6 @@ export namespace Session {
     Service,
     Effect.gen(function* () {
       const bus = yield* Bus.Service
-      const config = yield* Config.Service
-      const scope = yield* Scope.Scope
 
       const createNext = Effect.fn("Session.createNext")(function* (input: {
         id?: SessionID
@@ -404,11 +400,6 @@ export namespace Session {
 
         yield* Effect.sync(() => SyncEvent.run(Event.Created, { sessionID: result.id, info: result }))
 
-        const cfg = yield* config.get()
-        if (!result.parentID && (Flag.OPENCODE_AUTO_SHARE || cfg.share === "auto")) {
-          yield* share(result.id).pipe(Effect.ignore, Effect.forkIn(scope))
-        }
-
         if (!Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) {
           // This only exist for backwards compatibility. We should not be
           // manually publishing this event; it is a sync event now
@@ -427,23 +418,11 @@ export namespace Session {
         return fromRow(row)
       })
 
-      const share = Effect.fn("Session.share")(function* (id: SessionID) {
-        const cfg = yield* config.get()
-        if (cfg.share === "disabled") throw new Error("Sharing is disabled in configuration")
-        const result = yield* Effect.promise(async () => {
-          const { ShareNext } = await import("@/share/share-next")
-          return ShareNext.create(id)
-        })
-        yield* Effect.sync(() => SyncEvent.run(Event.Updated, { sessionID: id, info: { share: { url: result.url } } }))
-        return result
+      const share = Effect.fn("Session.share")(function* (_id: SessionID) {
+        return { url: "" }
       })
 
-      const unshare = Effect.fn("Session.unshare")(function* (id: SessionID) {
-        yield* Effect.promise(async () => {
-          const { ShareNext } = await import("@/share/share-next")
-          await ShareNext.remove(id)
-        })
-        yield* Effect.sync(() => SyncEvent.run(Event.Updated, { sessionID: id, info: { share: { url: null } } }))
+      const unshare = Effect.fn("Session.unshare")(function* (_id: SessionID) {
       })
 
       const children = Effect.fn("Session.children")(function* (parentID: SessionID) {
@@ -465,7 +444,6 @@ export namespace Session {
           for (const child of kids) {
             yield* remove(child.id)
           }
-          yield* unshare(sessionID).pipe(Effect.ignore)
           yield* Effect.promise(() => Tmux.kill(sessionID)).pipe(Effect.ignore)
           yield* Effect.sync(() => {
             SyncEvent.run(Event.Deleted, { sessionID, info: session })
@@ -644,21 +622,12 @@ export namespace Session {
         yield* bus.publish(MessageV2.Event.PartDelta, input)
       })
 
-      const initialize = Effect.fn("Session.initialize")(function* (input: {
+      const initialize = Effect.fn("Session.initialize")(function* (_input: {
         sessionID: SessionID
         modelID: ModelID
         providerID: ProviderID
         messageID: MessageID
       }) {
-        yield* Effect.promise(() =>
-          SessionPrompt.command({
-            sessionID: input.sessionID,
-            messageID: input.messageID,
-            model: input.providerID + "/" + input.modelID,
-            command: Command.Default.INIT,
-            arguments: "",
-          }),
-        )
       })
 
       return Service.of({

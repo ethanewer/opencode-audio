@@ -650,13 +650,10 @@ export namespace Config {
     .object({
       leader: z.string().optional().default("ctrl+x").describe("Leader key for keybind combinations"),
       app_exit: z.string().optional().default("ctrl+c,ctrl+d,<leader>q").describe("Exit the application"),
-      editor_open: z.string().optional().default("<leader>e").describe("Open external editor"),
       theme_list: z.string().optional().default("<leader>t").describe("List available themes"),
       sidebar_toggle: z.string().optional().default("<leader>b").describe("Toggle sidebar"),
       scrollbar_toggle: z.string().optional().default("none").describe("Toggle session scrollbar"),
       username_toggle: z.string().optional().default("none").describe("Toggle username visibility"),
-      status_view: z.string().optional().default("<leader>s").describe("View status"),
-      session_export: z.string().optional().default("<leader>x").describe("Export session to editor"),
       session_new: z.string().optional().default("<leader>n").describe("Create a new session"),
       session_list: z.string().optional().default("<leader>l").describe("List all sessions"),
       session_timeline: z.string().optional().default("<leader>g").describe("Show session timeline"),
@@ -666,8 +663,6 @@ export namespace Config {
       stash_delete: z.string().optional().default("ctrl+d").describe("Delete stash entry"),
       model_provider_list: z.string().optional().default("ctrl+a").describe("Open provider list from model dialog"),
       model_favorite_toggle: z.string().optional().default("ctrl+f").describe("Toggle model favorite status"),
-      session_share: z.string().optional().default("none").describe("Share current session"),
-      session_unshare: z.string().optional().default("none").describe("Unshare current session"),
       session_interrupt: z.string().optional().default("escape").describe("Interrupt current session"),
       session_compact: z.string().optional().default("<leader>c").describe("Compact the session"),
       messages_page_up: z.string().optional().default("pageup,ctrl+alt+b").describe("Scroll messages up by one page"),
@@ -921,7 +916,7 @@ export namespace Config {
     .object({
       $schema: z.string().optional().describe("JSON schema reference for configuration validation"),
       logLevel: Log.Level.optional().describe("Log level"),
-      server: Server.optional().describe("Server configuration for opencode serve and web commands"),
+      server: Server.optional().describe("Server configuration for opencode serve command"),
       command: z
         .record(z.string(), Command)
         .optional()
@@ -939,16 +934,6 @@ export namespace Config {
           "Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.",
         ),
       plugin: PluginSpec.array().optional(),
-      share: z
-        .enum(["manual", "auto", "disabled"])
-        .optional()
-        .describe(
-          "Control sharing behavior:'manual' allows manual sharing via commands, 'auto' enables automatic sharing, 'disabled' disables all sharing",
-        ),
-      autoshare: z
-        .boolean()
-        .optional()
-        .describe("@deprecated Use 'share' field instead. Share newly created sessions automatically"),
       autoupdate: z
         .union([z.boolean(), z.literal("notify")])
         .optional()
@@ -1496,10 +1481,6 @@ export namespace Config {
           }
 
           if (!result.username) result.username = os.userInfo().username
-
-          if (result.autoshare === true && !result.share) {
-            result.share = "auto"
-          }
 
           if (Flag.OPENCODE_DISABLE_AUTOCOMPACT) {
             result.compaction = { ...result.compaction, auto: false }

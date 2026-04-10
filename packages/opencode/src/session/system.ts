@@ -144,8 +144,7 @@ export namespace SystemPrompt {
     if (!list.length) return
 
     return [
-      "Skills provide specialized instructions and workflows for specific tasks.",
-      "Use the skill tool to load a skill when a task matches its description.",
+      "The following skills are available for specialized tasks.",
       Skill.fmt(list, { verbose: true }),
     ].join("\n")
   }

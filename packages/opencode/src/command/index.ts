@@ -8,8 +8,6 @@ import { Config } from "../config/config"
 import { MCP } from "../mcp"
 import { Skill } from "../skill"
 import { Log } from "../util/log"
-import PROMPT_INITIALIZE from "./template/initialize.txt"
-import PROMPT_REVIEW from "./template/review.txt"
 import PROMPT_EVAL from "./template/eval.txt"
 
 export namespace Command {
@@ -62,8 +60,6 @@ export namespace Command {
   }
 
   export const Default = {
-    INIT: "init",
-    REVIEW: "review",
     EVAL: "eval",
   } as const
 
@@ -85,25 +81,6 @@ export namespace Command {
         const cfg = yield* config.get()
         const commands: Record<string, Info> = {}
 
-        commands[Default.INIT] = {
-          name: Default.INIT,
-          description: "create/update AGENTS.md",
-          source: "command",
-          get template() {
-            return PROMPT_INITIALIZE.replace("${path}", ctx.worktree)
-          },
-          hints: hints(PROMPT_INITIALIZE),
-        }
-        commands[Default.REVIEW] = {
-          name: Default.REVIEW,
-          description: "review changes [commit|branch|pr], defaults to uncommitted",
-          source: "command",
-          get template() {
-            return PROMPT_REVIEW.replace("${path}", ctx.worktree)
-          },
-          subtask: true,
-          hints: hints(PROMPT_REVIEW),
-        }
         commands[Default.EVAL] = {
           name: Default.EVAL,
           description: "evaluate the current session's work for correctness",

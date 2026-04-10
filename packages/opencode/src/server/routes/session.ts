@@ -293,39 +293,6 @@ export const SessionRoutes = lazy(() =>
       },
     )
     .post(
-      "/:sessionID/init",
-      describeRoute({
-        summary: "Initialize session",
-        description:
-          "Analyze the current application and create an AGENTS.md file with project-specific agent configurations.",
-        operationId: "session.init",
-        responses: {
-          200: {
-            description: "200",
-            content: {
-              "application/json": {
-                schema: resolver(z.boolean()),
-              },
-            },
-          },
-          ...errors(400, 404),
-        },
-      }),
-      validator(
-        "param",
-        z.object({
-          sessionID: SessionID.zod,
-        }),
-      ),
-      validator("json", Session.initialize.schema.omit({ sessionID: true })),
-      async (c) => {
-        const sessionID = c.req.valid("param").sessionID
-        const body = c.req.valid("json")
-        await Session.initialize({ ...body, sessionID })
-        return c.json(true)
-      },
-    )
-    .post(
       "/:sessionID/fork",
       describeRoute({
         summary: "Fork session",
@@ -385,37 +352,6 @@ export const SessionRoutes = lazy(() =>
         return c.json(true)
       },
     )
-    .post(
-      "/:sessionID/share",
-      describeRoute({
-        summary: "Share session",
-        description: "Create a shareable link for a session, allowing others to view the conversation.",
-        operationId: "session.share",
-        responses: {
-          200: {
-            description: "Successfully shared session",
-            content: {
-              "application/json": {
-                schema: resolver(Session.Info),
-              },
-            },
-          },
-          ...errors(400, 404),
-        },
-      }),
-      validator(
-        "param",
-        z.object({
-          sessionID: SessionID.zod,
-        }),
-      ),
-      async (c) => {
-        const sessionID = c.req.valid("param").sessionID
-        await Session.share(sessionID)
-        const session = await Session.get(sessionID)
-        return c.json(session)
-      },
-    )
     .get(
       "/:sessionID/diff",
       describeRoute({
@@ -453,37 +389,6 @@ export const SessionRoutes = lazy(() =>
           messageID: query.messageID,
         })
         return c.json(result)
-      },
-    )
-    .delete(
-      "/:sessionID/share",
-      describeRoute({
-        summary: "Unshare session",
-        description: "Remove the shareable link for a session, making it private again.",
-        operationId: "session.unshare",
-        responses: {
-          200: {
-            description: "Successfully unshared session",
-            content: {
-              "application/json": {
-                schema: resolver(Session.Info),
-              },
-            },
-          },
-          ...errors(400, 404),
-        },
-      }),
-      validator(
-        "param",
-        z.object({
-          sessionID: Session.unshare.schema,
-        }),
-      ),
-      async (c) => {
-        const sessionID = c.req.valid("param").sessionID
-        await Session.unshare(sessionID)
-        const session = await Session.get(sessionID)
-        return c.json(session)
       },
     )
     .post(
