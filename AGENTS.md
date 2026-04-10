@@ -119,14 +119,41 @@ const table = sqliteTable("session", {
 
 ## Testing
 
-- Avoid mocks as much as possible
-- Test actual implementation, do not duplicate logic into tests
-- Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package dirs like `packages/opencode`.
-- When running the full test suite, always filter the output to surface failures in a single pass:
-  ```bash
-  bun test 2>&1 | grep -E '\(fail\)|tests failed|Ran .* tests|Unhandled error' | head -50
-  ```
-  This shows only failure lines and the summary. Never re-run the full suite just to find which test failed.
+Tests live in `packages/opencode/test/`. Run from `packages/opencode`, never from the repo root.
+
+### Two suites
+
+| Command                    | What it runs                                               | Target |
+| -------------------------- | ---------------------------------------------------------- | ------ |
+| `bun run test:unit`        | Pure logic tests — no servers, no git, no process spawning | < 30 s |
+| `bun run test:integration` | LLM server tests, file/git ops, plugins, project, tools    | < 90 s |
+
+Run both suites together with `bun run test:unit && bun run test:integration` for full coverage.
+
+**Default workflow:** run `test:unit` after every change. Run `test:integration` before committing or when touching session/prompt/tool/plugin code.
+
+`bun test` (no suffix) runs everything including slow e2e/tmux/voice tests — useful for CI but too slow for iterative work.
+
+### Reading results
+
+Filter full-suite output to surface failures in one pass:
+
+```bash
+bun run test:unit 2>&1 | grep -E '\(fail\)|Ran .* tests|Unhandled error' | head -20
+```
+
+To run a single file:
+
+```bash
+cd packages/opencode && bun test test/session/prompt.test.ts
+```
+
+### Writing tests
+
+- Avoid mocks; test actual implementation
+- Do not duplicate logic into tests
+- Use `tmpdir()` from `test/fixture/fixture.ts` for temp directories with auto-cleanup
+- Session integration tests use `TestLLMServer` from `test/lib/llm-server.ts` (local HTTP mock, no real API calls)
 
 ## Type Checking
 
