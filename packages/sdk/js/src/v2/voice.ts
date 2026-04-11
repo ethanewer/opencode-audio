@@ -669,10 +669,10 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
             }
           }
 
-          // Speak tool completed — TTS the text
+          // Speak or voice task_complete — TTS the text
           if (
             part.type === "tool" &&
-            part.tool === "speak" &&
+            (part.tool === "speak" || part.tool === "task_complete") &&
             part.state.status === "completed" &&
             part.state.input?.text
           ) {
@@ -681,8 +681,8 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
             await speakText(text, generation)
           }
 
-          // Tool status speech (opt-in, excludes speak tool itself)
-          if (speakStatus && part.type === "tool" && part.tool !== "speak") {
+          // Tool status speech (opt-in, excludes speak and task_complete)
+          if (speakStatus && part.type === "tool" && part.tool !== "speak" && part.tool !== "task_complete") {
             const state = part.state
             let text: string | undefined
             if (state.status === "running") {

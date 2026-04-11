@@ -17,6 +17,7 @@ import PROMPT_PLAN from "./prompt/plan.txt"
 import PROMPT_EXTRACT from "./prompt/extract.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import PROMPT_TASK from "../session/prompt/task.txt"
+import PROMPT_VOICE_TASK from "../session/prompt/voice-task.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
@@ -294,14 +295,14 @@ export namespace Agent {
             "voice-build": {
               name: "voice-build",
               description: "Voice build agent. Same as build but responses are optimized for text-to-speech output.",
-              prompt: PROMPT_TASK,
+              prompt: PROMPT_VOICE_TASK,
               options: {},
               permission: Permission.merge(
                 defaults,
                 Permission.fromConfig({
-                  question: "allow",
                   plan_enter: "allow",
-                  task_complete: "allow",
+                  voice_complete: "allow",
+                  native_voice_complete: "allow",
                 }),
                 user,
               ),
@@ -331,7 +332,6 @@ export namespace Agent {
                   webfetch: "allow",
                   speak: "allow",
                   doom_loop: "ask",
-                  question: "allow",
                   plan_exit: "allow",
                   task: {
                     "*": "deny",

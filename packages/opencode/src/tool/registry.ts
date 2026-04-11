@@ -21,6 +21,7 @@ import { SpeakTool } from "./speak"
 import { EvalTool } from "./eval"
 import { ExecuteCommandsTool } from "./execute_commands"
 import { TaskCompleteTool } from "./task_complete"
+import { VoiceCompleteTool, NativeVoiceCompleteTool } from "./voice_complete"
 import { TaskTool } from "./task"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
@@ -126,6 +127,8 @@ export namespace ToolRegistry {
           EvalTool,
           ExecuteCommandsTool,
           TaskCompleteTool,
+          VoiceCompleteTool,
+          NativeVoiceCompleteTool,
           TaskTool,
           ...(Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
           ...custom,
@@ -179,7 +182,23 @@ export namespace ToolRegistry {
 
           if (tool.id === "task_complete") {
             if (!agent?.permission) return false
-            return evaluate("task_complete", "*", agent.permission).action !== "deny"
+            return !voice && evaluate("task_complete", "*", agent.permission).action !== "deny"
+          }
+
+          if (tool.id === "voice_complete") {
+            if (!agent?.permission) return false
+            return (
+              voice && model.audioOutput !== true && evaluate("voice_complete", "*", agent.permission).action !== "deny"
+            )
+          }
+
+          if (tool.id === "native_voice_complete") {
+            if (!agent?.permission) return false
+            return (
+              voice &&
+              model.audioOutput === true &&
+              evaluate("native_voice_complete", "*", agent.permission).action !== "deny"
+            )
           }
 
           const usePatch =
@@ -202,6 +221,7 @@ export namespace ToolRegistry {
                 capabilities: {
                   imageInput: model.imageInput,
                   audioInput: model.audioInput,
+                  audioOutput: model.audioOutput,
                   pdfInput: model.pdfInput,
                   hasVisionModel: model.hasVisionModel,
                   hasTranscription: true,
@@ -214,7 +234,7 @@ export namespace ToolRegistry {
             }
             yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)
             return {
-              id: tool.id,
+              id: tool.alias ?? tool.id,
               description: output.description,
               parameters: output.parameters,
               execute: next.execute,

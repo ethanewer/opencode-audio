@@ -15,6 +15,7 @@ export namespace Tool {
     capabilities?: {
       imageInput?: boolean
       audioInput?: boolean
+      audioOutput?: boolean
       pdfInput?: boolean
       hasVisionModel?: boolean
       hasTranscription?: boolean
@@ -49,6 +50,7 @@ export namespace Tool {
 
   export interface Info<Parameters extends z.ZodType = z.ZodType, M extends Metadata = Metadata> {
     id: string
+    alias?: string
     init: (ctx?: InitContext) => Promise<Def<Parameters, M>>
   }
 
@@ -58,9 +60,11 @@ export namespace Tool {
   export function define<Parameters extends z.ZodType, Result extends Metadata>(
     id: string,
     init: Info<Parameters, Result>["init"] | Def<Parameters, Result>,
+    alias?: string,
   ): Info<Parameters, Result> {
     return {
       id,
+      ...(alias && { alias }),
       init: async (initCtx) => {
         const toolInfo = init instanceof Function ? await init(initCtx) : init
         const execute = toolInfo.execute

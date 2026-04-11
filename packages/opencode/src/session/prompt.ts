@@ -1625,6 +1625,13 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   }
                 }
               }
+              // Voice agents without task_complete: exit after speak nudge.
+              // These agents are built for ongoing interaction and have no
+              // explicit end-task signal — only the speak nudge applies.
+              if (lastUser.agent.startsWith("voice-") && !isPlan(lastUser.agent)) {
+                log.info("exiting voice loop", { sessionID })
+                break
+              }
               // Eval agent nudge: if the eval agent finished without calling
               // eval_result, nudge it to produce a result before exiting.
               if (lastUser.agent === "eval" && session.parentID && evalFinishNudges < MAX_EVAL_NUDGES) {

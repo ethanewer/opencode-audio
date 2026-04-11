@@ -15,6 +15,10 @@ export namespace TaskComplete {
     return pending.get(sessionID) === false
   }
 
+  export function confirm(sessionID: SessionID) {
+    pending.set(sessionID, false)
+  }
+
   export function reset(sessionID: SessionID) {
     pending.delete(sessionID)
   }
