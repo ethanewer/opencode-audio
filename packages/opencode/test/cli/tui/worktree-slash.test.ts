@@ -268,6 +268,46 @@ describe("/worktree slash command e2e", () => {
     }
   })
 
+  test("session created via workspace header routes to worktree directory", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const app = Server.Default()
+
+    try {
+      const created = await req(app, "/experimental/workspace", {
+        dir: tmp.path,
+        method: "POST",
+        body: JSON.stringify({ type: "worktree", branch: null }),
+      })
+      const ws = await created.json()
+
+      // Create session using header instead of query param (mirrors real SDK POST behavior)
+      const url = new URL("/session", "http://localhost")
+      url.searchParams.set("directory", tmp.path)
+      const sessionRes = await app.request(url.toString(), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-opencode-workspace": ws.id,
+        },
+        body: JSON.stringify({ workspaceID: ws.id }),
+      })
+      expect(sessionRes.status).toBe(200)
+      const session = await sessionRes.json()
+      expect(session.workspaceID).toBe(ws.id)
+      expect(await fs.realpath(session.directory)).toBe(await fs.realpath(ws.directory))
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const { Worktree } = await import("../../../src/worktree")
+          await Worktree.remove({ directory: ws.directory })
+        },
+      })
+    } finally {
+      await Instance.disposeAll()
+    }
+  })
+
   test("multiple sessions in same worktree share workspaceID", async () => {
     await using tmp = await tmpdir({ git: true })
     const app = Server.Default()

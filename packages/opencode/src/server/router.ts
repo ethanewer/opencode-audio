@@ -39,7 +39,7 @@ export const WorkspaceRouterMiddleware: MiddlewareHandler = async (c) => {
   )
 
   const url = new URL(c.req.url)
-  const workspaceParam = url.searchParams.get("workspace")
+  const workspaceParam = url.searchParams.get("workspace") || c.req.header("x-opencode-workspace")
 
   // TODO: If session is being routed, force it to lookup the
   // project/workspace
