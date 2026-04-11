@@ -274,11 +274,11 @@ describe("tool.plan_exit", () => {
 
         expect(ask).toHaveBeenCalledTimes(1)
         expect(result.title).toBe("Switching to build agent")
-        expect(result.output).toContain("Continue by executing the approved plan")
-        expect(result.output).toContain("## Approved Plan:")
+        expect(result.output).toContain("Continue by executing the approved prompt")
+        expect(result.output).toContain("## Approved Build Prompt:")
         expect(msg?.info.agent).toBe("build")
         expect(text(msg)).toContain("Plan mode has ended")
-        expect(text(msg)).toContain("## Approved Plan:")
+        expect(text(msg)).toContain("## Approved Build Prompt:")
         expect(text(msg)).toContain("Ship the feature")
       },
     })
@@ -303,8 +303,8 @@ describe("tool.plan_exit", () => {
         const msg = await plan(session.id)
 
         expect(ask).not.toHaveBeenCalled()
-        expect(result.output).toContain("Plan approved automatically")
-        expect(result.output).toContain("## Approved Plan:")
+        expect(result.output).toContain("Prompt approved automatically")
+        expect(result.output).toContain("## Approved Build Prompt:")
         expect(msg?.info.agent).toBe("build")
         expect(text(msg)).toContain("Implement the approved plan")
       },
@@ -333,6 +333,95 @@ describe("tool.plan_exit", () => {
         expect(result.title).toBe("Switching to voice-build agent")
         expect(msg?.info.agent).toBe("voice-build")
         expect(text(msg)).toContain("Speak the implementation steps")
+      },
+    })
+  })
+
+  test("voice-plan interactive mode shows voice question and hands off to voice-build", async () => {
+    let question = ""
+    const ask = spyOn(QuestionModule.Question, "ask").mockImplementation(async (input) => {
+      question = input.questions[0]?.question ?? ""
+      return { answers: [["Yes"]] }
+    })
+
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const file = Session.plan(session)
+        await fs.mkdir(path.dirname(file), { recursive: true })
+        await Bun.write(file, "Speak the implementation steps")
+        await seed(session.id, "voice-plan")
+
+        const tool = await PlanExitTool.init()
+        const result = await tool.execute({}, ctx(session.id, "voice-plan"))
+        const msg = await plan(session.id)
+
+        expect(ask).toHaveBeenCalledTimes(1)
+        expect(question).toContain("research")
+        expect(result.title).toBe("Switching to voice-build agent")
+        expect(result.output).toContain("## Approved Build Prompt:")
+        expect(msg?.info.agent).toBe("voice-build")
+        expect(text(msg)).toContain("voice-build")
+        expect(text(msg)).toContain("Speak the implementation steps")
+      },
+    })
+  })
+
+  test("writes prompt file and includes plan body in assembled prompt", async () => {
+    process.env.OPENCODE_CLI_PLAN_AUTO_BUILD = "1"
+
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const file = Session.plan(session)
+        await fs.mkdir(path.dirname(file), { recursive: true })
+        await Bun.write(file, "Implement the widget feature")
+        await seed(session.id, "plan")
+
+        const tool = await PlanExitTool.init()
+        await tool.execute({}, ctx(session.id, "plan"))
+
+        const promptFile = Session.buildPrompt(session)
+        const content = await Bun.file(promptFile).text()
+
+        expect(content).toContain("## Approved Plan")
+        expect(content).toContain("Implement the widget feature")
+        expect(content).toContain("## Pre-Commit Verification")
+      },
+    })
+  })
+
+  test("yes with voice context redirects to keep planning", async () => {
+    const ask = spyOn(QuestionModule.Question, "ask").mockResolvedValue({
+      answers: [["Yes (research)"]],
+      context: "also handle the edge case with empty input",
+    })
+
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const file = Session.plan(session)
+        await fs.mkdir(path.dirname(file), { recursive: true })
+        await Bun.write(file, "Build the feature")
+        await seed(session.id, "plan")
+
+        const tool = await PlanExitTool.init()
+        const result = await tool.execute({}, ctx(session.id, "plan"))
+        const msg = await latest(session.id)
+
+        expect(ask).toHaveBeenCalledTimes(1)
+        expect(result.title).toBe("Continuing in plan mode")
+        expect(result.output).toContain("also handle the edge case with empty input")
+        expect(result.metadata?.followup).toBe(true)
+        expect(msg?.info.role).toBe("user")
+        expect(msg?.info.agent).toBe("plan")
+        expect(text(msg)).toContain("also handle the edge case with empty input")
       },
     })
   })

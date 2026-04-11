@@ -241,6 +241,13 @@ export namespace Session {
     return path.join(base, [input.time.created, input.slug].join("-") + ".md")
   }
 
+  export function buildPrompt(input: { slug: string; time: { created: number } }) {
+    const base = Instance.project.vcs
+      ? path.join(Instance.worktree, ".opencode", "prompts")
+      : path.join(Global.Path.data, "prompts")
+    return path.join(base, [input.time.created, input.slug].join("-") + ".md")
+  }
+
   export const getUsage = (input: {
     model: Provider.Model
     usage: LanguageModelV2Usage

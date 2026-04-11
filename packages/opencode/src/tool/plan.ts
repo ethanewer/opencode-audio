@@ -8,6 +8,9 @@ import { MessageV2 } from "../session/message-v2"
 import { Provider } from "../provider/provider"
 import { Instance } from "../project/instance"
 import { type SessionID, MessageID, PartID } from "../session/schema"
+import { detectComplexity, type Complexity } from "../session/complexity"
+import { research } from "../session/research"
+import { assemblePrompt } from "../session/prompt-assembly"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
 
 async function getLastModel(sessionID: SessionID) {
@@ -67,6 +70,18 @@ async function followup(ctx: Tool.Context, model: Awaited<ReturnType<typeof getL
   } satisfies MessageV2.TextPart)
 }
 
+async function writeFile(filepath: string, content: string) {
+  const { mkdir } = await import("fs/promises")
+  await mkdir(path.dirname(filepath), { recursive: true })
+  await Bun.write(filepath, content)
+}
+
+function parseComplexity(answer: string): Complexity | undefined {
+  if (!answer.startsWith("Yes")) return undefined
+  if (answer.includes("research")) return "complex"
+  return "simple"
+}
+
 export const PlanExitTool = Tool.define("plan_exit", {
   description: EXIT_DESCRIPTION,
   parameters: z.object({}),
@@ -78,18 +93,22 @@ export const PlanExitTool = Tool.define("plan_exit", {
     }
 
     const session = await Session.get(ctx.sessionID)
-    const file = Session.plan(session)
-    const rel = path.relative(Instance.worktree, file)
-    const body = await Bun.file(file)
+    const planFile = Session.plan(session)
+    const planRel = path.relative(Instance.worktree, planFile)
+    const body = await Bun.file(planFile)
       .text()
       .then((x) => x.trim())
       .catch(() => "")
     if (!body) {
-      throw new Error(`No finalized plan found at ${rel}. Write the plan to that file before calling plan_exit.`)
+      throw new Error(`No finalized plan found at ${planRel}. Write the plan to that file before calling plan_exit.`)
     }
+
     const mode = await target(ctx.sessionID, ctx.agent)
     const auto = process.env.OPENCODE_CLI_PLAN_AUTO_BUILD === "1"
     const model = await getLastModel(ctx.sessionID)
+    const detected = detectComplexity(body)
+
+    let complexity: Complexity = detected
 
     if (!auto) {
       const result = await Question.ask({
@@ -98,20 +117,36 @@ export const PlanExitTool = Tool.define("plan_exit", {
           {
             question:
               ctx.agent === "voice-plan"
-                ? `Plan is complete. Would you like to start implementing?`
-                : `Plan at ${rel} is complete. Would you like to switch to the ${mode} agent and start implementing?`,
-            header: "Build Agent",
+                ? `Plan is complete. Say yes to approve, research to explore the codebase first, or give feedback to keep planning.`
+                : `Plan at ${planRel} is complete. Approve to start implementing, or keep planning.`,
+            header: "Approve Plan",
             options: [
-              { label: "Yes", description: `Switch to ${mode} agent and start implementing the plan` },
-              { label: "Keep planning", description: "Stay in plan mode and continue refining the plan" },
+              { label: "Yes", description: "Approve and start building" },
+              { label: "Yes (research)", description: "Approve with codebase research first" },
+              { label: "Keep planning", description: "Continue refining the plan" },
             ],
           },
         ],
         tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
       })
 
-      const answer = result.answers[0]?.[0]?.trim()
-      if (answer !== "Yes") {
+      const answer = result.answers[0]?.[0]?.trim() ?? ""
+
+      if (answer.startsWith("Yes") && result.context) {
+        const text = [
+          "The user wants to stay in plan mode and provided this feedback:",
+          result.context,
+        ].join("\n\n")
+        await followup(ctx, model, text)
+        return {
+          title: "Continuing in plan mode",
+          output: text,
+          metadata: { followup: true, handoff: false },
+        }
+      }
+
+      const parsed = parseComplexity(answer)
+      if (!parsed) {
         const parts: string[] = []
         if (!answer || answer === "Keep planning") {
           parts.push("The user wants to stay in plan mode. Continue refining the plan.")
@@ -129,45 +164,72 @@ export const PlanExitTool = Tool.define("plan_exit", {
           metadata: { followup: true, handoff: false },
         }
       }
+
+      complexity = parsed
     }
 
-    const userMsg: MessageV2.User = {
-      id: MessageID.ascending(),
-      sessionID: ctx.sessionID,
-      role: "user",
-      time: {
-        created: Date.now(),
-      },
-      agent: mode,
-      model,
-    }
-    await Session.updateMessage(userMsg)
-    await Session.updatePart({
-      id: PartID.ascending(),
-      messageID: userMsg.id,
-      sessionID: ctx.sessionID,
-      type: "text",
-      text: [
-        `Plan mode has ended. The plan at ${rel} has been approved. Switch to the ${mode} agent, you can now edit files, and execute the approved plan.`,
-        `Plan file: ${file}`,
-        [`## Approved Plan:`, body].join("\n"),
-      ].join("\n\n"),
-      synthetic: true,
-    } satisfies MessageV2.TextPart)
+    // --- Pipeline: research + assembly + handoff ---
 
-    return {
-      title: `Switching to ${mode} agent`,
-      output: [
-        auto
-          ? `Plan approved automatically for this CLI run. Continue by executing the approved plan with the ${mode} agent.`
-          : `User approved switching to ${mode} agent. Continue by executing the approved plan.`,
-        `Plan file: ${file}`,
-        [`## Approved Plan:`, body].join("\n"),
-      ].join("\n\n"),
-      metadata: { handoff: true, followup: false },
+    const promptFile = Session.buildPrompt(session)
+    const promptRel = path.relative(Instance.worktree, promptFile)
+
+    let findings: string[] = []
+    if (complexity === "complex") {
+      findings = await research(ctx, body, complexity)
     }
+
+    const prompt = assemblePrompt(body, findings)
+    await writeFile(promptFile, prompt)
+
+    return handoff(ctx, mode, model, promptFile, promptRel, prompt, auto)
   },
 })
+
+async function handoff(
+  ctx: Tool.Context,
+  mode: string,
+  model: Awaited<ReturnType<typeof getLastModel>>,
+  promptFile: string,
+  promptRel: string,
+  prompt: string,
+  auto: boolean,
+) {
+  const userMsg: MessageV2.User = {
+    id: MessageID.ascending(),
+    sessionID: ctx.sessionID,
+    role: "user",
+    time: {
+      created: Date.now(),
+    },
+    agent: mode,
+    model,
+  }
+  await Session.updateMessage(userMsg)
+  await Session.updatePart({
+    id: PartID.ascending(),
+    messageID: userMsg.id,
+    sessionID: ctx.sessionID,
+    type: "text",
+    text: [
+      `Plan mode has ended. The build prompt at ${promptRel} has been approved. Switch to the ${mode} agent, you can now edit files, and execute the approved prompt.`,
+      `Prompt file: ${promptFile}`,
+      ["## Approved Build Prompt:", prompt].join("\n"),
+    ].join("\n\n"),
+    synthetic: true,
+  } satisfies MessageV2.TextPart)
+
+  return {
+    title: `Switching to ${mode} agent`,
+    output: [
+      auto
+        ? `Prompt approved automatically for this CLI run. Continue by executing the approved prompt with the ${mode} agent.`
+        : `User approved switching to ${mode} agent. Continue by executing the approved prompt.`,
+      `Prompt file: ${promptFile}`,
+      ["## Approved Build Prompt:", prompt].join("\n"),
+    ].join("\n\n"),
+    metadata: { handoff: true, followup: false },
+  }
+}
 
 /*
 export const PlanEnterTool = Tool.define("plan_enter", {

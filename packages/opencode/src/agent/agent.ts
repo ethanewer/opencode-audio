@@ -148,7 +148,6 @@ export namespace Agent {
                     "*.env.example": "allow",
                   },
                   webfetch: "allow",
-                  speak: "allow",
                   doom_loop: "ask",
                   question: "allow",
                   plan_exit: "allow",
@@ -159,11 +158,15 @@ export namespace Agent {
                   },
                   external_directory: {
                     [path.join(Global.Path.data, "plans", "*")]: "allow",
+                    [path.join(Global.Path.data, "prompts", "*")]: "allow",
                   },
                   edit: {
                     "*": "deny",
                     [path.join(".opencode", "plans", "*.md")]: "allow",
+                    [path.join(".opencode", "prompts", "*.md")]: "allow",
                     [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]:
+                      "allow",
+                    [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("prompts", "*.md")))]:
                       "allow",
                   },
                   bash: {
@@ -340,11 +343,15 @@ export namespace Agent {
                   },
                   external_directory: {
                     [path.join(Global.Path.data, "plans", "*")]: "allow",
+                    [path.join(Global.Path.data, "prompts", "*")]: "allow",
                   },
                   edit: {
                     "*": "deny",
                     [path.join(".opencode", "plans", "*.md")]: "allow",
+                    [path.join(".opencode", "prompts", "*.md")]: "allow",
                     [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]:
+                      "allow",
+                    [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("prompts", "*.md")))]:
                       "allow",
                   },
                   bash: {
