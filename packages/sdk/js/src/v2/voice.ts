@@ -524,10 +524,16 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
       const res = await client.provider.list()
       if (res.data) {
         const provider = res.data.all.find((p) => p.id === model.providerID)
-        const info = provider?.models[model.modelID]
-        if (info?.modalities) {
-          if (options.nativeAudioInput === undefined) sendAudio = info.modalities.input.includes("audio")
-          if (options.nativeAudioOutput === undefined) receiveAudio = info.modalities.output.includes("audio")
+        const info = provider?.models[model.modelID] as Record<string, any> | undefined
+        const modalities = info?.modalities ?? info?.capabilities
+        if (modalities) {
+          const hasInput =
+            modalities.input?.audio === true || (Array.isArray(modalities.input) && modalities.input.includes("audio"))
+          const hasOutput =
+            modalities.output?.audio === true ||
+            (Array.isArray(modalities.output) && modalities.output.includes("audio"))
+          if (options.nativeAudioInput === undefined) sendAudio = hasInput
+          if (options.nativeAudioOutput === undefined) receiveAudio = hasOutput
         }
       }
     } catch {

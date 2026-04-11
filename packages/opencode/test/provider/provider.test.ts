@@ -2288,19 +2288,20 @@ test("cloudflare-ai-gateway forwards config metadata options", async () => {
   })
 })
 
-test("openai audio model does not get modalities injected for Responses API requests", async () => {
+test("openai audio model uses Chat Completions API with modalities injected", async () => {
   const captured: any[] = []
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
       const body = await req.json()
       captured.push(body)
+      // Audio interceptor forces non-streaming and expects Chat Completions response
       return Response.json({
-        id: "resp_test",
-        object: "response",
+        id: "chatcmpl-test",
+        object: "chat.completion",
         model: body.model,
-        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] }],
-        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
       })
     },
   })
@@ -2355,8 +2356,12 @@ test("openai audio model does not get modalities injected for Responses API requ
 
         expect(captured.length).toBeGreaterThan(0)
         const body = captured[0]
-        expect(body.modalities).toBeUndefined()
-        expect(body.audio).toBeUndefined()
+        // Audio models should use Chat Completions API with modalities injected
+        expect(body.messages).toBeDefined()
+        expect(body.input).toBeUndefined()
+        expect(body.modalities).toEqual(["text", "audio"])
+        expect(body.audio).toBeDefined()
+        expect(body.stream).toBeUndefined()
       },
     })
   } finally {
