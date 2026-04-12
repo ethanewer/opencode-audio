@@ -96,9 +96,15 @@ export namespace ToolRegistry {
           if (matches.length) yield* config.waitForDependencies()
           for (const match of matches) {
             const namespace = path.basename(match, path.extname(match))
-            const mod = yield* Effect.promise(
-              () => import(process.platform === "win32" ? match : pathToFileURL(match).href),
-            )
+            const mod = yield* Effect.promise(async () => {
+              try {
+                return await import(process.platform === "win32" ? match : pathToFileURL(match).href)
+              } catch (err) {
+                log.warn("failed to load tool", { path: match, error: String(err) })
+                return undefined
+              }
+            })
+            if (!mod) continue
             for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
               custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
             }
