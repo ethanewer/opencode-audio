@@ -13,6 +13,7 @@ import { Flag } from "@/flag/flag"
 import { setTimeout as sleep } from "node:timers/promises"
 import { writeHeapSnapshot } from "node:v8"
 import { WorkspaceID } from "@/control-plane/schema"
+import { Workspace } from "@/control-plane/workspace"
 import { classify as classifyAudio, classifyMulti as classifyAudioMulti } from "@/audio/classify"
 import { transcribe as transcribeBytes } from "@/audio/transcribe"
 import { Provider } from "@/provider/provider"
@@ -156,7 +157,16 @@ export const rpc = {
     await Config.invalidate(true)
   },
   async setWorkspace(input: { workspaceID?: string }) {
-    startEventStream({ directory: process.cwd(), workspaceID: input.workspaceID })
+    let dir = process.cwd()
+    if (input.workspaceID) {
+      const ws = await Instance.provide({
+        directory: process.cwd(),
+        init: InstanceBootstrap,
+        fn: () => Workspace.get(WorkspaceID.make(input.workspaceID!)),
+      })
+      if (ws?.directory) dir = ws.directory
+    }
+    startEventStream({ directory: dir })
   },
   async classify(input: {
     providerID: string
