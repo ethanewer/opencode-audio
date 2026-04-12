@@ -13,9 +13,14 @@ function View(props: { api: TuiPluginApi }) {
   )
   const done = createMemo(() => props.api.kv.get("dismissed_getting_started", false))
   const show = createMemo(() => !has() && !done())
+  const ws = createMemo(() => {
+    const id = props.api.workspace.current()
+    if (!id) return
+    return props.api.state.workspace.get(id)
+  })
   const path = createMemo(() => {
-    const dir = props.api.state.path.directory || process.cwd()
-    const out = dir.replace(Global.Path.home, "~")
+    const base = ws() ? process.cwd() : props.api.state.path.directory || process.cwd()
+    const out = base.replace(Global.Path.home, "~")
     const text = props.api.state.vcs?.branch ? out + ":" + props.api.state.vcs.branch : out
     const list = text.split("/")
     return {
@@ -59,10 +64,13 @@ function View(props: { api: TuiPluginApi }) {
           </box>
         </box>
       </Show>
-      <text>
-        <span style={{ fg: theme().textMuted }}>{path().parent}/</span>
-        <span style={{ fg: theme().text }}>{path().name}</span>
-      </text>
+      <box flexDirection="row" gap={1}>
+        <text>
+          <span style={{ fg: theme().textMuted }}>{path().parent}/</span>
+          <span style={{ fg: theme().text }}>{path().name}</span>
+        </text>
+        <Show when={ws()}>{(w) => <text fg={theme().accent}>[{w().name ?? w().id}]</text>}</Show>
+      </box>
       <text fg={theme().textMuted}>
         <span style={{ fg: theme().success }}>•</span> <b>Open</b>
         <span style={{ fg: theme().text }}>

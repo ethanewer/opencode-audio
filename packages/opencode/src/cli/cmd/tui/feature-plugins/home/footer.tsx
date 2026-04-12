@@ -6,15 +6,29 @@ const id = "internal:home-footer"
 
 function Directory(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
+  const ws = createMemo(() => {
+    const id = props.api.workspace.current()
+    if (!id) return
+    return props.api.state.workspace.get(id)
+  })
   const dir = createMemo(() => {
-    const dir = props.api.state.path.directory || process.cwd()
-    const out = dir.replace(Global.Path.home, "~")
+    const base = ws() ? process.cwd() : props.api.state.path.directory || process.cwd()
+    const out = base.replace(Global.Path.home, "~")
     const branch = props.api.state.vcs?.branch
     if (branch) return out + ":" + branch
     return out
   })
 
-  return <text fg={theme().textMuted}>{dir()}</text>
+  return (
+    <Show when={ws()} fallback={<text fg={theme().textMuted}>{dir()}</text>}>
+      {(w) => (
+        <text>
+          <span style={{ fg: theme().textMuted }}>{dir()} </span>
+          <span style={{ fg: theme().accent }}>[{w().name ?? w().id}]</span>
+        </text>
+      )}
+    </Show>
+  )
 }
 
 function Mcp(props: { api: TuiPluginApi }) {
