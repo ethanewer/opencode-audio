@@ -1897,9 +1897,12 @@ function Bash(props: ToolProps<typeof BashTool>) {
   const isRunning = createMemo(() => props.part.state.status === "running")
   const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
   const userShell = createMemo(() => !!(props.metadata as Record<string, any>).userShell)
-  const [expanded, setExpanded] = createSignal(userShell())
+  const [expanded, setExpanded] = createSignal(false)
+  createEffect(() => {
+    if (userShell()) setExpanded(true)
+  })
   const lines = createMemo(() => output().split("\n"))
-  const compressed = createMemo(() => !userShell() && ctx.tui?.shell_view !== "expanded")
+  const compressed = createMemo(() => ctx.tui?.shell_view !== "expanded")
 
   const overflow = createMemo(() => lines().length > 10)
   const limited = createMemo(() => {

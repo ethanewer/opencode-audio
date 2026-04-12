@@ -42,6 +42,7 @@ async function capturePane(name: string) {
 
 const MARKER_OUTPUT_RE = new RegExp(`${MARKER}\\d+__`)
 const CHO_ERROR_RE = /command not found:\s*cho\b/
+const TRAILING_PROMPT_RE = /^(\S+@\S+[\s:].*?)?[%$#>]\s*$/
 
 function filterMarkers(text: string) {
   return text
@@ -53,6 +54,12 @@ function filterMarkers(text: string) {
       return true
     })
     .join("\n")
+}
+
+function stripPrompt(text: string) {
+  const lines = text.split("\n")
+  while (lines.length > 0 && TRAILING_PROMPT_RE.test(lines[lines.length - 1]!)) lines.pop()
+  return lines.join("\n")
 }
 
 function delta(prior: string, current: string) {
@@ -141,7 +148,7 @@ export namespace Tmux {
         const pane = await capturePane(state.name)
         if (pane.split("\n").some((line) => line.includes(marker) && !MARKER_ECHO_RE.test(line))) break
         if (update) {
-          update(filterMarkers(delta(before, pane)))
+          update(stripPrompt(filterMarkers(delta(before, pane))))
         }
         await Bun.sleep(500)
       }
@@ -150,7 +157,7 @@ export namespace Tmux {
     const after = await capturePane(state.name)
     const raw = delta(state.prior, after)
     state.prior = after
-    return filterMarkers(raw)
+    return stripPrompt(filterMarkers(raw))
   }
 
   export async function capture(id: string) {
