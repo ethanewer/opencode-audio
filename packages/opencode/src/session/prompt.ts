@@ -26,7 +26,7 @@ import { LSP } from "../lsp"
 import { ReadTool } from "../tool/read"
 import { FileTime } from "../file/time"
 import { ulid } from "ulid"
-import { spawn } from "child_process"
+
 import { Command } from "../command"
 import { Eval } from "./eval"
 import { Todo } from "./todo"
@@ -846,7 +846,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
           id: PartID.ascending(),
           messageID: userMsg.id,
           sessionID: input.sessionID,
-          text: "The following tool was executed by the user",
+          text: "The following tool was executed by the user in the shared terminal session",
           synthetic: true,
         }
         yield* sessions.updatePart(userPart)
@@ -881,87 +881,15 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
         }
         yield* sessions.updatePart(part)
 
-        const sh = Shell.preferred()
-        const shellName = (
-          process.platform === "win32" ? path.win32.basename(sh, ".exe") : path.basename(sh)
-        ).toLowerCase()
-        const invocations: Record<string, { args: string[] }> = {
-          nu: { args: ["-c", input.command] },
-          fish: { args: ["-c", input.command] },
-          zsh: {
-            args: [
-              "-c",
-              "-l",
-              `
-                [[ -f ~/.zshenv ]] && source ~/.zshenv >/dev/null 2>&1 || true
-                [[ -f "\${ZDOTDIR:-$HOME}/.zshrc" ]] && source "\${ZDOTDIR:-$HOME}/.zshrc" >/dev/null 2>&1 || true
-                eval ${JSON.stringify(input.command)}
-              `,
-            ],
-          },
-          bash: {
-            args: [
-              "-c",
-              "-l",
-              `
-                shopt -s expand_aliases
-                [[ -f ~/.bashrc ]] && source ~/.bashrc >/dev/null 2>&1 || true
-                eval ${JSON.stringify(input.command)}
-              `,
-            ],
-          },
-          cmd: { args: ["/c", input.command] },
-          powershell: { args: ["-NoProfile", "-Command", input.command] },
-          pwsh: { args: ["-NoProfile", "-Command", input.command] },
-          "": { args: ["-c", `${input.command}`] },
-        }
-
-        const args = (invocations[shellName] ?? invocations[""]).args
         const cwd = ctx.directory
-        const shellEnv = yield* plugin.trigger(
-          "shell.env",
-          { cwd, sessionID: input.sessionID, callID: part.callID },
-          { env: {} },
-        )
-        const proc = yield* Effect.sync(() =>
-          spawn(sh, args, {
-            cwd,
-            detached: process.platform !== "win32",
-            windowsHide: process.platform === "win32",
-            stdio: ["ignore", "pipe", "pipe"],
-            env: {
-              ...process.env,
-              ...shellEnv.env,
-              TERM: "dumb",
-            },
-          }),
-        )
-
         let output = ""
-        const write = () => {
-          if (part.state.status !== "running") return
-          part.state.metadata = { output, description: "" }
-          void Effect.runFork(sessions.updatePart(part))
-        }
-
-        proc.stdout?.on("data", (chunk) => {
-          output += chunk.toString()
-          write()
-        })
-        proc.stderr?.on("data", (chunk) => {
-          output += chunk.toString()
-          write()
-        })
-
         let aborted = false
-        let exited = false
         let finished = false
-        const kill = Effect.promise(() => Shell.killTree(proc, { exited: () => exited }))
 
         const abortHandler = () => {
           if (aborted) return
           aborted = true
-          void Effect.runFork(kill)
+          Tmux.execute(input.sessionID, cwd, [{ keystrokes: "C-c", duration: 0.5 }]).catch(() => {})
         }
 
         const finish = Effect.uninterruptible(
@@ -981,7 +909,7 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                 time: { ...part.state.time, end: Date.now() },
                 input: part.state.input,
                 title: "",
-                metadata: { output, description: "" },
+                metadata: { output, description: "", userShell: true },
                 output,
               }
               yield* sessions.updatePart(part)
@@ -992,13 +920,19 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
         const exit = yield* Effect.promise(() => {
           signal.addEventListener("abort", abortHandler, { once: true })
           if (signal.aborted) abortHandler()
-          return new Promise<void>((resolve) => {
-            const close = () => {
-              exited = true
-              proc.off("close", close)
-              resolve()
-            }
-            proc.once("close", close)
+
+          return Tmux.execute(
+            input.sessionID,
+            cwd,
+            [{ keystrokes: input.command + "\n", duration: 120 }],
+            (partial) => {
+              if (part.state.status !== "running") return
+              output = partial
+              part.state.metadata = { output: partial, description: "", userShell: true }
+              void Effect.runFork(sessions.updatePart(part))
+            },
+          ).then((result) => {
+            output = result
           })
         }).pipe(
           Effect.onInterrupt(() => Effect.sync(abortHandler)),
