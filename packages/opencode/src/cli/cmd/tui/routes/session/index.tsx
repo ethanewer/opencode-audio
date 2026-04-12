@@ -1896,9 +1896,10 @@ function Bash(props: ToolProps<typeof BashTool>) {
   const { theme } = useTheme()
   const isRunning = createMemo(() => props.part.state.status === "running")
   const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
-  const [expanded, setExpanded] = createSignal(false)
+  const userShell = createMemo(() => !!(props.metadata as Record<string, any>).userShell)
+  const [expanded, setExpanded] = createSignal(userShell())
   const lines = createMemo(() => output().split("\n"))
-  const compressed = createMemo(() => ctx.tui?.shell_view !== "expanded")
+  const compressed = createMemo(() => !userShell() && ctx.tui?.shell_view !== "expanded")
 
   const overflow = createMemo(() => lines().length > 10)
   const limited = createMemo(() => {
@@ -1939,7 +1940,7 @@ function Bash(props: ToolProps<typeof BashTool>) {
           <box gap={1}>
             <text fg={theme.text}>$ {props.input.command}</text>
             <Show when={output()}>
-              <text fg={theme.text}>{limited()}</text>
+              <text fg={theme.textMuted}>{limited()}</text>
             </Show>
             <Show when={overflow()}>
               <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
