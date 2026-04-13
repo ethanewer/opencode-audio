@@ -2,31 +2,117 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PATH="${HOME}/.bun/bin:${PATH}"
 
 # Check for bun
 if ! command -v bun >/dev/null 2>&1; then
-  echo "bun is not installed. Installing via Homebrew..."
-  if ! command -v brew >/dev/null 2>&1; then
-    echo "Error: Homebrew is not installed. Install it from https://brew.sh"
-    exit 1
+  case "$(uname -s)" in
+    Darwin*)
+      echo "bun is not installed. Installing via Homebrew..."
+      if ! command -v brew >/dev/null 2>&1; then
+        echo "Error: Homebrew is not installed. Install it from https://brew.sh"
+        exit 1
+      fi
+      brew install oven-sh/bun/bun
+      ;;
+    Linux*)
+      echo "bun is not installed. Installing via https://bun.sh ..."
+      if ! command -v curl >/dev/null 2>&1; then
+        echo "Error: curl is required to install bun on Linux."
+        exit 1
+      fi
+      curl -fsSL https://bun.sh/install | bash
+      ;;
+    *)
+      echo "Error: Unsupported OS ($(uname -s)). Install bun from https://bun.sh and re-run."
+      exit 1
+      ;;
+  esac
+fi
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "Error: bun is still not on PATH after install. Add ~/.bun/bin to PATH and re-run."
+  exit 1
+fi
+
+# Same inputs as packages/opencode/script/build.ts (process.platform / process.arch), not uname — matches the
+# dist/ folder Bun actually writes (including Rosetta terminals where uname can disagree with the Bun binary).
+os=$(bun -e 'const p = process.platform; if (p === "darwin") console.log("darwin"); else if (p === "linux") console.log("linux"); else process.exit(1)')
+arch=$(bun -e 'console.log(process.arch === "arm64" ? "arm64" : "x64")')
+
+# Match build.ts + install.sh: x64 builds default to AVX2; CPUs without it need -baseline.
+baseline=false
+if [[ "$arch" == "x64" ]]; then
+  if [[ "$os" == "linux" ]] && ! grep -qwi avx2 /proc/cpuinfo 2>/dev/null; then
+    baseline=true
   fi
-  brew install oven-sh/bun/bun
+  if [[ "$os" == "darwin" ]]; then
+    avx2=$(sysctl -n hw.optional.avx2_0 2>/dev/null || echo 0)
+    if [[ "$avx2" != "1" ]]; then
+      baseline=true
+    fi
+  fi
+fi
+
+# Voice (record.ts / speak.ts): need ffmpeg and ffplay on PATH.
+if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffplay >/dev/null 2>&1; then
+  echo "Installing ffmpeg (voice input/output; includes ffplay)..."
+  case "$(uname -s)" in
+    Darwin*)
+      if ! command -v brew >/dev/null 2>&1; then
+        echo "Error: Homebrew is required on macOS to install ffmpeg. Install from https://brew.sh then re-run."
+        exit 1
+      fi
+      brew install ffmpeg
+      ;;
+    Linux*)
+      if command -v brew >/dev/null 2>&1; then
+        brew install ffmpeg
+      elif command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update -qq
+        sudo apt-get install -y ffmpeg
+      elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y ffmpeg
+      elif command -v yum >/dev/null 2>&1; then
+        sudo yum install -y ffmpeg
+      elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -Sy --noconfirm ffmpeg
+      elif command -v zypper >/dev/null 2>&1; then
+        sudo zypper install -y ffmpeg
+      elif command -v apk >/dev/null 2>&1; then
+        sudo apk add ffmpeg
+      else
+        echo "Error: Could not install ffmpeg automatically. Install the ffmpeg package for your distro, then re-run."
+        exit 1
+      fi
+      ;;
+    *)
+      echo "Error: Unsupported OS for automatic ffmpeg install."
+      exit 1
+      ;;
+  esac
+fi
+
+if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffplay >/dev/null 2>&1; then
+  echo "Error: ffmpeg and ffplay must be on PATH after install."
+  exit 1
 fi
 
 echo "Installing dependencies..."
 bun install --cwd "$REPO_DIR"
 
 echo "Building opencode..."
-bun run --cwd "$REPO_DIR/packages/opencode" build -- --single --skip-install
-
-# Find the compiled binary
-arch=$(uname -m)
-if [[ "$arch" == "arm64" || "$arch" == "aarch64" ]]; then
-  arch="arm64"
+if [[ "$baseline" == true ]]; then
+  bun run --cwd "$REPO_DIR/packages/opencode" build -- --single --skip-install --baseline
 else
-  arch="x64"
+  bun run --cwd "$REPO_DIR/packages/opencode" build -- --single --skip-install
 fi
-bin="$REPO_DIR/packages/opencode/dist/opencode-darwin-${arch}/bin/opencode"
+
+name="opencode-${os}-${arch}"
+if [[ "$baseline" == true ]]; then
+  name="${name}-baseline"
+fi
+bin="$REPO_DIR/packages/opencode/dist/${name}/bin/opencode"
 
 if [[ ! -f "$bin" ]]; then
   echo "Error: Build did not produce expected binary at $bin"
@@ -34,11 +120,17 @@ if [[ ! -f "$bin" ]]; then
 fi
 
 echo "Installing opencode binary..."
-"$REPO_DIR/install" --binary "$bin" --no-modify-path
+"$REPO_DIR/install" --binary "$bin" --no-modify-path "$@"
+
+export PATH="${HOME}/.opencode/bin:${PATH}"
 
 echo ""
-echo "Done! opencode has been installed to ~/.opencode/bin/opencode"
-if [[ ":$PATH:" != *":$HOME/.opencode/bin:"* ]]; then
-  echo "Make sure ~/.opencode/bin is in your PATH:"
-  echo "  export PATH=\$HOME/.opencode/bin:\$PATH"
+if command -v opencode >/dev/null 2>&1; then
+  echo "Smoke test: $(opencode --version)"
+else
+  echo "Installed to ~/.opencode/bin/opencode (open a new terminal or: export PATH=\"\$HOME/.opencode/bin:\$PATH\")"
 fi
+
+echo ""
+echo "Done! Run opencode in a project directory to open the TUI."
+echo "This shell has ~/.opencode/bin on PATH for the rest of the session (open a new terminal otherwise)."
