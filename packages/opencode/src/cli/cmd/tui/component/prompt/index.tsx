@@ -1355,7 +1355,7 @@ export function Prompt(props: PromptProps) {
                     props.cancelSpeech?.()
                     return
                   }
-                  if (e.name === "space" && (e.shift || e.ctrl)) {
+                  if ((e.name === "space" || e.name === " ") && (e.shift || e.ctrl)) {
                     e.preventDefault()
                     if (voice.transcribing()) return
                     if (voice.recording()) {
@@ -1365,7 +1365,7 @@ export function Prompt(props: PromptProps) {
                     }
                     return
                   }
-                  if (e.name === "space") {
+                  if (e.name === "space" || e.name === " ") {
                     e.preventDefault()
                     if (voice.transcribing()) return
                     voice.toggle()

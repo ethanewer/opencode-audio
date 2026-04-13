@@ -289,7 +289,7 @@ function PermissionTriVoicePrompt(props: {
         setVoiced(false)
         return
       }
-      if (evt.name === "space") {
+      if (evt.name === "space" || evt.name === " ") {
         evt.preventDefault()
         if (classifying()) return
         voice.toggle()
@@ -830,12 +830,12 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         setVoiced(false)
         return
       }
-      if (evt.name === "space" && (evt.shift || evt.ctrl)) {
+      if ((evt.name === "space" || evt.name === " ") && (evt.shift || evt.ctrl)) {
         evt.preventDefault()
         if (voice.recording()) voice.finish()
         return
       }
-      if (evt.name === "space") {
+      if (evt.name === "space" || evt.name === " ") {
         evt.preventDefault()
         voice.toggle()
         return
