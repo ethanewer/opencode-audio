@@ -216,12 +216,10 @@ describe("cli.run", () => {
     expect(seen.rules.some((item) => item.permission === "plan_exit")).toBe(false)
   })
 
-  test("auto-handoffs explicit voice-plan runs without changing the voice agent", async () => {
+  test("rejects voice agents in headless mode", async () => {
     const seen = await call({ agent: "voice-plan" })
 
-    expect(seen.agent).toBe("voice-plan")
-    expect(seen.auto).toBe("1")
-    expect(seen.rules.some((item) => item.permission === "plan_exit")).toBe(false)
+    expect(seen.exit).toBe(1)
   })
 
   test("does not redirect continued sessions into plan mode by default", async () => {

@@ -8,6 +8,7 @@ export const SpeakTool = Tool.define("speak", {
   description: DESCRIPTION,
   parameters: z.object({
     text: z.string().describe("The text to speak aloud to the user"),
+    wait: z.boolean().optional().describe("Set true when asking a question. Pauses until the user responds."),
   }),
   async execute(params) {
     const cfg = await Config.get()
@@ -24,8 +25,8 @@ export const SpeakTool = Tool.define("speak", {
 
     return {
       title: "speak",
-      output: "Speaking.",
-      metadata: { truncated: false },
+      output: params.wait ? "Speaking. Waiting for user response." : "Speaking.",
+      metadata: { truncated: false, wait: params.wait === true },
     }
   },
 })

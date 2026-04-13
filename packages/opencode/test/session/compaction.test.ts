@@ -149,6 +149,8 @@ function fake(
         state: { status: "pending", input: {}, raw: "" },
       }
     },
+    handoffTarget: undefined,
+    waiting: false,
     process: Effect.fn("TestSessionProcessor.process")(() => Effect.succeed(result)),
   } satisfies SessionProcessorModule.SessionProcessor.Handle
 }

@@ -270,16 +270,19 @@ describe("tool.plan_exit", () => {
 
         const tool = await PlanExitTool.init()
         const result = await tool.execute({}, ctx(session.id, "plan"))
-        const msg = await plan(session.id)
 
         expect(ask).toHaveBeenCalledTimes(1)
         expect(result.title).toBe("Switching to build agent")
-        expect(result.output).toContain("Continue by executing the approved plan")
-        expect(result.output).toContain("## Approved Plan:")
-        expect(msg?.info.agent).toBe("build")
-        expect(text(msg)).toContain("Plan mode has ended")
-        expect(text(msg)).toContain("## Approved Plan:")
-        expect(text(msg)).toContain("Ship the feature")
+        expect(result.metadata?.handoff).toBe(true)
+        expect(result.metadata?.sessionID).toBeDefined()
+
+        // Verify a new session was created with the plan as the first message
+        const sid = SessionID.make(result.metadata!.sessionID as string)
+        const msgs = await Session.messages({ sessionID: sid })
+        const first = msgs[0]
+        expect(first?.info.role).toBe("user")
+        expect(first?.info.agent).toBe("build")
+        expect(text(first)).toBe("Ship the feature")
       },
     })
   })
@@ -300,13 +303,17 @@ describe("tool.plan_exit", () => {
 
         const tool = await PlanExitTool.init()
         const result = await tool.execute({}, ctx(session.id, "plan"))
-        const msg = await plan(session.id)
 
         expect(ask).not.toHaveBeenCalled()
         expect(result.output).toContain("Plan approved automatically")
-        expect(result.output).toContain("## Approved Plan:")
-        expect(msg?.info.agent).toBe("build")
-        expect(text(msg)).toContain("Implement the approved plan")
+        expect(result.metadata?.handoff).toBe(true)
+        expect(result.metadata?.sessionID).toBeDefined()
+
+        const sid = SessionID.make(result.metadata!.sessionID as string)
+        const msgs = await Session.messages({ sessionID: sid })
+        const first = msgs[0]
+        expect(first?.info.agent).toBe("build")
+        expect(text(first)).toBe("Implement the approved plan")
       },
     })
   })
@@ -327,17 +334,21 @@ describe("tool.plan_exit", () => {
 
         const tool = await PlanExitTool.init()
         const result = await tool.execute({}, ctx(session.id, "voice-plan"))
-        const msg = await plan(session.id)
 
         expect(ask).not.toHaveBeenCalled()
         expect(result.title).toBe("Switching to voice-build agent")
-        expect(msg?.info.agent).toBe("voice-build")
-        expect(text(msg)).toContain("Speak the implementation steps")
+        expect(result.metadata?.handoff).toBe(true)
+
+        const sid = SessionID.make(result.metadata!.sessionID as string)
+        const msgs = await Session.messages({ sessionID: sid })
+        const first = msgs[0]
+        expect(first?.info.agent).toBe("voice-build")
+        expect(text(first)).toBe("Speak the implementation steps")
       },
     })
   })
 
-  test("restores the previous non-plan agent when exiting plan mode", async () => {
+  test("always creates a build session regardless of prior agent", async () => {
     process.env.OPENCODE_CLI_PLAN_AUTO_BUILD = "1"
 
     await using tmp = await tmpdir({
@@ -360,11 +371,15 @@ describe("tool.plan_exit", () => {
 
         const tool = await PlanExitTool.init()
         const result = await tool.execute({}, ctx(session.id, "plan"))
-        const msg = await plan(session.id)
 
-        expect(result.title).toBe("Switching to qa agent")
-        expect(text(msg)).toContain("Switch to the qa agent")
-        expect(msg?.info.agent).toBe("qa")
+        expect(result.title).toBe("Switching to build agent")
+        expect(result.metadata?.handoff).toBe(true)
+
+        const sid = SessionID.make(result.metadata!.sessionID as string)
+        const msgs = await Session.messages({ sessionID: sid })
+        const first = msgs[0]
+        expect(first?.info.agent).toBe("build")
+        expect(text(first)).toBe("Validate the rollout")
       },
     })
   })
@@ -446,21 +461,22 @@ describe("tool.plan_exit", () => {
           const result = await SessionPrompt.loop({ sessionID: session.id })
           const msgs = await Session.messages({ sessionID: session.id })
           const turn = msgs.find((item) => item.info.role === "assistant" && item.info.agent === "plan")
-          const handoff = msgs.find(
-            (item) =>
-              item.info.role === "user" &&
-              item.info.agent === "build" &&
-              item.parts.some((part) => part.type === "text" && part.synthetic),
-          )
-          const next = JSON.stringify(server.hits()[1])
 
+          // The result is from the build session (new session)
           expect(server.hits()).toHaveLength(3)
           expect(result.info.role).toBe("assistant")
+          expect(result.info.sessionID).not.toBe(session.id)
           expect(turn && turn.info.role === "assistant" ? turn.info.finish : undefined).toBe("tool-calls")
-          expect(handoff?.info.agent).toBe("build")
-          expect(text(handoff)).toContain("Plan mode has ended")
-          expect(text(handoff)).toContain("Follow the approved plan")
-          expect(next).toContain("Your operational mode has changed from plan to build")
+
+          // The build session should have the plan content as first message
+          const sid = result.info.sessionID
+          const build = await Session.messages({ sessionID: sid })
+          const first = build[0]
+          expect(first?.info.agent).toBe("build")
+          expect(text(first)).toBe("Follow the approved plan")
+
+          // The build LLM request should contain the plan content
+          const next = JSON.stringify(server.hits()[1])
           expect(next).toContain("Follow the approved plan")
         },
       })
@@ -502,20 +518,21 @@ describe("tool.plan_exit", () => {
           })
 
           const result = await SessionPrompt.loop({ sessionID: session.id })
-          const msgs = await Session.messages({ sessionID: session.id })
-          const handoff = msgs.find(
-            (item) =>
-              item.info.role === "user" &&
-              item.info.agent === "build" &&
-              item.parts.some((part) => part.type === "text" && part.synthetic),
-          )
           const retry = JSON.stringify(server.hits()[1])
 
+          // The result is from the build session (new session)
           expect(server.hits()).toHaveLength(4)
           expect(result.info.role).toBe("assistant")
-          expect(handoff?.info.agent).toBe("build")
-          expect(retry).toContain("Your previous plan-mode turn ended incorrectly")
-          expect(retry).toContain("call the plan_exit tool now")
+          expect(result.info.sessionID).not.toBe(session.id)
+          expect(retry).toContain("Your turn ended without completing the plan")
+          expect(retry).toContain("call plan_exit")
+
+          // The build session should have the plan content
+          const sid = result.info.sessionID
+          const build = await Session.messages({ sessionID: sid })
+          const first = build[0]
+          expect(first?.info.agent).toBe("build")
+          expect(text(first)).toBe("Follow the approved plan")
         },
       })
     } finally {

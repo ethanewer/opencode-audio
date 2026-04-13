@@ -212,8 +212,14 @@ export namespace ToolRegistry {
           if (tool.id === "apply_patch") return usePatch
           if (tool.id === "edit" || tool.id === "write") return !usePatch
 
-          if (tool.id === "speak") return voice && model.audioOutput !== true
-          if (tool.id === "question") return !voice
+          if (tool.id === "speak") {
+            if (!agent?.permission) return false
+            return model.audioOutput !== true && evaluate("speak", "*", agent.permission).action !== "deny"
+          }
+          if (tool.id === "question") {
+            if (!agent?.permission) return false
+            return evaluate("question", "*", agent.permission).action !== "deny"
+          }
 
           return true
         })

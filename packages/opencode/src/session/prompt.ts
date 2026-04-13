@@ -17,8 +17,9 @@ import { ProviderTransform } from "../provider/transform"
 import { SystemPrompt } from "./system"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
-import BUILD_SWITCH from "../session/prompt/build-switch.txt"
+
 import MAX_STEPS from "../session/prompt/max-steps.txt"
+import PLAN_REMINDER from "../session/prompt/plan-reminder.txt"
 import { ToolRegistry } from "../tool/registry"
 import { Runner } from "@/effect/runner"
 import { MCP } from "../mcp"
@@ -77,10 +78,6 @@ function isBuild(name: string) {
 /** Returns true for agents whose prompt is templated with terminal state. */
 function usesTerminalPrompt(agent: { prompt?: string }) {
   return !!agent.prompt?.includes("{terminal_state}")
-}
-
-function buildFromPlan(name: string) {
-  return name === "voice-plan" ? "voice-build" : "build"
 }
 
 const ACTION_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "bash"])
@@ -290,135 +287,25 @@ export namespace SessionPrompt {
         if (!userMessage) return input.messages
 
         const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
-        if (!isPlan(input.agent.name) && assistantMessage && isPlan(assistantMessage.info.agent)) {
-          const plan = Session.plan(input.session)
-          if (!(yield* fsys.existsSafe(plan))) return input.messages
-          const part = yield* sessions.updatePart({
-            id: PartID.ascending(),
-            messageID: userMessage.info.id,
-            sessionID: userMessage.info.sessionID,
-            type: "text",
-            text:
-              BUILD_SWITCH + "\n\n" + `A plan file exists at ${plan}. You should execute on the plan defined within it`,
-            synthetic: true,
-          })
-          userMessage.parts.push(part)
-          return input.messages
-        }
 
         if (!isPlan(input.agent.name) || (assistantMessage && isPlan(assistantMessage.info.agent)))
           return input.messages
 
         const plan = Session.plan(input.session)
-        const exists = yield* fsys.existsSafe(plan)
-        if (!exists) yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))
-        const voice = input.agent.name.startsWith("voice-")
+        yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))
         const rules = Permission.merge(input.agent.permission, input.session.permission ?? [])
-        const autonomous = Permission.evaluate("question", "*", rules).action === "deny"
-        const exit = Permission.evaluate("plan_exit", "*", rules).action !== "deny"
-        const clarify = voice
-          ? input.audioOutput
-            ? "speak directly to"
-            : "use the speak tool to"
-          : "use the question tool to"
-        const phase1 = autonomous
-          ? "3. After exploring the code, do not ask the user questions. If information is missing, make the best reasonable assumptions and continue."
-          : `3. After exploring the code, ${clarify} clarify ambiguities in the user request up front.`
-        const phase3 = autonomous
-          ? "3. Resolve any remaining ambiguities yourself using reasonable assumptions. Do not ask the user questions."
-          : `3. ${clarify.charAt(0).toUpperCase() + clarify.slice(1)} clarify any remaining questions with the user`
-        const important = autonomous
-          ? exit
-            ? "**Important:** Do not ask the user questions in this mode. If something is ambiguous, make the best reasonable assumption, write the plan, and call plan_exit when the plan is complete."
-            : "**Important:** Do not ask the user questions in this mode. If something is ambiguous, make the best reasonable assumption and continue planning. When the plan is complete, finish your turn normally without calling plan_exit. The build phase will begin automatically."
-          : `**Important:** ${clarify.charAt(0).toUpperCase() + clarify.slice(1)} clarify requirements/approach, use plan_exit to request plan approval. Do NOT ${clarify} ask \"Is this plan okay?\" - that's what plan_exit does.`
-        const phase5 = exit
-          ? [
-              "### Phase 5: Call plan_exit tool",
-              "At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.",
-              "This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.",
-              "Do not end with a plain text plan summary, a plain text approval request, or a plain text statement that you are ready to implement. Once the plan is complete, call plan_exit in the same turn.",
-              "The `plan_exit` tool is available in this session while you are in plan mode. Do not claim that it is unavailable unless you actually attempted it and got a real tool error.",
-            ].join("\n")
-          : [
-              "### Phase 5: Finish Planning",
-              "When the plan is complete, end your turn normally with the finalized plan already written to the plan file.",
-              "Do not ask the user for approval, and do not call plan_exit in this mode.",
-              "The build phase will start automatically after your plan turn finishes.",
-            ].join("\n")
+        const autonomous =
+          Permission.evaluate("question", "*", rules).action === "deny" &&
+          Permission.evaluate("speak", "*", rules).action === "deny"
+        const clarifyLine = autonomous
+          ? "Make reasonable assumptions for ambiguities. You cannot ask questions to the user."
+          : "If the task is ambiguous, ask the user to clarify before writing the plan."
         const part = yield* sessions.updatePart({
           id: PartID.ascending(),
           messageID: userMessage.info.id,
           sessionID: userMessage.info.sessionID,
           type: "text",
-          text: `<system-reminder>
-Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
-
-## Plan File Info:
-${exists ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`}
-You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
-
-## Plan Workflow
-
-### Phase 1: Initial Understanding
-Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the explore subagent type.
-
-1. Focus on understanding the user's request and the code associated with their request
-
-2. **Launch up to 3 explore agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
-   - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
-   - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
-   - Quality over quantity - 3 agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
-   - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
-
-${phase1}
-
-### Phase 2: Design
-Goal: Design an implementation approach.
-
-Launch general agent(s) to design the implementation based on the user's intent and your exploration results from Phase 1.
-
-You can launch up to 1 agent(s) in parallel.
-
-**Guidelines:**
-- **Default**: Launch at least 1 Plan agent for most tasks - it helps validate your understanding and consider alternatives
-- **Skip agents**: Only for truly trivial tasks (typo fixes, single-line changes, simple renames)
-
-Examples of when to use multiple agents:
-- The task touches multiple parts of the codebase
-- It's a large refactor or architectural change
-- There are many edge cases to consider
-- You'd benefit from exploring different approaches
-
-Example perspectives by task type:
-- New feature: simplicity vs performance vs maintainability
-- Bug fix: root cause vs workaround vs prevention
-- Refactoring: minimal change vs clean architecture
-
-In the agent prompt:
-- Provide comprehensive background context from Phase 1 exploration including filenames and code path traces
-- Describe requirements and constraints
-- Request a detailed implementation plan
-
-### Phase 3: Review
-Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
-1. Read the critical files identified by agents to deepen your understanding
-2. Ensure that the plans align with the user's original request
-${phase3}
-
-### Phase 4: Final Plan
-Goal: Write your final plan to the plan file (the only file you can edit).
-- Include only your recommended approach, not all alternatives
-- Ensure that the plan file is concise enough to scan quickly, but detailed enough to execute effectively
-- Include the paths of critical files to be modified
-- Include a verification section describing how to test the changes end-to-end (run the code, use MCP tools, run tests)
-
-${phase5}
-
-${important}
-
-${autonomous ? "" : "NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins."}
-</system-reminder>`,
+          text: PLAN_REMINDER.replace("{plan}", plan).replace("{clarify}", clarifyLine),
           synthetic: true,
         })
         userMessage.parts.push(part)
@@ -1358,7 +1245,6 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
           let evalNudges = 0
           let evalFinishNudges = 0
           let nudges = 0
-          let remind = false
           const session = yield* sessions.get(sessionID)
           TaskComplete.reset(sessionID)
           let initialTerminal: string | undefined
@@ -1405,41 +1291,6 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                   const turn = msgs.findLast((msg) => msg.info.id === lastAssistant.id)
                   const exit = turn?.parts.some((part) => part.type === "tool" && part.tool === "plan_exit")
                   if (!exit) {
-                    const auto = Permission.evaluate("plan_exit", "*", session.permission ?? []).action === "deny"
-                    const file = Session.plan(session)
-                    const rel = path.relative(Instance.worktree, file)
-                    const body = yield* Effect.promise(() =>
-                      Bun.file(file)
-                        .text()
-                        .then((x) => x.trim())
-                        .catch(() => ""),
-                    )
-                    if (auto && body) {
-                      const mid = MessageID.ascending()
-                      yield* sessions.updateMessage({
-                        id: mid,
-                        sessionID,
-                        role: "user",
-                        time: { created: Date.now() },
-                        agent: buildFromPlan(lastUser.agent),
-                        model: lastUser.model,
-                      } satisfies MessageV2.User)
-                      yield* sessions.updatePart({
-                        id: PartID.ascending(),
-                        messageID: mid,
-                        sessionID,
-                        type: "text",
-                        text: [
-                          `Auto mode approved the plan at ${rel}. Switch to the ${buildFromPlan(lastUser.agent)} agent and execute the approved plan.`,
-                          `Plan file: ${file}`,
-                          ["## Approved Plan:", body].join("\n"),
-                        ].join("\n\n"),
-                        synthetic: true,
-                        metadata: { plan: { handoff: true } },
-                      } satisfies MessageV2.TextPart)
-                      remind = false
-                      continue
-                    }
                     const mid = MessageID.ascending()
                     yield* sessions.updateMessage({
                       id: mid,
@@ -1454,37 +1305,14 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
                       messageID: mid,
                       sessionID,
                       type: "text",
-                      text: remind
-                        ? [
-                            "<system-reminder>",
-                            "Your previous plan-mode turn ended incorrectly again.",
-                            auto
-                              ? `Do not restate the plan in your response. Write the finalized plan to the plan file using the write or edit tool, then end your turn. The build phase will start automatically once your turn ends with the plan file written. Do not call plan_exit.`
-                              : "Do not restate the plan. If you still need information, ask the user a clarifying question now.",
-                            auto
-                              ? ""
-                              : "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
-                            "</system-reminder>",
-                          ]
-                            .filter(Boolean)
-                            .join("\n")
-                        : [
-                            "<system-reminder>",
-                            "Your previous plan-mode turn ended incorrectly.",
-                            auto
-                              ? "In this autonomous planning mode, your turn must end with the finalized plan written to the plan file. You have not yet written the plan file."
-                              : "In plan mode, you must not finish with a plain text plan summary.",
-                            auto
-                              ? "Do not ask the user questions. Make the best reasonable assumptions and write the plan to the plan file now."
-                              : "If you still need information, ask the user a clarifying question now.",
-                            auto
-                              ? "Once the plan file is written, end your turn normally. The build phase will start automatically. Do not call plan_exit."
-                              : "Otherwise, call the plan_exit tool now to request approval of the plan already written to the plan file.",
-                            "</system-reminder>",
-                          ].join("\n"),
+                      text: [
+                        "<system-reminder>",
+                        "Your turn ended without completing the plan.",
+                        "Write the plan to the plan file, then call plan_exit.",
+                        "</system-reminder>",
+                      ].join("\n"),
                       synthetic: true,
                     } satisfies MessageV2.TextPart)
-                    remind = true
                     continue
                   }
                 }
@@ -1931,6 +1759,16 @@ ${autonomous ? "" : "NOTE: At any point in time through this workflow you should
               }),
             )
             if (outcome === "break") break
+
+            // Check for plan_exit handoff to a new session
+            if (handle.handoffTarget) {
+              yield* compaction.prune({ sessionID }).pipe(Effect.ignore, Effect.forkIn(scope))
+              return yield* loop({ sessionID: SessionID.make(handle.handoffTarget) })
+            }
+
+            // speak(wait=true) — pause the loop so the user can respond
+            if (handle.waiting) break
+
             const source = msgs.findLast((msg) => msg.info.role === "user" && msg.info.id === lastUser.id)
             const active = source?.parts.find(
               (part): part is MessageV2.TextPart =>

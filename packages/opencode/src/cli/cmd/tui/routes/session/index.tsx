@@ -227,24 +227,20 @@ export function Session() {
 
   sdk.event.on("message.part.updated", (evt) => {
     const part = evt.properties.part
-    if (part.type === "text") {
-      if (part.sessionID !== route.sessionID) return
-      const meta = part.metadata?.plan
-      if (!meta || typeof meta !== "object") return
-      if ((meta as Record<string, unknown>).handoff !== true) return
-      if (auto()) local.agent.auto.setPhase("build")
-      return
-    }
     if (part.type !== "tool") return
     if (part.sessionID !== route.sessionID) return
     if (part.state.status !== "completed") return
     if (part.id === lastSwitch) return
 
     if (part.tool === "plan_exit" && part.state.metadata?.handoff === true) {
-      if (auto()) {
-        local.agent.auto.setPhase("build")
-      } else {
-        local.agent.set("build")
+      const sid = part.state.metadata?.sessionID
+      if (sid && typeof sid === "string") {
+        if (auto()) {
+          local.agent.auto.setPhase("build")
+        } else {
+          local.agent.set("build")
+        }
+        navigate({ type: "session", sessionID: sid })
       }
       lastSwitch = part.id
     } else if (part.tool === "plan_enter") {
@@ -305,8 +301,9 @@ export function Session() {
     const q = questions()[0]
     if (q && !handledSet.has(q.id)) {
       handledSet.add(q.id)
-      sdk.client.question.reject({
+      sdk.client.question.reply({
         requestID: q.id,
+        answers: [q.questions.map((item) => item.options[0]?.label ?? "Yes")],
       })
     }
   })
@@ -374,6 +371,8 @@ export function Session() {
         const reset = seen !== undefined && seen !== next
         seen = next
         if (!reset) return
+        // Don't reset auto mode during plan→build handoff
+        if (local.agent.auto.phase() !== "idle") return
         local.agent.auto.reset()
         setDeferred([])
         setSending(false)

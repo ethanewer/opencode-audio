@@ -345,9 +345,19 @@ export const RunCommand = cmd({
     const auto = args.agent === "auto"
     const agent = auto ? "plan" : args.agent
 
+    if (agent?.startsWith("voice-")) {
+      UI.error("Voice agents are not available in headless mode. Use the interactive CLI or voice SDK instead.")
+      process.exit(1)
+    }
+
     const rules: Permission.Ruleset = [
       {
         permission: "question",
+        action: "deny",
+        pattern: "*",
+      },
+      {
+        permission: "speak",
         action: "deny",
         pattern: "*",
       },
@@ -399,7 +409,6 @@ export const RunCommand = cmd({
       return result.data?.id
     }
 
-
     async function execute(sdk: OpencodeClient) {
       function tool(part: ToolPart) {
         try {
@@ -431,6 +440,7 @@ export const RunCommand = cmd({
       const events = await sdk.event.subscribe({}, { signal: ctrl.signal })
       let error: string | undefined
       let code = 0
+      let build: string | undefined
 
       const active = new Set<string>()
       const waiters = new Map<string, { resolve: () => void; promise: Promise<void> }>()
@@ -464,6 +474,16 @@ export const RunCommand = cmd({
               if (!active.has(part.sessionID)) continue
 
               if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
+                // Detect plan_exit handoff to a new build session
+                if (
+                  part.tool === "plan_exit" &&
+                  part.state.status === "completed" &&
+                  part.state.metadata?.handoff &&
+                  typeof part.state.metadata?.sessionID === "string"
+                ) {
+                  build = part.state.metadata.sessionID
+                  listen(build)
+                }
                 if (emit("tool_use", { part })) continue
                 if (part.state.status === "completed") {
                   tool(part)
@@ -704,9 +724,10 @@ export const RunCommand = cmd({
             UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + UI.Style.TEXT_NORMAL + "Running eval...")
           }
 
+          const target = build ?? sessionID
           const result = await Eval.run({
-            sessionID: SessionID.make(sessionID),
-            instruction: await Eval.extract(SessionID.make(sessionID), model),
+            sessionID: SessionID.make(target),
+            instruction: await Eval.extract(SessionID.make(target), model),
             model,
             max: maxIter,
             onEval(sid) {
@@ -714,7 +735,7 @@ export const RunCommand = cmd({
               emit("eval_session", { evalSessionID: sid })
             },
             onBuild() {
-              listen(sessionID)
+              listen(target)
             },
             onAttempt(attempt, max) {
               if (!emit("eval_attempt", { attempt, max })) {

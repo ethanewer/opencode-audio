@@ -181,24 +181,14 @@ describe("plan and todo nudge text (session/prompt.ts)", () => {
     promptSrc = await readPrompt("session/prompt.ts")
   })
 
-  test("auto mode plan nudge instructs to write plan file", async () => {
+  test("plan nudge mentions plan_exit", async () => {
     const src = await readPrompt("session/prompt.ts")
-    expect(src).toContain("Write the finalized plan to the plan file using the write or edit tool")
+    expect(src).toContain("call plan_exit")
   })
 
-  test("auto mode plan nudge says not to call plan_exit", async () => {
+  test("autonomous mode plan reminder says cannot ask questions", async () => {
     const src = await readPrompt("session/prompt.ts")
-    expect(src).toContain("Do not call plan_exit")
-  })
-
-  test("manual mode plan nudge mentions plan_exit tool", async () => {
-    const src = await readPrompt("session/prompt.ts")
-    expect(src).toContain("call the plan_exit tool now")
-  })
-
-  test("auto mode plan nudge forbids asking questions", async () => {
-    const src = await readPrompt("session/prompt.ts")
-    expect(src).toContain("Do not ask the user questions. Make the best reasonable assumptions")
+    expect(src).toContain("You cannot ask questions to the user")
   })
 
   test("todo nudge forbids asking user what to do next", async () => {
@@ -211,13 +201,8 @@ describe("plan and todo nudge text (session/prompt.ts)", () => {
     expect(src).toContain("proceed with the next incomplete item now")
   })
 
-  test("first plan nudge says 'ended incorrectly'", async () => {
+  test("plan nudge says turn ended without completing", async () => {
     const src = await readPrompt("session/prompt.ts")
-    expect(src).toContain("Your previous plan-mode turn ended incorrectly.")
-  })
-
-  test("repeat plan nudge says 'ended incorrectly again'", async () => {
-    const src = await readPrompt("session/prompt.ts")
-    expect(src).toContain("Your previous plan-mode turn ended incorrectly again.")
+    expect(src).toContain("Your turn ended without completing the plan")
   })
 })

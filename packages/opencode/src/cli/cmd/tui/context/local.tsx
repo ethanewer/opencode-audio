@@ -388,8 +388,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           rules(phase: "idle" | "plan" | "build" = autoPhase()) {
             const rules: Permission.Ruleset = [
               { permission: "question", action: "deny", pattern: "*" },
+              { permission: "speak", action: "deny", pattern: "*" },
               { permission: "plan_enter", action: "deny", pattern: "*" },
-              { permission: "plan_exit", action: "deny", pattern: "*" },
               { permission: "tui_auto", action: "deny", pattern: "*" },
             ]
             return rules

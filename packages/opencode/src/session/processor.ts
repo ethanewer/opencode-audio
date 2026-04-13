@@ -33,6 +33,8 @@ export namespace SessionProcessor {
     readonly partFromToolCall: (toolCallID: string) => MessageV2.ToolPart | undefined
     readonly abort: () => Effect.Effect<void>
     readonly process: (streamInput: LLM.StreamInput) => Effect.Effect<Result>
+    readonly handoffTarget: string | undefined
+    readonly waiting: boolean
   }
 
   type Input = {
@@ -49,6 +51,8 @@ export namespace SessionProcessor {
     toolcalls: Record<string, MessageV2.ToolPart>
     shouldBreak: boolean
     handoff: boolean
+    handoffTarget: string | undefined
+    waiting: boolean
     followup: boolean
     done: boolean
     ended: boolean
@@ -100,6 +104,8 @@ export namespace SessionProcessor {
           toolcalls: {},
           shouldBreak: false,
           handoff: false,
+          handoffTarget: undefined,
+          waiting: false,
           followup: false,
           done: false,
           ended: false,
@@ -238,11 +244,16 @@ export namespace SessionProcessor {
               })
               if (value.output.metadata?.handoff === true) {
                 ctx.handoff = true
+                ctx.handoffTarget =
+                  typeof value.output.metadata?.sessionID === "string" ? value.output.metadata.sessionID : undefined
                 if (ctx.ended) ctx.done = true
               }
               if (value.output.metadata?.followup === true) {
                 ctx.followup = true
                 if (ctx.ended) ctx.done = true
+              }
+              if (value.output.metadata?.wait === true) {
+                ctx.waiting = true
               }
               delete ctx.toolcalls[value.toolCallId]
               return
@@ -466,6 +477,8 @@ export namespace SessionProcessor {
           log.info("process")
           ctx.needsCompaction = false
           ctx.handoff = false
+          ctx.handoffTarget = undefined
+          ctx.waiting = false
           ctx.followup = false
           ctx.done = false
           ctx.ended = false
@@ -531,6 +544,12 @@ export namespace SessionProcessor {
         return {
           get message() {
             return ctx.assistantMessage
+          },
+          get handoffTarget() {
+            return ctx.handoffTarget
+          },
+          get waiting() {
+            return ctx.waiting
           },
           partFromToolCall(toolCallID: string) {
             return ctx.toolcalls[toolCallID]

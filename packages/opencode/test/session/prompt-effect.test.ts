@@ -2003,101 +2003,13 @@ it.live(
               (part) =>
                 part.type === "text" &&
                 part.synthetic === true &&
-                part.text.includes("plan-mode turn ended incorrectly"),
+                part.text.includes("Your turn ended without completing the plan"),
             ),
         )
         expect(nudge).toBeDefined()
         // Manual mode nudge should mention plan_exit
         const nudgeText = nudge?.parts.find((p) => p.type === "text")
-        expect(nudgeText?.type === "text" && nudgeText.text.includes("plan_exit")).toBe(true)
-
-        yield* prompt.cancel(chat.id)
-        yield* Fiber.await(fiber)
-      }),
-      { git: true, config: providerCfg },
-    ),
-  10_000,
-)
-
-it.live(
-  "plan nudge in autonomous mode does not mention plan_exit",
-  () =>
-    provideTmpdirServer(
-      Effect.fnUntraced(function* ({ llm }) {
-        const prompt = yield* SessionPrompt.Service
-        const sessions = yield* Session.Service
-        // Autonomous mode: plan_exit is denied
-        const chat = yield* sessions.create({
-          title: "AutoPlanNudge",
-          permission: [
-            { permission: "*", pattern: "*", action: "allow" },
-            { permission: "plan_exit", pattern: "*", action: "deny" },
-          ],
-        })
-        const root = yield* sessions.updateMessage({
-          id: MessageID.ascending(),
-          role: "user",
-          sessionID: chat.id,
-          agent: "plan",
-          model: ref,
-          time: { created: Date.now() },
-        })
-        yield* sessions.updatePart({
-          id: PartID.ascending(),
-          messageID: root.id,
-          sessionID: chat.id,
-          type: "text",
-          text: "create a feature",
-        })
-        // Plan agent responds without writing plan file
-        const turn = yield* sessions.updateMessage({
-          id: MessageID.ascending(),
-          role: "assistant",
-          sessionID: chat.id,
-          parentID: root.id,
-          mode: "build",
-          agent: "plan",
-          path: { cwd: "/tmp", root: "/tmp" },
-          cost: 0,
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          modelID: ref.modelID,
-          providerID: ref.providerID,
-          time: { created: Date.now(), completed: Date.now() },
-          finish: "stop",
-        })
-        yield* sessions.updatePart({
-          id: PartID.ascending(),
-          messageID: turn.id,
-          sessionID: chat.id,
-          type: "text",
-          text: "Here is my plan: do X, Y, Z.",
-        })
-
-        // Nudge fires, LLM is called. Hang the LLM so we can inspect state.
-        yield* llm.hang
-
-        const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
-        yield* llm.wait(1) // Wait for LLM to be called (after nudge)
-
-        const msgs = yield* Effect.sync(() => MessageV2.filterCompacted(MessageV2.stream(chat.id)))
-        const nudge = msgs.find(
-          (msg) =>
-            msg.info.role === "user" &&
-            msg.parts.some(
-              (part) =>
-                part.type === "text" &&
-                part.synthetic === true &&
-                part.text.includes("plan-mode turn ended incorrectly"),
-            ),
-        )
-        expect(nudge).toBeDefined()
-        const nudgeText = nudge?.parts.find((p) => p.type === "text")
-        if (nudgeText?.type === "text") {
-          // Auto-mode nudge should NOT mention calling plan_exit
-          expect(nudgeText.text).not.toContain("call the plan_exit tool now")
-          // Auto-mode nudge should mention writing to the plan file
-          expect(nudgeText.text).toContain("plan file")
-        }
+        expect(nudgeText?.type === "text" && nudgeText.text.includes("call plan_exit")).toBe(true)
 
         yield* prompt.cancel(chat.id)
         yield* Fiber.await(fiber)

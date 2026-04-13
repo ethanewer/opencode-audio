@@ -97,6 +97,7 @@ export namespace Agent {
               ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
             },
             question: "deny",
+            speak: "deny",
             plan_enter: "deny",
             plan_exit: "deny",
             // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
@@ -148,7 +149,6 @@ export namespace Agent {
                     "*.env.example": "allow",
                   },
                   webfetch: "allow",
-                  speak: "allow",
                   doom_loop: "ask",
                   question: "allow",
                   plan_exit: "allow",
@@ -301,6 +301,7 @@ export namespace Agent {
                 defaults,
                 Permission.fromConfig({
                   plan_enter: "allow",
+                  speak: "allow",
                   voice_complete: "allow",
                   native_voice_complete: "allow",
                 }),

@@ -1,7 +1,6 @@
 import z from "zod"
 import path from "path"
 import { Tool } from "./tool"
-import { Agent } from "../agent/agent"
 import { Question } from "../question"
 import { Session } from "../session"
 import { MessageV2 } from "../session/message-v2"
@@ -25,25 +24,6 @@ function isPlan(agent: string) {
 
 function build(agent: string) {
   return agent === "voice-plan" ? "voice-build" : "build"
-}
-
-async function target(sessionID: SessionID, agent: string) {
-  const msgs = await Session.messages({ sessionID })
-  let seen = false
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const item = msgs[i]
-    if (item.info.role !== "user") continue
-    if (!seen) {
-      if (isPlan(item.info.agent)) {
-        seen = true
-      }
-      continue
-    }
-    if (isPlan(item.info.agent)) continue
-    const info = await Agent.get(item.info.agent).catch(() => undefined)
-    if (info && info.mode !== "subagent") return info.name
-  }
-  return build(agent)
 }
 
 async function followup(ctx: Tool.Context, model: Awaited<ReturnType<typeof getLastModel>>, text: string) {
@@ -87,7 +67,7 @@ export const PlanExitTool = Tool.define("plan_exit", {
     if (!body) {
       throw new Error(`No finalized plan found at ${rel}. Write the plan to that file before calling plan_exit.`)
     }
-    const mode = await target(ctx.sessionID, ctx.agent)
+    const mode = build(ctx.agent)
     const auto = process.env.OPENCODE_CLI_PLAN_AUTO_BUILD === "1"
     const model = await getLastModel(ctx.sessionID)
 
@@ -99,10 +79,10 @@ export const PlanExitTool = Tool.define("plan_exit", {
             question:
               ctx.agent === "voice-plan"
                 ? `Plan is complete. Would you like to start implementing?`
-                : `Plan at ${rel} is complete. Would you like to switch to the ${mode} agent and start implementing?`,
-            header: "Build Agent",
+                : `Plan at ${rel} is complete. Would you like to start implementing?`,
+            header: "Plan Complete",
             options: [
-              { label: "Yes", description: `Switch to ${mode} agent and start implementing the plan` },
+              { label: "Yes", description: "Start implementing the plan" },
               { label: "Keep planning", description: "Stay in plan mode and continue refining the plan" },
             ],
           },
@@ -126,18 +106,18 @@ export const PlanExitTool = Tool.define("plan_exit", {
         return {
           title: "Continuing in plan mode",
           output: text,
-          metadata: { followup: true, handoff: false },
+          metadata: { followup: true, handoff: false, sessionID: undefined as SessionID | undefined },
         }
       }
     }
 
+    // Create a new session for the build phase with a fresh context
+    const created = await Session.create({ permission: session.permission, title: session.title + " (build)" })
     const userMsg: MessageV2.User = {
       id: MessageID.ascending(),
-      sessionID: ctx.sessionID,
+      sessionID: created.id,
       role: "user",
-      time: {
-        created: Date.now(),
-      },
+      time: { created: Date.now() },
       agent: mode,
       model,
     }
@@ -145,26 +125,17 @@ export const PlanExitTool = Tool.define("plan_exit", {
     await Session.updatePart({
       id: PartID.ascending(),
       messageID: userMsg.id,
-      sessionID: ctx.sessionID,
+      sessionID: created.id,
       type: "text",
-      text: [
-        `Plan mode has ended. The plan at ${rel} has been approved. Switch to the ${mode} agent, you can now edit files, and execute the approved plan.`,
-        `Plan file: ${file}`,
-        [`## Approved Plan:`, body].join("\n"),
-      ].join("\n\n"),
-      synthetic: true,
+      text: body,
     } satisfies MessageV2.TextPart)
 
     return {
       title: `Switching to ${mode} agent`,
-      output: [
-        auto
-          ? `Plan approved automatically for this CLI run. Continue by executing the approved plan with the ${mode} agent.`
-          : `User approved switching to ${mode} agent. Continue by executing the approved plan.`,
-        `Plan file: ${file}`,
-        [`## Approved Plan:`, body].join("\n"),
-      ].join("\n\n"),
-      metadata: { handoff: true, followup: false },
+      output: auto
+        ? "Plan approved automatically. A new build session has been created."
+        : "User approved the plan. A new build session has been created.",
+      metadata: { followup: false, handoff: true, sessionID: created.id },
     }
   },
 })

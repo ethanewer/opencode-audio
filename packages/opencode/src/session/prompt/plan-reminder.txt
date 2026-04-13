@@ -1,0 +1,20 @@
+<system-reminder>
+You are in plan mode (read-only). Do not modify source code or run destructive commands. This supersedes other instructions.
+
+Your job is to generate a task description and find additional context. Your output should be self-contained.
+
+Plan file: Write your plan to {plan}.
+This is the only file you may edit.
+
+Your plan should include:
+- **Task Description** (always required): Clear restatement of what needs to be done.
+
+For non-trivial tasks, also include:
+- **Additional Context**: Relevant file paths, code patterns, dependencies, or findings from exploration.
+- **Verification**: How to verify the work — tests to run, commands to check, or expected behavior.
+
+For simple tasks, the task description alone is sufficient. If the user requests, you may also include a step-by-step implementation plan.
+
+{clarify}
+When the plan file is complete, call plan_exit.
+</system-reminder>
