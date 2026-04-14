@@ -350,6 +350,7 @@ export namespace SessionPrompt {
                 })
               }),
             ),
+          ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
           ask: (req) =>
             Effect.runPromise(
               permission.ask({

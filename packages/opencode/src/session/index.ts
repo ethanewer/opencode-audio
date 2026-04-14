@@ -31,6 +31,7 @@ import type { Provider } from "@/provider/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Permission } from "@/permission"
 import { Global } from "@/global"
+import { clearNudged } from "@/tool/external-directory"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
 import { Effect, Layer, ServiceMap } from "effect"
 import { makeRuntime } from "@/effect/run-service"
@@ -422,8 +423,7 @@ export namespace Session {
         return { url: "" }
       })
 
-      const unshare = Effect.fn("Session.unshare")(function* (_id: SessionID) {
-      })
+      const unshare = Effect.fn("Session.unshare")(function* (_id: SessionID) {})
 
       const children = Effect.fn("Session.children")(function* (parentID: SessionID) {
         const ctx = yield* InstanceState.context
@@ -445,6 +445,7 @@ export namespace Session {
             yield* remove(child.id)
           }
           yield* Effect.promise(() => Tmux.kill(sessionID)).pipe(Effect.ignore)
+          clearNudged(sessionID)
           yield* Effect.sync(() => {
             SyncEvent.run(Event.Deleted, { sessionID, info: session })
             SyncEvent.remove(sessionID)
@@ -627,8 +628,7 @@ export namespace Session {
         modelID: ModelID
         providerID: ProviderID
         messageID: MessageID
-      }) {
-      })
+      }) {})
 
       return Service.of({
         create,

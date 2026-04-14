@@ -1,4 +1,5 @@
 import { Log } from "@/util/log"
+import { get as getTmpdir } from "@/session/tmpdir"
 
 const log = Log.create({ service: "tmux" })
 const MARKER = "__CMDEND__"
@@ -94,6 +95,11 @@ export namespace Tmux {
       throw new Error(`Failed to create tmux session '${name}'. Is tmux installed and working?`)
     }
     await run(["tmux", "set-option", "-t", name, "history-limit", "50000"])
+    const tmpdir = getTmpdir(id)
+    await sendKeys(
+      name,
+      `export TMPDIR=${shellEscape(tmpdir)} TMP=${shellEscape(tmpdir)} TEMP=${shellEscape(tmpdir)}\n`,
+    )
     await sendKeys(name, `cd ${shellEscape(cwd)}\n`)
     await Bun.sleep(300)
     const prior = await capturePane(name)

@@ -118,7 +118,11 @@ export namespace SystemPrompt {
       ...(Instance.worktree !== "/" && Instance.worktree !== Instance.directory
         ? [`  Workspace root folder: ${Instance.worktree}${perm}`]
         : []),
-      ...(restricted ? [`  Temp workspace directory: ${getTmpdir(input.sessionID)}${perm}`] : []),
+      ...(restricted
+        ? [
+            `  Temp workspace directory: ${getTmpdir(input.sessionID)}${perm} — use this instead of /tmp for temporary files`,
+          ]
+        : []),
       `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
       `  Platform: ${process.platform}`,
       `  Today's date: ${new Date().toDateString()}`,
@@ -143,9 +147,6 @@ export namespace SystemPrompt {
     const list = await Skill.available(agent)
     if (!list.length) return
 
-    return [
-      "The following skills are available for specialized tasks.",
-      Skill.fmt(list, { verbose: true }),
-    ].join("\n")
+    return ["The following skills are available for specialized tasks.", Skill.fmt(list, { verbose: true })].join("\n")
   }
 }

@@ -17,6 +17,7 @@ import { Shell } from "@/shell/shell"
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncate"
 import { Plugin } from "@/plugin"
+import { get as getTmpdir } from "@/session/tmpdir"
 import { Cause, Effect, Exit, Layer, ManagedRuntime, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
@@ -297,9 +298,13 @@ async function ask(ctx: Tool.Context, scan: Scan) {
 
 async function shellEnv(ctx: Tool.Context, cwd: string) {
   const extra = await Plugin.trigger("shell.env", { cwd, sessionID: ctx.sessionID, callID: ctx.callID }, { env: {} })
+  const tmpdir = getTmpdir(ctx.sessionID)
   return {
     ...process.env,
     ...extra.env,
+    TMPDIR: tmpdir,
+    TMP: tmpdir,
+    TEMP: tmpdir,
   }
 }
 
