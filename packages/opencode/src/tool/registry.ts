@@ -23,6 +23,8 @@ import { ExecuteCommandsTool } from "./execute_commands"
 import { TaskCompleteTool } from "./task_complete"
 import { VoiceCompleteTool, NativeVoiceCompleteTool } from "./voice_complete"
 import { TaskTool } from "./task"
+import { WebSearchTool } from "./websearch"
+import { WebFetchTool } from "./webfetch"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 import { Effect, Layer, ServiceMap } from "effect"
@@ -136,6 +138,8 @@ export namespace ToolRegistry {
           VoiceCompleteTool,
           NativeVoiceCompleteTool,
           TaskTool,
+          WebSearchTool,
+          WebFetchTool,
           ...(Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
           ...custom,
         ]

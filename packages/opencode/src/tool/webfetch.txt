@@ -1,13 +1,8 @@
-- Fetches content from a specified URL
-- Takes a URL and optional format as input
-- Fetches the URL content, converts to requested format (markdown by default)
-- Returns the content in the specified format
-- Use this tool when you need to retrieve and analyze web content
+Fetch content from a URL and return it as markdown, text, or HTML. Use this to read documentation, API references, blog posts, or any web page.
 
 Usage notes:
-  - IMPORTANT: if another tool is present that offers better web fetching capabilities, is more targeted to the task, or has fewer restrictions, prefer using that tool instead of this one.
-  - The URL must be a fully-formed valid URL
-  - HTTP URLs will be automatically upgraded to HTTPS
-  - Format options: "markdown" (default), "text", or "html"
+  - The URL must start with http:// or https://
+  - Format options: "markdown" (default, converts HTML to readable markdown), "text" (strips tags), or "html" (raw)
+  - Images are returned as base64-encoded attachments
   - This tool is read-only and does not modify any files
-  - Results may be summarized if the content is very large
+  - Large responses are truncated to fit context limits
