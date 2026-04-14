@@ -4,6 +4,8 @@ import { streamSSE } from "hono/streaming"
 import { Log } from "@/util/log"
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
+import { GlobalBus } from "@/bus/global"
+import { Instance } from "@/project/instance"
 import { AsyncQueue } from "../../util/queue"
 
 const log = Log.create({ service: "server" })
@@ -61,12 +63,16 @@ export const EventRoutes = () =>
           log.info("event disconnected")
         }
 
-        const unsub = Bus.subscribeAll((event) => {
-          q.push(JSON.stringify(event))
-          if (event.type === Bus.InstanceDisposed.type) {
+        const dir = Instance.directory
+        function handler(event: { directory?: string; payload: unknown }) {
+          q.push(JSON.stringify(event.payload))
+          const p = event.payload as { type?: string }
+          if (p.type === Bus.InstanceDisposed.type && event.directory === dir) {
             stop()
           }
-        })
+        }
+        GlobalBus.on("event", handler)
+        const unsub = () => GlobalBus.off("event", handler)
 
         stream.onAbort(stop)
 

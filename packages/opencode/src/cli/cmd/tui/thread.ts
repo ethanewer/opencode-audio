@@ -44,8 +44,8 @@ function createWorkerFetch(client: RpcClient): typeof fetch {
 function createEventSource(client: RpcClient): EventSource {
   return {
     on: (handler) => client.on<Event>("event", handler),
-    setWorkspace: (workspaceID) => {
-      void client.call("setWorkspace", { workspaceID })
+    setWorkspace: async (workspaceID) => {
+      return await client.call("setWorkspace", { workspaceID })
     },
   }
 }

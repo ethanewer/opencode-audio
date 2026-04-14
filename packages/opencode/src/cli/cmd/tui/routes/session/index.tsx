@@ -308,20 +308,36 @@ export function Session() {
     }
   })
 
-  // Trigger eval when build goes idle in auto mode, and handle eval iterations
-  let armed = false
+  // Trigger eval when build goes idle in auto mode, and handle eval iterations.
+  // Use a reactive signal so Solid tracks armed as a dependency — a plain
+  // boolean was invisible to the reactive graph, causing a race where the
+  // busy→idle transition could be missed.
+  //
+  // armed is only set to true when we observe the session status as non-idle
+  // (i.e. build is actively running).  We intentionally do NOT set it on
+  // phase entry because sync.data.session_status defaults to "idle" for
+  // sessions that haven't been synced yet, which would trigger eval before
+  // build even runs.  As a fallback for the case where build finishes before
+  // the TUI navigates to the session, we check for a completed assistant
+  // message.
+  const [armed, setArmed] = createSignal(false)
   createEffect(() => {
     if (!auto()) return
     if (local.agent.auto.phase() !== "build") {
-      armed = false
+      setArmed(false)
       return
     }
     if (status().type !== "idle") {
-      armed = true
+      setArmed(true)
       return
     }
-    if (!armed) return
-    armed = false
+    if (!armed()) {
+      // Build may have finished before navigation or between effect runs.
+      // Fall back to checking whether any assistant turn completed, which
+      // means the build agent already ran.
+      if (!messages().some((m) => m.role === "assistant" && m.time.completed)) return
+    }
+    setArmed(false)
 
     const iter = local.agent.auto.iter()
 
@@ -343,12 +359,16 @@ export function Session() {
     // Trigger eval
     local.agent.auto.setIter(iter + 1)
     const model = local.model.current()
-    sdk.client.session.command({
-      sessionID: route.sessionID,
-      command: "eval",
-      arguments: "",
-      ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
-    })
+    sdk.client.session
+      .command({
+        sessionID: route.sessionID,
+        command: "eval",
+        arguments: "",
+        ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
+      })
+      .catch(() => {
+        local.agent.auto.reset()
+      })
   })
 
   // Reset auto mode on interruption or error so the user isn't stuck in a

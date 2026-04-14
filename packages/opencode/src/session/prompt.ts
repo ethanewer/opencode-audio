@@ -726,6 +726,7 @@ export namespace SessionPrompt {
           role: "user",
           agent: input.agent,
           model: { providerID: model.providerID, modelID: model.modelID },
+          variant: input.variant,
         }
         yield* sessions.updateMessage(userMsg)
         const userPart: MessageV2.Part = {
@@ -2118,6 +2119,7 @@ export namespace SessionPrompt {
         modelID: ModelID.zod,
       })
       .optional(),
+    variant: z.string().optional(),
     command: z.string(),
   })
   export type ShellInput = z.infer<typeof ShellInput>

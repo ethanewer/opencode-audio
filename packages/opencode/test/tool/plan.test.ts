@@ -318,6 +318,43 @@ describe("tool.plan_exit", () => {
     })
   })
 
+  test("auto-approves via session permissions without env var (TUI auto mode)", async () => {
+    const ask = spyOn(QuestionModule.Question, "ask").mockResolvedValue({ answers: [["Yes"]] })
+
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({
+          permission: [
+            { permission: "question", action: "deny", pattern: "*" },
+            { permission: "speak", action: "deny", pattern: "*" },
+            { permission: "plan_enter", action: "deny", pattern: "*" },
+            { permission: "tui_auto", action: "deny", pattern: "*" },
+          ],
+        })
+        const file = Session.plan(session)
+        await fs.mkdir(path.dirname(file), { recursive: true })
+        await Bun.write(file, "TUI auto plan body")
+        await seed(session.id, "plan")
+
+        const tool = await PlanExitTool.init()
+        const result = await tool.execute({}, ctx(session.id, "plan"))
+
+        expect(ask).not.toHaveBeenCalled()
+        expect(result.output).toContain("Plan approved automatically")
+        expect(result.metadata?.handoff).toBe(true)
+        expect(result.metadata?.sessionID).toBeDefined()
+
+        const sid = SessionID.make(result.metadata!.sessionID as string)
+        const msgs = await Session.messages({ sessionID: sid })
+        const first = msgs[0]
+        expect(first?.info.agent).toBe("build")
+        expect(text(first)).toBe("TUI auto plan body")
+      },
+    })
+  })
+
   test("auto-approves and switches voice-plan sessions to voice-build", async () => {
     const ask = spyOn(QuestionModule.Question, "ask").mockResolvedValue({ answers: [["Yes"]] })
     process.env.OPENCODE_CLI_PLAN_AUTO_BUILD = "1"
@@ -478,6 +515,61 @@ describe("tool.plan_exit", () => {
           // The build LLM request should contain the plan content
           const next = JSON.stringify(server.hits()[1])
           expect(next).toContain("Follow the approved plan")
+        },
+      })
+    } finally {
+      await server.close()
+    }
+  }, 30000)
+
+  test("loop auto-handoffs via session permissions without env var (TUI auto mode)", async () => {
+    const server = await llm([
+      { type: "tool", tool: "plan_exit", input: {} },
+      { type: "tool", tool: "task_complete", input: {} },
+      { type: "tool", tool: "task_complete", input: {} },
+    ])
+
+    try {
+      await using tmp = await tmpdir({ git: true, config: providerCfg(server.url) })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const session = await Session.create({
+            title: "TUI Auto",
+            permission: [
+              { permission: "question", action: "deny", pattern: "*" },
+              { permission: "speak", action: "deny", pattern: "*" },
+              { permission: "plan_enter", action: "deny", pattern: "*" },
+              { permission: "tui_auto", action: "deny", pattern: "*" },
+            ],
+          })
+          const file = Session.plan(session)
+          await fs.mkdir(path.dirname(file), { recursive: true })
+          await Bun.write(file, "TUI auto plan content")
+          await SessionPrompt.prompt({
+            sessionID: session.id,
+            agent: "plan",
+            noReply: true,
+            parts: [{ type: "text", text: "Plan the work" }],
+          })
+
+          const result = await SessionPrompt.loop({ sessionID: session.id })
+
+          // The result is from the build session (new session)
+          expect(server.hits()).toHaveLength(3)
+          expect(result.info.role).toBe("assistant")
+          expect(result.info.sessionID).not.toBe(session.id)
+
+          // The build session should have the plan content as first message
+          const sid = result.info.sessionID
+          const build = await Session.messages({ sessionID: sid })
+          const first = build[0]
+          expect(first?.info.agent).toBe("build")
+          expect(text(first)).toBe("TUI auto plan content")
+
+          // The build LLM request should contain the plan content
+          const next = JSON.stringify(server.hits()[1])
+          expect(next).toContain("TUI auto plan content")
         },
       })
     } finally {

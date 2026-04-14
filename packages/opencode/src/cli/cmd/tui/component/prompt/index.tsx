@@ -134,6 +134,7 @@ export async function dispatchDraft(opts: {
       agent,
       model: draft.model,
       command: draft.input,
+      variant: draft.variant,
     })
     if (draft.agent === "auto") opts.local.agent.auto.start()
     return result
@@ -541,7 +542,10 @@ export function Prompt(props: PromptProps) {
         })
         if (next?.agent === "auto") {
           local.agent.set("auto")
-          local.agent.auto.setPhase(next.phase ?? "idle")
+          // Don't downgrade phase from "build" to "idle" — the plan_exit
+          // handler already set "build" and the eval trigger still needs it.
+          const resolved = next.phase ?? "idle"
+          if (!(local.agent.auto.phase() === "build" && resolved === "idle")) local.agent.auto.setPhase(resolved)
         } else {
           const base = next?.agent ?? msg.agent.replace(/^voice-/, "")
           const keepAuto = local.agent.current()?.name === "auto" && local.agent.auto.claim(sessionID, base)

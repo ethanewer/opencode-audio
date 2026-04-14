@@ -5,7 +5,7 @@ import { batch, createSignal, onCleanup, onMount } from "solid-js"
 
 export type EventSource = {
   on: (handler: (event: Event) => void) => () => void
-  setWorkspace?: (workspaceID?: string) => void
+  setWorkspace?: (workspaceID?: string) => Promise<{ directory?: string }> | void
 }
 
 export type ClassifyFn = (input: {
@@ -43,13 +43,14 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
   }) => {
     const abort = new AbortController()
     const [wsId, setWsId] = createSignal<string | undefined>()
+    let dir = props.directory
     let sse: AbortController | undefined
 
     function createSDK() {
       return createOpencodeClient({
         baseUrl: props.url,
         signal: abort.signal,
-        directory: props.directory,
+        directory: dir,
         fetch: props.fetch,
         headers: props.headers,
         experimental_workspaceID: wsId(),
@@ -140,14 +141,23 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       classifyMulti: props.classifyMulti,
       transcribe: props.transcribe,
       speak: props.speak,
-      directory: props.directory,
+      get directory() {
+        return dir
+      },
       event: emitter,
       fetch: props.fetch ?? fetch,
       setWorkspace(next?: string) {
         if (wsId() === next) return
         setWsId(next)
         sdk = createSDK()
-        props.events?.setWorkspace?.(next)
+        const p = props.events?.setWorkspace?.(next)
+        if (p)
+          p.then((result) => {
+            if (result?.directory && result.directory !== dir) {
+              dir = result.directory
+              sdk = createSDK()
+            }
+          }).catch(() => {})
         if (!props.events) startSSE()
       },
       url: props.url,

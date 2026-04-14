@@ -57,7 +57,16 @@ const startEventStream = (input: { directory: string; workspaceID?: string }) =>
   eventStream.abort = abort
   const signal = abort.signal
 
+  // Subscribe to GlobalBus so we receive events from ALL instances
+  // (main project + worktrees). This is critical for plan→build handoff
+  // where the build session runs in a worktree Instance.
+  function handler(event: { directory?: string; payload: unknown }) {
+    Rpc.emit("event", event.payload as Event)
+  }
+  GlobalBus.on("event", handler)
   ;(async () => {
+    // Bootstrap loop: keeps the primary Instance alive and re-bootstraps
+    // after disposal (e.g. config update triggers Instance.dispose).
     while (!signal.aborted) {
       const shouldReconnect = await Instance.provide({
         directory: input.directory,
@@ -78,34 +87,28 @@ const startEventStream = (input: { directory: string; workspaceID?: string }) =>
               resolve(value)
             }
 
+            // Detect disposal of THIS instance via the per-instance bus.
             const unsub = Bus.subscribeAll((event) => {
-              Rpc.emit("event", event as Event)
               if (event.type === Bus.InstanceDisposed.type) {
                 settle(true)
               }
             })
 
-            const onAbort = () => {
-              settle(false)
-            }
-
+            const onAbort = () => settle(false)
             signal.addEventListener("abort", onAbort, { once: true })
           }),
       }).catch((error) => {
-        Log.Default.error("event stream subscribe error", {
+        Log.Default.error("instance bootstrap error", {
           error: error instanceof Error ? error.message : error,
         })
         return false
       })
 
-      if (!shouldReconnect || signal.aborted) {
-        break
-      }
-
-      if (!signal.aborted) {
-        await sleep(250)
-      }
+      if (!shouldReconnect || signal.aborted) break
+      if (!signal.aborted) await sleep(250)
     }
+
+    GlobalBus.off("event", handler)
   })().catch((error) => {
     Log.Default.error("event stream error", {
       error: error instanceof Error ? error.message : error,
@@ -167,6 +170,7 @@ export const rpc = {
       if (ws?.directory) dir = ws.directory
     }
     startEventStream({ directory: dir })
+    return { directory: dir }
   },
   async classify(input: {
     providerID: string

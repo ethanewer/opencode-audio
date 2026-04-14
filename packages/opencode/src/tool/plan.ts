@@ -1,6 +1,7 @@
 import z from "zod"
 import path from "path"
 import { Tool } from "./tool"
+import { Permission } from "../permission"
 import { Question } from "../question"
 import { Session } from "../session"
 import { MessageV2 } from "../session/message-v2"
@@ -9,13 +10,17 @@ import { Instance } from "../project/instance"
 import { type SessionID, MessageID, PartID } from "../session/schema"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
 
-async function getLastModel(sessionID: SessionID) {
+async function getLastUser(sessionID: SessionID) {
   const msgs = await Session.messages({ sessionID })
   for (let i = msgs.length - 1; i >= 0; i--) {
     const item = msgs[i]
-    if (item.info.role === "user" && item.info.model) return item.info.model
+    if (item.info.role === "user" && item.info.model) return item.info
   }
-  return Provider.defaultModel()
+}
+
+async function getLastModel(sessionID: SessionID) {
+  const msg = await getLastUser(sessionID)
+  return msg?.model ?? (await Provider.defaultModel())
 }
 
 function isPlan(agent: string) {
@@ -68,8 +73,13 @@ export const PlanExitTool = Tool.define("plan_exit", {
       throw new Error(`No finalized plan found at ${rel}. Write the plan to that file before calling plan_exit.`)
     }
     const mode = build(ctx.agent)
-    const auto = process.env.OPENCODE_CLI_PLAN_AUTO_BUILD === "1"
-    const model = await getLastModel(ctx.sessionID)
+    const rules = session.permission ?? []
+    const auto =
+      process.env.OPENCODE_CLI_PLAN_AUTO_BUILD === "1" ||
+      (Permission.evaluate("question", "*", rules).action === "deny" &&
+        Permission.evaluate("speak", "*", rules).action === "deny")
+    const last = await getLastUser(ctx.sessionID)
+    const model = last?.model ?? (await Provider.defaultModel())
 
     if (!auto) {
       const result = await Question.ask({
@@ -112,7 +122,11 @@ export const PlanExitTool = Tool.define("plan_exit", {
     }
 
     // Create a new session for the build phase with a fresh context
-    const created = await Session.create({ permission: session.permission, title: session.title + " (build)" })
+    const created = await Session.create({
+      permission: session.permission,
+      title: session.title + " (build)",
+      workspaceID: session.workspaceID,
+    })
     const userMsg: MessageV2.User = {
       id: MessageID.ascending(),
       sessionID: created.id,
@@ -120,6 +134,7 @@ export const PlanExitTool = Tool.define("plan_exit", {
       time: { created: Date.now() },
       agent: mode,
       model,
+      variant: last?.variant,
     }
     await Session.updateMessage(userMsg)
     await Session.updatePart({

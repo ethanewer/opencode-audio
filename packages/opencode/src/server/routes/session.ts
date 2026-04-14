@@ -4,6 +4,8 @@ import { describeRoute, validator, resolver } from "hono-openapi"
 import { SessionID, MessageID, PartID } from "@/session/schema"
 import z from "zod"
 import { Session } from "../../session"
+import { Instance } from "@/project/instance"
+import { InstanceBootstrap } from "@/project/bootstrap"
 import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "../../session/prompt"
 import { SessionCompaction } from "../../session/compaction"
@@ -796,8 +798,15 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
-        const msg = await SessionPrompt.command({ ...body, sessionID })
-
+        // Look up the session's directory to ensure the command runs in
+        // the correct Instance (critical for worktrees where the eval
+        // agent needs the same cwd as the build agent).
+        const info = await Session.get(sessionID)
+        const msg = await Instance.provide({
+          directory: info.directory,
+          init: InstanceBootstrap,
+          fn: () => SessionPrompt.command({ ...body, sessionID }),
+        })
         return c.json(msg)
       },
     )
