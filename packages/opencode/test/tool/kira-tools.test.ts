@@ -4,6 +4,8 @@ import { ToolRegistry } from "../../src/tool/registry"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { TaskComplete, TaskCompleteTool } from "../../src/tool/task_complete"
+import { Todo } from "../../src/session/todo"
+import { Session } from "../../src/session"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { tmpdir } from "../fixture/fixture"
 
@@ -44,7 +46,6 @@ describe("kira tool filtering", () => {
         expect(ids).not.toContain("grep")
         expect(ids).not.toContain("glob")
         expect(ids).not.toContain("webfetch")
-        expect(ids).not.toContain("todowrite")
         expect(ids).not.toContain("image_read")
       },
     })
@@ -222,6 +223,171 @@ describe("task_complete double-confirmation", () => {
     expect(result.output).toContain("Fix the bug")
     expect(result.metadata.confirmed).toBe(false)
     TaskComplete.reset(id)
+  })
+})
+
+describe("task_complete todo integration", () => {
+  function ctx(sid: SessionID) {
+    const msgs: MessageV2.WithParts[] = [
+      {
+        info: { role: "user", id: "m1" } as any,
+        parts: [{ type: "text", text: "Do something", synthetic: false } as any],
+      },
+    ]
+    return {
+      sessionID: sid,
+      messageID: MessageID.make(""),
+      callID: "",
+      agent: "build",
+      abort: AbortSignal.any([]),
+      messages: msgs,
+      metadata: () => {},
+      ask: async () => {},
+    }
+  }
+
+  test("bounces back when incomplete todos exist", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const sid = session.id
+        TaskComplete.reset(sid)
+        Todo.update({
+          sessionID: sid,
+          todos: [
+            { content: "Step 1", status: "completed", priority: "high" },
+            { content: "Step 2", status: "in_progress", priority: "high" },
+            { content: "Step 3", status: "pending", priority: "medium" },
+          ],
+        })
+        const tool = await TaskCompleteTool.init()
+        const result = await tool.execute({}, ctx(sid))
+        expect(result.metadata.todosRemaining).toBe(true)
+        expect(result.metadata.confirmed).toBe(false)
+        expect(result.output).toContain("incomplete items")
+        expect(result.output).toContain("Step 2")
+        expect(result.output).toContain("Step 3")
+        // pending state should NOT be set
+        expect(TaskComplete.isPending(sid)).toBe(false)
+        expect(TaskComplete.isConfirmed(sid)).toBe(false)
+        Todo.update({ sessionID: sid, todos: [] })
+        TaskComplete.reset(sid)
+      },
+    })
+  })
+
+  test("enters double-confirm when all todos are completed", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const sid = session.id
+        TaskComplete.reset(sid)
+        Todo.update({
+          sessionID: sid,
+          todos: [
+            { content: "Step 1", status: "completed", priority: "high" },
+            { content: "Step 2", status: "completed", priority: "high" },
+          ],
+        })
+        const tool = await TaskCompleteTool.init()
+        // First call: should enter checklist (not bounce)
+        const r1 = await tool.execute({}, ctx(sid))
+        expect(r1.metadata.todosRemaining).toBe(false)
+        expect(r1.metadata.confirmed).toBe(false)
+        expect(r1.output).toContain("Checklist")
+        expect(TaskComplete.isPending(sid)).toBe(true)
+        // Second call: should confirm
+        const r2 = await tool.execute({}, ctx(sid))
+        expect(r2.metadata.confirmed).toBe(true)
+        expect(TaskComplete.isConfirmed(sid)).toBe(true)
+        Todo.update({ sessionID: sid, todos: [] })
+        TaskComplete.reset(sid)
+      },
+    })
+  })
+
+  test("enters double-confirm with no todos at all", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const sid = session.id
+        TaskComplete.reset(sid)
+        // No todos written — should go straight to checklist
+        const tool = await TaskCompleteTool.init()
+        const r1 = await tool.execute({}, ctx(sid))
+        expect(r1.metadata.todosRemaining).toBe(false)
+        expect(r1.metadata.confirmed).toBe(false)
+        expect(r1.output).toContain("Checklist")
+        expect(TaskComplete.isPending(sid)).toBe(true)
+        // Second call: should confirm
+        const r2 = await tool.execute({}, ctx(sid))
+        expect(r2.metadata.confirmed).toBe(true)
+        TaskComplete.reset(sid)
+      },
+    })
+  })
+
+  test("resets pending state when bouncing on incomplete todos", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const sid = session.id
+        TaskComplete.reset(sid)
+        // Simulate: first call enters checklist (no todos)
+        const tool = await TaskCompleteTool.init()
+        const r1 = await tool.execute({}, ctx(sid))
+        expect(r1.metadata.confirmed).toBe(false)
+        expect(TaskComplete.isPending(sid)).toBe(true)
+        // Now model creates todos instead of confirming
+        Todo.update({
+          sessionID: sid,
+          todos: [{ content: "New task", status: "pending", priority: "high" }],
+        })
+        // Calls task_complete again — should bounce (not confirm)
+        const r2 = await tool.execute({}, ctx(sid))
+        expect(r2.metadata.todosRemaining).toBe(true)
+        expect(r2.metadata.confirmed).toBe(false)
+        expect(r2.output).toContain("incomplete items")
+        // pending should be reset
+        expect(TaskComplete.isPending(sid)).toBe(false)
+        Todo.update({ sessionID: sid, todos: [] })
+        TaskComplete.reset(sid)
+      },
+    })
+  })
+
+  test("cancelled todos do not block completion", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const sid = session.id
+        TaskComplete.reset(sid)
+        Todo.update({
+          sessionID: sid,
+          todos: [
+            { content: "Done task", status: "completed", priority: "high" },
+            { content: "Skipped task", status: "cancelled", priority: "low" },
+          ],
+        })
+        const tool = await TaskCompleteTool.init()
+        const r1 = await tool.execute({}, ctx(sid))
+        // cancelled is not pending/in_progress, so should NOT bounce
+        expect(r1.metadata.todosRemaining).toBe(false)
+        expect(r1.output).toContain("Checklist")
+        Todo.update({ sessionID: sid, todos: [] })
+        TaskComplete.reset(sid)
+      },
+    })
   })
 })
 

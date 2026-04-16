@@ -1699,7 +1699,8 @@ export namespace SessionPrompt {
                   effectiveAgent = { ...agent, prompt }
                 }
 
-                const system = [...env, ...(skills ? [skills] : []), ...instructions]
+                const todos = SystemPrompt.todos(agent)
+                const system = [...env, ...(skills ? [skills] : []), ...(todos ? [todos] : []), ...instructions]
                 const evalPart = msgs
                   .findLast((msg) => msg.info.id === lastUser.id)
                   ?.parts.findLast(

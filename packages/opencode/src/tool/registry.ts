@@ -25,6 +25,7 @@ import { VoiceCompleteTool, NativeVoiceCompleteTool } from "./voice_complete"
 import { TaskTool } from "./task"
 import { WebSearchTool } from "./websearch"
 import { WebFetchTool } from "./webfetch"
+import { TodoWriteTool } from "./todo"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 import { Effect, Layer, ServiceMap } from "effect"
@@ -140,6 +141,7 @@ export namespace ToolRegistry {
           TaskTool,
           WebSearchTool,
           WebFetchTool,
+          TodoWriteTool,
           ...(Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
           ...custom,
         ]
@@ -231,6 +233,10 @@ export namespace ToolRegistry {
           if (tool.id === "question") {
             if (!agent?.permission) return false
             return evaluate("question", "*", agent.permission).action !== "deny"
+          }
+          if (tool.id === "todowrite") {
+            if (!agent?.permission) return false
+            return evaluate("todowrite", "*", agent.permission).action !== "deny"
           }
 
           return true

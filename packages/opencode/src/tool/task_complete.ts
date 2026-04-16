@@ -1,6 +1,7 @@
 import z from "zod"
 import { Tool } from "./tool"
 import { Tmux } from "@/tmux/tmux"
+import { Todo } from "../session/todo"
 import type { SessionID } from "../session/schema"
 import type { MessageV2 } from "../session/message-v2"
 
@@ -57,11 +58,32 @@ export const TaskCompleteTool = Tool.define("task_complete", {
   parameters: z.object({}),
   async execute(_params, ctx) {
     const sid = ctx.sessionID
+
+    // If there are incomplete todos, bounce back before entering the confirmation flow
+    const todos = Todo.get(sid)
+    const incomplete = todos.filter((t) => t.status === "pending" || t.status === "in_progress")
+    if (todos.length > 0 && incomplete.length > 0) {
+      // Reset any pending confirmation so the double-confirm restarts cleanly
+      pending.delete(sid)
+      const list = todos.map((t, i) => `${i + 1}. [${t.status}] ${t.content}`).join("\n")
+      return {
+        title: `${incomplete.length} incomplete todos`,
+        metadata: { confirmed: false, todosRemaining: true },
+        output: [
+          "You still have incomplete items on your todo list:",
+          "",
+          list,
+          "",
+          "Complete or cancel all remaining todos before finishing the task. Continue working through them now.",
+        ].join("\n"),
+      }
+    }
+
     if (pending.get(sid) === true) {
       pending.set(sid, false)
       return {
         title: "Task complete",
-        metadata: { confirmed: true },
+        metadata: { confirmed: true, todosRemaining: false },
         output: "Task confirmed complete.",
       }
     }
@@ -77,7 +99,7 @@ export const TaskCompleteTool = Tool.define("task_complete", {
 
     return {
       title: "Completion checklist",
-      metadata: { confirmed: false },
+      metadata: { confirmed: false, todosRemaining: false },
       output: [
         `Original task:\n${task}`,
         "",

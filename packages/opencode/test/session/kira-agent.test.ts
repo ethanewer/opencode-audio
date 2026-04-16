@@ -253,7 +253,7 @@ describe("kira agent integration", () => {
           expect(names).not.toContain("grep")
           expect(names).not.toContain("webfetch")
           expect(names).not.toContain("task")
-          expect(names).not.toContain("todowrite")
+          expect(names).toContain("todowrite")
         }),
         { git: true, config: providerCfg },
       ),

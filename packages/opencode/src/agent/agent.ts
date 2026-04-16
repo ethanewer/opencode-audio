@@ -91,6 +91,7 @@ export namespace Agent {
             "*": "allow",
             task: "deny",
             task_complete: "deny",
+            todowrite: "deny",
             doom_loop: "ask",
             external_directory: {
               "*": "ask",
@@ -123,6 +124,7 @@ export namespace Agent {
                   question: "allow",
                   plan_enter: "allow",
                   task_complete: "allow",
+                  todowrite: "allow",
                 }),
                 user,
               ),
@@ -153,6 +155,7 @@ export namespace Agent {
                   doom_loop: "ask",
                   question: "allow",
                   plan_exit: "allow",
+                  todowrite: "allow",
                   task: {
                     "*": "deny",
                     explore: "allow",
@@ -286,6 +289,7 @@ export namespace Agent {
                   question: "allow",
                   plan_enter: "allow",
                   task_complete: "allow",
+                  todowrite: "allow",
                 }),
                 user,
               ),
@@ -578,7 +582,7 @@ export namespace Agent {
                 Permission.fromConfig({
                   edit: "deny",
                   task: "deny",
-                  todowrite: "deny",
+                  todowrite: "allow",
                 }),
                 user,
               ),
