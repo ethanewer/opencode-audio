@@ -58,6 +58,7 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
                 "PageUp, PageDown, BSpace (backspace), BTab (shift-tab), F1-F12. " +
                 "Modifier prefixes: C- (ctrl), S- (shift), M- (alt) — e.g. C-c, C-d, S-Up, M-a. " +
                 "Most bash commands should end with a newline (\\n) to cause them to execute. " +
+                "If the newline is omitted, Enter is automatically appended. " +
                 "Do not include extra whitespace before or after the keystrokes unless it's part of the intended command.",
             ),
           duration: z
@@ -79,6 +80,7 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
             .describe(
               "Override auto-detection to force literal text input. " +
                 "When true, keystrokes are always typed as text even if they match a special key name. " +
+                "When true, Enter is not automatically appended — include a trailing \\n explicitly if Enter is needed. " +
                 "When false (default), recognized key names are sent as key presses " +
                 "and everything else is typed literally.",
             )

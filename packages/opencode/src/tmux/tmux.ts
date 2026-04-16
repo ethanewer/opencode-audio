@@ -143,9 +143,13 @@ export namespace Tmux {
 
       await sendKeys(state.name, cmd.keystrokes, cmd.literal)
       const special = !cmd.literal && SPECIAL_RE.test(cmd.keystrokes.trim())
-      if (special || !cmd.keystrokes.endsWith("\n")) {
+      if (special || (cmd.literal && !cmd.keystrokes.endsWith("\n"))) {
         await Bun.sleep(cmd.duration * 1000)
       } else {
+        // Auto-press Enter when the model omits trailing \n
+        if (!cmd.literal && !cmd.keystrokes.endsWith("\n")) {
+          await run(["tmux", "send-keys", "-t", state.name, "Enter"])
+        }
         await Bun.sleep(50)
         await sendKeys(state.name, `echo '${marker}'\n`)
 
