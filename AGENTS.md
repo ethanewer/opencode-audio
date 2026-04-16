@@ -155,6 +155,23 @@ cd packages/opencode && bun test test/session/prompt.test.ts
 - Use `tmpdir()` from `test/fixture/fixture.ts` for temp directories with auto-cleanup
 - Session integration tests use `TestLLMServer` from `test/lib/llm-server.ts` (local HTTP mock, no real API calls)
 
+## Verifying TUI Changes
+
+Typechecking and unit tests are necessary but not sufficient for TUI work. They verify the code compiles and existing logic is preserved, but they cannot confirm that a feature actually works in the interactive UI. **When making changes to TUI code, you must launch the TUI and visually verify the feature works**, the same way a user would.
+
+### Launch command
+
+From the repo root, inside `packages/opencode`:
+
+```bash
+cd packages/opencode && OPENCODE_DB=:memory: OPENCODE_PURE=1 bun run --conditions=browser src/index.ts .
+```
+
+- `OPENCODE_DB=:memory:` — uses an in-memory database so no persistent state is created
+- `OPENCODE_PURE=1` — disables external plugins for a clean environment
+- `--conditions=browser` — required for JSX/Solid.js resolution
+- `.` — project directory (current dir)
+
 ## Type Checking
 
 - Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.

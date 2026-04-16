@@ -50,11 +50,13 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
             .string()
             .describe(
               "String containing the exact keystrokes to send to the terminal. " +
-                "The text will be used completely verbatim as keystrokes. " +
-                "Write commands exactly as you want them sent to the terminal. " +
+                "Each command sends either a single special key or a string of literal text. " +
+                "If the entire string matches a recognized key name, it is sent as that key press. " +
+                "Otherwise, the string is typed as literal. " +
+                "Recognized key names: Escape, Tab, Up, Down, Left, Right, Home, End, " +
+                "PageUp, PageDown, BSpace (backspace), BTab (shift-tab), F1-F12, Space, Enter. " +
+                "Modifier prefixes: C- (ctrl), S- (shift), M- (alt) — e.g. C-c, C-d, S-Up, M-a. " +
                 "Most bash commands should end with a newline (\\n) to cause them to execute. " +
-                "For special key sequences, use tmux-style escape sequences: C-c for Ctrl+C, C-d for Ctrl+D. " +
-                "Each command's keystrokes are sent exactly as written to the terminal. " +
                 "Do not include extra whitespace before or after the keystrokes unless it's part of the intended command.",
             ),
           duration: z
@@ -69,6 +71,15 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
                 "It is always possible to wait again if the prior output has not finished, " +
                 "by running empty keystrokes with a duration on subsequent requests to wait longer. " +
                 "Never wait longer than 60 seconds; prefer to poll to see intermediate result status.",
+            )
+            .optional(),
+          literal: z
+            .boolean()
+            .describe(
+              "Override auto-detection to force literal text input. " +
+                "When true, keystrokes are always typed as text even if they match a special key name. " +
+                "When false (default), recognized key names are sent as key presses " +
+                "and everything else is typed literally.",
             )
             .optional(),
         }),
@@ -87,6 +98,7 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
     const commands = params.commands.map((c) => ({
       keystrokes: c.keystrokes,
       duration: Math.min(c.duration ?? 1.0, 60),
+      literal: c.literal,
     }))
     const labels = commands.map((c) => c.keystrokes.replace(/\n$/, "").trim()).filter(Boolean)
 

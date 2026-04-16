@@ -4,7 +4,8 @@ import { get as getTmpdir } from "@/session/tmpdir"
 const log = Log.create({ service: "tmux" })
 const MARKER = "__CMDEND__"
 const MARKER_ECHO_RE = /^.*echo\s+'__CMDEND__\d+__'.*$/
-const SPECIAL_RE = /^C-[a-zA-Z]$/
+const SPECIAL_RE =
+  /^(C-[a-zA-Z]|Escape|Tab|BTab|Up|Down|Left|Right|Home|End|PageUp|PageDown|BSpace|DC|IC|F[0-9]+|[SM]-\S+)$/
 
 interface State {
   name: string
@@ -21,8 +22,8 @@ async function run(args: string[]): Promise<string> {
   return text
 }
 
-async function sendKeys(name: string, keystrokes: string) {
-  const special = SPECIAL_RE.test(keystrokes.trim())
+async function sendKeys(name: string, keystrokes: string, literal?: boolean) {
+  const special = !literal && SPECIAL_RE.test(keystrokes.trim())
   if (special) {
     await run(["tmux", "send-keys", "-t", name, keystrokes.trim()])
     return
@@ -119,7 +120,7 @@ export namespace Tmux {
   export async function execute(
     id: string,
     cwd: string,
-    commands: Array<{ keystrokes: string; duration: number }>,
+    commands: Array<{ keystrokes: string; duration: number; literal?: boolean }>,
     update?: (output: string) => void,
   ) {
     let state = await ensure(id, cwd)
@@ -140,23 +141,25 @@ export namespace Tmux {
       const marker = `${MARKER}${state.seq}__`
       const start = performance.now()
 
-      await sendKeys(state.name, cmd.keystrokes)
-      if (!SPECIAL_RE.test(cmd.keystrokes.trim()) && !cmd.keystrokes.endsWith("\n")) {
-        await run(["tmux", "send-keys", "-t", state.name, "Enter"])
-      }
-      await Bun.sleep(50)
-      await sendKeys(state.name, `echo '${marker}'\n`)
+      await sendKeys(state.name, cmd.keystrokes, cmd.literal)
+      const special = !cmd.literal && SPECIAL_RE.test(cmd.keystrokes.trim())
+      if (special || !cmd.keystrokes.endsWith("\n")) {
+        await Bun.sleep(cmd.duration * 1000)
+      } else {
+        await Bun.sleep(50)
+        await sendKeys(state.name, `echo '${marker}'\n`)
 
-      const wait = Math.min(0.3, cmd.duration) * 1000
-      await Bun.sleep(wait)
+        const wait = Math.min(0.3, cmd.duration) * 1000
+        await Bun.sleep(wait)
 
-      while ((performance.now() - start) / 1000 < cmd.duration) {
-        const pane = await capturePane(state.name)
-        if (pane.split("\n").some((line) => line.includes(marker) && !MARKER_ECHO_RE.test(line))) break
-        if (update) {
-          update(stripPrompt(filterMarkers(delta(before, pane))))
+        while ((performance.now() - start) / 1000 < cmd.duration) {
+          const pane = await capturePane(state.name)
+          if (pane.split("\n").some((line) => line.includes(marker) && !MARKER_ECHO_RE.test(line))) break
+          if (update) {
+            update(stripPrompt(filterMarkers(delta(before, pane))))
+          }
+          await Bun.sleep(500)
         }
-        await Bun.sleep(500)
       }
     }
 
