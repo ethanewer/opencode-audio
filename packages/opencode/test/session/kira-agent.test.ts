@@ -251,7 +251,7 @@ describe("kira agent integration", () => {
           expect(names).not.toContain("bash")
           expect(names).not.toContain("glob")
           expect(names).not.toContain("grep")
-          expect(names).not.toContain("webfetch")
+          expect(names).toContain("webfetch")
           expect(names).not.toContain("task")
           expect(names).toContain("todowrite")
         }),

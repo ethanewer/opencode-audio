@@ -45,7 +45,7 @@ describe("kira tool filtering", () => {
         expect(ids).not.toContain("bash")
         expect(ids).not.toContain("grep")
         expect(ids).not.toContain("glob")
-        expect(ids).not.toContain("webfetch")
+        expect(ids).toContain("webfetch")
         expect(ids).not.toContain("image_read")
       },
     })
