@@ -218,7 +218,15 @@ export namespace ToolRegistry {
 
           if (tool.id === "speak") {
             if (!agent?.permission) return false
-            return model.audioOutput !== true && evaluate("speak", "*", agent.permission).action !== "deny"
+            return voice && model.audioOutput !== true && evaluate("speak", "*", agent.permission).action !== "deny"
+          }
+          if (tool.id === "websearch") {
+            if (!agent?.permission) return false
+            return evaluate("websearch", "*", agent.permission).action !== "deny"
+          }
+          if (tool.id === "webfetch") {
+            if (!agent?.permission) return false
+            return evaluate("webfetch", "*", agent.permission).action !== "deny"
           }
           if (tool.id === "question") {
             if (!agent?.permission) return false
