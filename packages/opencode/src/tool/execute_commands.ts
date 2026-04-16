@@ -21,7 +21,8 @@ function limit(text: string) {
 }
 
 /** Tmux escape sequences that are not real shell commands. */
-const TMUX_ESCAPE = /^C-[a-z]$/i
+const TMUX_ESCAPE =
+  /^(C-[a-zA-Z]|Escape|Tab|BTab|Up|Down|Left|Right|Home|End|PageUp|PageDown|BSpace|DC|IC|F[0-9]+|[SM]-\S+)$/
 
 export const ExecuteCommandsTool = Tool.define("execute_commands", {
   description:
@@ -54,7 +55,7 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
                 "If the entire string matches a recognized key name, it is sent as that key press. " +
                 "Otherwise, the string is typed as literal. " +
                 "Recognized key names: Escape, Tab, Up, Down, Left, Right, Home, End, " +
-                "PageUp, PageDown, BSpace (backspace), BTab (shift-tab), F1-F12, Space, Enter. " +
+                "PageUp, PageDown, BSpace (backspace), BTab (shift-tab), F1-F12. " +
                 "Modifier prefixes: C- (ctrl), S- (shift), M- (alt) — e.g. C-c, C-d, S-Up, M-a. " +
                 "Most bash commands should end with a newline (\\n) to cause them to execute. " +
                 "Do not include extra whitespace before or after the keystrokes unless it's part of the intended command.",
