@@ -143,7 +143,7 @@ export namespace Agent {
                   // deny all unknown permissions (blocks MCP tools)
                   "*": "deny",
                   // re-allow permissions only in defaults
-                  execute_commands: "allow",
+                  shell: "allow",
                   read: {
                     "*": "allow",
                     "*.env": "ask",
@@ -328,7 +328,7 @@ export namespace Agent {
                   // deny all unknown permissions (blocks MCP tools)
                   "*": "deny",
                   // re-allow permissions only in defaults
-                  execute_commands: "allow",
+                  shell: "allow",
                   read: {
                     "*": "allow",
                     "*.env": "ask",
@@ -487,7 +487,7 @@ export namespace Agent {
                 defaults,
                 Permission.fromConfig({
                   "*": "deny",
-                  execute_commands: "allow",
+                  shell: "allow",
                   read: "allow",
                   bash: {
                     "*": "deny",

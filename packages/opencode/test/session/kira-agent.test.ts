@@ -242,13 +242,14 @@ describe("kira agent integration", () => {
           const tools = (first as any).tools as { function: { name: string } }[] | undefined
           expect(tools).toBeDefined()
           const names = tools!.map((t) => t.function.name)
-          expect(names).toContain("execute_commands")
+          expect(names).toContain("shell")
           expect(names).toContain("task_complete")
           expect(names).toContain("read")
           expect(names).toContain("edit")
           expect(names).toContain("write")
           expect(names).not.toContain("transcribe")
           expect(names).not.toContain("bash")
+          expect(names).not.toContain("execute_commands")
           expect(names).not.toContain("glob")
           expect(names).not.toContain("grep")
           expect(names).toContain("webfetch")
@@ -439,9 +440,10 @@ describe("kira agent integration", () => {
           const tools = (first as any).tools as { function: { name: string } }[] | undefined
           const names = tools?.map((t) => t.function.name) ?? []
           expect(names).toContain("read")
-          expect(names).toContain("execute_commands")
+          expect(names).toContain("shell")
           expect(names).toContain("plan_exit")
           expect(names).not.toContain("bash")
+          expect(names).not.toContain("execute_commands")
           expect(names).not.toContain("task_complete")
 
           const system = (first.messages as any[]).filter((m: any) => m.role === "system")

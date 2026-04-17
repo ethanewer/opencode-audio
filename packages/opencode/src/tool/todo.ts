@@ -20,9 +20,14 @@ export const TodoWriteTool = Tool.define("todowrite", {
       sessionID: ctx.sessionID,
       todos: params.todos,
     })
+    const incomplete = Todo.incomplete(params.todos)
+    const nudge =
+      incomplete.length > 0
+        ? "Todos updated. Continue with the next in_progress or pending item. Mark each todo `completed` or `cancelled` before calling task_complete."
+        : "Todos updated. All items are completed or cancelled."
     return {
-      title: `${params.todos.filter((x) => x.status !== "completed").length} todos`,
-      output: JSON.stringify(params.todos, null, 2),
+      title: `${incomplete.length} todos`,
+      output: [JSON.stringify(params.todos, null, 2), "", nudge].join("\n"),
       metadata: {
         todos: params.todos,
       },

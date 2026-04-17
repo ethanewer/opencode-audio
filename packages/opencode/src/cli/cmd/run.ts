@@ -20,7 +20,7 @@ import { WriteTool } from "../../tool/write"
 import { WebSearchTool } from "../../tool/websearch"
 import { TodoWriteTool } from "../../tool/todo"
 import { TaskTool } from "../../tool/task"
-import { BashTool } from "../../tool/bash"
+import { ShellTool } from "../../tool/shell"
 import { Locale } from "../../util/locale"
 import { transcribeFile } from "../../audio/transcribe"
 import { Session } from "../../session"
@@ -150,21 +150,14 @@ function task(info: ToolProps<typeof TaskTool>) {
   })
 }
 
-function bash(info: ToolProps<typeof BashTool>) {
+function shell(info: ToolProps<typeof ShellTool>) {
   const output = info.part.state.status === "completed" ? info.part.state.output?.trim() : undefined
-  block(
-    {
-      icon: "$",
-      title: `${info.input.command}`,
-    },
-    output,
-  )
-}
-
-function executeCommands(info: ToolProps<any>) {
-  const output = info.part.state.status === "completed" ? info.part.state.output?.trim() : undefined
-  const plan = info.metadata.plan ?? "Execute Commands"
-  block({ icon: "$", title: typeof plan === "string" ? plan.slice(0, 80) : "Execute Commands" }, output)
+  const command = info.metadata.command ?? info.input.keystrokes?.replace(/\n$/, "").trim() ?? ""
+  if (!command) {
+    block({ icon: "~", title: "Waiting." }, output)
+    return
+  }
+  block({ icon: "$", title: command.slice(0, 80) }, output)
 }
 
 function taskComplete(info: ToolProps<any>) {
@@ -418,7 +411,7 @@ export const RunCommand = cmd({
     async function execute(sdk: OpencodeClient) {
       function tool(part: ToolPart) {
         try {
-          if (part.tool === "bash") return bash(props<typeof BashTool>(part))
+          if (part.tool === "shell") return shell(props<typeof ShellTool>(part))
           if (part.tool === "read") return read(props<typeof ReadTool>(part))
           if (part.tool === "write") return write(props<typeof WriteTool>(part))
           if (part.tool === "webfetch") return webfetch(props<typeof WebFetchTool>(part))
@@ -426,7 +419,6 @@ export const RunCommand = cmd({
           if (part.tool === "websearch") return websearch(props<typeof WebSearchTool>(part))
           if (part.tool === "task") return task(props<typeof TaskTool>(part))
           if (part.tool === "todowrite") return todo(props<typeof TodoWriteTool>(part))
-          if (part.tool === "execute_commands") return executeCommands(props<any>(part))
           if (part.tool === "task_complete") return taskComplete(props<any>(part))
           return fallback(part)
         } catch {

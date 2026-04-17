@@ -192,12 +192,12 @@ describe("plan and todo nudge text (session/prompt.ts)", () => {
   })
 
   test("todo nudge forbids asking user what to do next", async () => {
-    const src = await readPrompt("session/prompt.ts")
+    const src = await readPrompt("session/todo.ts")
     expect(src).toContain("Do not ask the user what to do next")
   })
 
   test("todo nudge says to proceed with next item", async () => {
-    const src = await readPrompt("session/prompt.ts")
+    const src = await readPrompt("session/todo.ts")
     expect(src).toContain("proceed with the next incomplete item now")
   })
 

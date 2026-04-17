@@ -514,7 +514,6 @@ describe("JSON to SQLite migration", () => {
     expect(todos.length).toBe(2)
     expect(todos[0].content).toBe("First todo")
     expect(todos[0].status).toBe("pending")
-    expect(todos[0].priority).toBe("high")
     expect(todos[0].position).toBe(0)
     expect(todos[1].content).toBe("Second todo")
     expect(todos[1].position).toBe(1)
@@ -747,13 +746,13 @@ describe("JSON to SQLite migration", () => {
     await Bun.write(
       path.join(storageDir, "todo", "ses_test456def.json"),
       JSON.stringify([
-        { content: "ok", status: "pending", priority: "high" },
-        { content: "skip", status: "pending" },
+        { content: "ok", status: "pending" },
+        { content: "", status: "pending" },
       ]),
     )
     await Bun.write(
       path.join(storageDir, "todo", "ses_missing.json"),
-      JSON.stringify([{ content: "orphan", status: "pending", priority: "high" }]),
+      JSON.stringify([{ content: "orphan", status: "pending" }]),
     )
     await Bun.write(path.join(storageDir, "todo", "ses_broken.json"), "{ nope")
 

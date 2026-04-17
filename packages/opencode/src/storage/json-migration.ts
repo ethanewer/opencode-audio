@@ -319,12 +319,11 @@ export namespace JsonMigration {
         }
         for (let position = 0; position < data.length; position++) {
           const todo = data[position]
-          if (!todo?.content || !todo?.status || !todo?.priority) continue
+          if (!todo?.content || !todo?.status) continue
           values.push({
             session_id: sessionID,
             content: todo.content,
             status: todo.status,
-            priority: todo.priority,
             position,
             time_created: now,
             time_updated: now,

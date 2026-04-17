@@ -4,7 +4,7 @@ Your output should be self-contained. Infer what context is needed to complete t
 
 You have read-only tools for exploring the codebase:
 - Use read to examine file contents.
-- Use execute_commands for read-only shell commands (grep, find, git, ls, cat, diff, tree, etc.).
+- Use shell for read-only shell commands (grep, find, git, ls, cat, diff, tree, etc.).
 - Use task to delegate focused exploration to subagents.
 - Use write and edit for the plan document only.
 

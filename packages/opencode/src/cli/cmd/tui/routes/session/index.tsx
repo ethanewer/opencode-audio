@@ -36,7 +36,7 @@ import { Locale } from "@/util/locale"
 import type { Tool } from "@/tool/tool"
 import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
-import { BashTool } from "@/tool/bash"
+import { ShellTool } from "@/tool/shell"
 import type { EditTool } from "@/tool/edit"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
 import type { WebFetchTool } from "@/tool/webfetch"
@@ -1671,8 +1671,38 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   return (
     <Show when={!shouldHide()}>
       <Switch>
-        <Match when={props.part.tool === "bash"}>
-          <Bash {...toolprops} />
+        <Match when={props.part.tool === "shell"}>
+          {(() => {
+            const group = createMemo(() => {
+              const msgs = sync.data.message[props.message.sessionID] ?? []
+              const exec: ToolPart[] = []
+              for (const msg of msgs) {
+                for (const p of (sync.data.part[msg.id] ?? []) as Part[]) {
+                  if (p.type === "tool" && (p as ToolPart).tool === "shell") exec.push(p as ToolPart)
+                }
+              }
+              const me = exec.findIndex((p) => p.callID === props.part.callID)
+              if (me < 0) return { follower: false, output: "" }
+              const myCmd = shellCmd(props.part.state as any)
+              let follower = false
+              if (!myCmd) {
+                for (let j = me - 1; j >= 0; j--) {
+                  if (shellCmd(exec[j]!.state as any)) {
+                    follower = true
+                    break
+                  }
+                }
+              }
+              let output = ((props.part.state as any).metadata?.output ?? "").trim()
+              for (let j = me + 1; j < exec.length; j++) {
+                if (shellCmd(exec[j]!.state as any)) break
+                const out = ((exec[j]!.state as any).metadata?.output ?? "").trim()
+                if (out) output = output ? output + "\n" + out : out
+              }
+              return { follower, output }
+            })
+            return <Shell {...toolprops} groupFollower={group().follower} groupOutput={group().output} />
+          })()}
         </Match>
         <Match when={props.part.tool === "webfetch"}>
           <WebFetch {...toolprops} />
@@ -1697,39 +1727,6 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         </Match>
         <Match when={props.part.tool === "question"}>
           <Question {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "execute_commands"}>
-          {(() => {
-            const group = createMemo(() => {
-              const msgs = sync.data.message[props.message.sessionID] ?? []
-              const exec: ToolPart[] = []
-              for (const msg of msgs) {
-                for (const p of (sync.data.part[msg.id] ?? []) as Part[]) {
-                  if (p.type === "tool" && (p as ToolPart).tool === "execute_commands") exec.push(p as ToolPart)
-                }
-              }
-              const me = exec.findIndex((p) => p.callID === props.part.callID)
-              if (me < 0) return { follower: false, output: "", active: false }
-              const myCmds = execCmds(props.part.state as any)
-              let follower = false
-              if (myCmds.length === 0) {
-                for (let j = me - 1; j >= 0; j--) {
-                  if (execCmds(exec[j]!.state as any).length > 0) {
-                    follower = true
-                    break
-                  }
-                }
-              }
-              let output = ((props.part.state as any).metadata?.output ?? "").trim()
-              for (let j = me + 1; j < exec.length; j++) {
-                if (execCmds(exec[j]!.state as any).length > 0) break
-                const out = ((exec[j]!.state as any).metadata?.output ?? "").trim()
-                if (out) output = output ? output + "\n" + out : out
-              }
-              return { follower, output }
-            })
-            return <ExecuteCommands {...toolprops} groupFollower={group().follower} groupOutput={group().output} />
-          })()}
         </Match>
         <Match when={props.part.tool === "task_complete"}>
           <TaskCompleteView {...toolprops} />
@@ -1933,75 +1930,6 @@ function BlockTool(props: {
   )
 }
 
-function Bash(props: ToolProps<typeof BashTool>) {
-  const ctx = use()
-  const { theme } = useTheme()
-  const isRunning = createMemo(() => props.part.state.status === "running")
-  const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
-  const userShell = createMemo(() => !!(props.metadata as Record<string, any>).userShell)
-  const [expanded, setExpanded] = createSignal(false)
-  createEffect(() => {
-    if (userShell()) setExpanded(true)
-  })
-  const lines = createMemo(() => output().split("\n"))
-  const compressed = createMemo(() => ctx.tui?.shell_view !== "expanded")
-
-  const overflow = createMemo(() => lines().length > 10)
-  const limited = createMemo(() => {
-    if (expanded() || !overflow()) return output()
-    return [...lines().slice(0, 10), "…"].join("\n")
-  })
-
-  return (
-    <Switch>
-      <Match when={compressed()}>
-        <>
-          <InlineTool
-            icon="$"
-            iconColor={theme.secondary}
-            pending="Writing command..."
-            complete={props.input.command}
-            spinner={isRunning()}
-            part={props.part}
-            onClick={output() ? () => setExpanded((prev) => !prev) : undefined}
-          >
-            {props.input.command}
-          </InlineTool>
-          <Show when={expanded() && output()}>
-            <box paddingLeft={3}>
-              <text paddingLeft={5} fg={theme.textMuted}>
-                {output()}
-              </text>
-            </box>
-          </Show>
-        </>
-      </Match>
-      <Match when={props.metadata.output !== undefined}>
-        <BlockTool
-          part={props.part}
-          spinner={isRunning()}
-          onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
-        >
-          <box gap={1}>
-            <text fg={theme.text}>$ {props.input.command}</text>
-            <Show when={output()}>
-              <text fg={theme.textMuted}>{limited()}</text>
-            </Show>
-            <Show when={overflow()}>
-              <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
-            </Show>
-          </box>
-        </BlockTool>
-      </Match>
-      <Match when={true}>
-        <InlineTool icon="$" pending="Writing command..." complete={props.input.command} part={props.part}>
-          {props.input.command}
-        </InlineTool>
-      </Match>
-    </Switch>
-  )
-}
-
 const CMDEND_RE = /__CMDEND__\d+__/
 const CMDEND_ECHO_RE = /echo\s+'__CMDEND__\d+__'/
 const CD_SETUP_RE = /cd\s+'\/[^']*'\s*$/
@@ -2034,100 +1962,63 @@ function cleanTerminal(text: string, cmds: string[]) {
     .trim()
 }
 
-function execCmds(state: Record<string, any>): string[] {
-  const c = state.metadata?.commands
-  if (Array.isArray(c) && c.length > 0) return c as string[]
-  const raw = state.input?.commands
-  if (Array.isArray(raw))
-    return raw
-      .map((cmd: any) =>
-        String(cmd.keystrokes ?? "")
-          .replace(/\n$/, "")
-          .trim(),
-      )
-      .filter(Boolean)
-  return []
+function shellCmd(state: Record<string, any>): string {
+  const c = state.metadata?.command
+  if (typeof c === "string" && c) return c
+  const keys = state.input?.keystrokes
+  if (typeof keys === "string") return keys.replace(/\n$/, "").trim()
+  return ""
 }
 
-function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; groupOutput?: string }) {
-  const ctx = use()
+function Shell(props: ToolProps<typeof ShellTool> & { groupFollower?: boolean; groupOutput?: string }) {
   const { theme } = useTheme()
-  const compressed = createMemo(() => ctx.tui?.shell_view !== "expanded")
-  const reset = createMemo(() => !!(props.input as Record<string, unknown>).reset)
+  const reset = createMemo(() => !!props.input.reset)
+  const userShell = createMemo(() => !!(props.metadata as Record<string, any>).userShell)
 
-  const cmds = createMemo(() => {
-    const c = props.metadata.commands
-    if (Array.isArray(c) && c.length > 0) return c as string[]
-    const raw = (props.input as Record<string, unknown>).commands
-    if (Array.isArray(raw))
-      return raw
-        .map((cmd: any) =>
-          String(cmd.keystrokes ?? "")
-            .replace(/\n$/, "")
-            .trim(),
-        )
-        .filter(Boolean)
-    return []
+  const cmd = createMemo(() => {
+    const c = props.metadata.command
+    if (typeof c === "string" && c) return c
+    const keys = props.input.keystrokes
+    if (typeof keys === "string") return keys.replace(/\n$/, "").trim()
+    return ""
   })
 
   const raw = createMemo(() => (props.groupOutput ?? props.metadata.output ?? "").trim())
-  const output = createMemo(() => cleanTerminal(stripAnsi(raw()), cmds()))
+  const output = createMemo(() => cleanTerminal(stripAnsi(raw()), cmd() ? [cmd()] : []))
   const [expanded, setExpanded] = createSignal(false)
-  const lines = createMemo(() => output().split("\n"))
-  const overflow = createMemo(() => lines().length > 10)
-  const limited = createMemo(() => {
-    if (expanded() || !overflow()) return output()
-    return ["…", ...lines().slice(-10)].join("\n")
-  })
-  const plan = createMemo(() => {
-    const p = props.metadata.plan ?? (props.input as Record<string, unknown>).plan
-    if (typeof p === "string" && p.length > 0) return p.slice(0, 80)
-    return "Execute Commands"
+  createEffect(() => {
+    if (userShell()) setExpanded(true)
   })
   const active = createMemo(() => {
     const st = props.part.state.status
     return st === "running" || st === "pending"
   })
+  const label = createMemo(() => cmd() || "Waiting.")
 
-  const totalDuration = createMemo(() => {
-    const raw = (props.input as Record<string, unknown>).commands
-    if (!Array.isArray(raw)) return 0
-    return raw.reduce((sum: number, cmd: any) => sum + Math.min(cmd.duration ?? 1.0, 60), 0)
-  })
+  const duration = createMemo(() => Math.min(props.input.duration ?? 1.0, 60))
 
   const [tick, setTick] = createSignal(0)
-  let countdownTimer: ReturnType<typeof setInterval> | undefined
+  let timer: ReturnType<typeof setInterval> | undefined
   createEffect(() => {
     if (active()) {
       setTick(0)
-      countdownTimer = setInterval(() => setTick((t) => t + 1), 80)
+      timer = setInterval(() => setTick((t) => t + 1), 80)
     } else {
-      if (countdownTimer) clearInterval(countdownTimer)
-      countdownTimer = undefined
+      if (timer) clearInterval(timer)
+      timer = undefined
     }
   })
   onCleanup(() => {
-    if (countdownTimer) clearInterval(countdownTimer)
+    if (timer) clearInterval(timer)
   })
 
-  const isWaitOnly = createMemo(() => {
-    const raw = (props.input as Record<string, unknown>).commands
-    if (!Array.isArray(raw) || raw.length === 0) return true
-    return raw.every(
-      (cmd: any) =>
-        !String(cmd.keystrokes ?? "")
-          .replace(/\n$/, "")
-          .trim(),
-    )
-  })
-
-  const timerSuffix = createMemo(() => {
+  const suffix = createMemo(() => {
     tick() // subscribe to tick for reactivity
     if (!active()) return undefined
-    if (!isWaitOnly()) return undefined
+    if (cmd()) return undefined
     const state = props.part.state
     const start = state.status === "running" ? state.time.start : undefined
-    const total = totalDuration()
+    const total = duration()
     if (start === undefined || total <= 0) return undefined
     const elapsed = (Date.now() - start) / 1000
     const remaining = Math.max(0, Math.ceil(total - elapsed))
@@ -2136,67 +2027,39 @@ function ExecuteCommands(props: ToolProps<any> & { groupFollower?: boolean; grou
     return `${min}:${sec}`
   })
 
-  const timerEl = createMemo(() => {
-    const t = timerSuffix()
+  const suffixEl = createMemo(() => {
+    const t = suffix()
     if (!t) return undefined
     return <text fg={theme.textMuted}>{t}</text>
   })
 
   return (
-    <Switch>
-      <Match when={compressed() || cmds().length === 0}>
-        <>
-          <Show when={reset()}>
-            <box paddingLeft={3}>
-              <text fg={theme.textMuted}>Shell session reset</text>
-            </box>
-          </Show>
-          <InlineTool
-            icon={cmds().length > 0 ? "$" : "~"}
-            iconColor={cmds().length > 0 ? theme.secondary : undefined}
-            pending={plan()}
-            complete={cmds().length > 0 ? cmds().join(" && ") : plan()}
-            spinner={active()}
-            spinnerSuffix={cmds().length === 0 ? timerEl() : undefined}
-            part={props.part}
-            onClick={cmds().length > 0 && output() ? () => setExpanded((prev) => !prev) : undefined}
-          >
-            {cmds().length > 0 ? cmds().join(" && ") : plan()}
-          </InlineTool>
-          <Show when={cmds().length > 0 && expanded() && output()}>
-            <box paddingLeft={3}>
-              <text paddingLeft={5} fg={theme.textMuted}>
-                {output()}
-              </text>
-            </box>
-          </Show>
-        </>
-      </Match>
-      <Match when={true}>
-        <BlockTool
-          part={props.part}
-          spinner={active()}
-          onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
-        >
-          <box>
-            <Show when={reset()}>
-              <text fg={theme.textMuted}>Shell session reset</text>
-            </Show>
-            <text fg={theme.text}>
-              {cmds()
-                .map((c) => `$ ${c}`)
-                .join("\n")}
-            </text>
-            <Show when={output()}>
-              <text fg={theme.textMuted}>{limited()}</text>
-            </Show>
-            <Show when={overflow()}>
-              <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
-            </Show>
-          </box>
-        </BlockTool>
-      </Match>
-    </Switch>
+    <>
+      <Show when={reset()}>
+        <box paddingLeft={3}>
+          <text fg={theme.textMuted}>Shell session reset</text>
+        </box>
+      </Show>
+      <InlineTool
+        icon={cmd() ? "$" : "~"}
+        iconColor={cmd() ? theme.secondary : undefined}
+        pending={label()}
+        complete={label()}
+        spinner={active()}
+        spinnerSuffix={!cmd() ? suffixEl() : undefined}
+        part={props.part}
+        onClick={cmd() && output() ? () => setExpanded((prev) => !prev) : undefined}
+      >
+        {label()}
+      </InlineTool>
+      <Show when={cmd() && expanded() && output()}>
+        <box paddingLeft={3}>
+          <text paddingLeft={5} fg={theme.textMuted}>
+            {output()}
+          </text>
+        </box>
+      </Show>
+    </>
   )
 }
 

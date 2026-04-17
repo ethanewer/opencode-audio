@@ -22,12 +22,6 @@ export const TuiOptions = z.object({
     .enum(["auto", "stacked"])
     .optional()
     .describe("Control diff rendering style: 'auto' adapts to terminal width, 'stacked' always shows single column"),
-  shell_view: z
-    .enum(["compressed", "expanded"])
-    .optional()
-    .describe(
-      "Shell tool display: 'compressed' shows one line per command with click-to-expand output, 'expanded' shows full block output",
-    ),
 })
 
 export const TuiInfo = z

@@ -1,31 +1,22 @@
 import z from "zod"
 import os from "os"
-import { Tool } from "./tool"
 import path from "path"
-import DESCRIPTION from "./bash.txt"
-import { Log } from "../util/log"
+import { Tool } from "./tool"
 import { Instance } from "../project/instance"
-import { lazy } from "@/util/lazy"
+import { Log } from "../util/log"
+import { Tmux } from "@/tmux/tmux"
 import { Language, type Node } from "web-tree-sitter"
-
+import { lazy } from "@/util/lazy"
 import { Filesystem } from "@/util/filesystem"
 import { Process } from "@/util/process"
 import { fileURLToPath } from "url"
-import { Flag } from "@/flag/flag"
 import { Shell } from "@/shell/shell"
-
 import { BashArity } from "@/permission/arity"
-import { Truncate } from "./truncate"
-import { Plugin } from "@/plugin"
-import { get as getTmpdir } from "@/session/tmpdir"
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Stream } from "effect"
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
-import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 
-const runtime = ManagedRuntime.make(CrossSpawnSpawner.defaultLayer)
-
+const log = Log.create({ service: "shell-tool" })
+const MAX_OUTPUT_BYTES = 30_000
 const MAX_METADATA_LENGTH = 30_000
-const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
+
 const PS = new Set(["powershell", "pwsh"])
 const CWD = new Set(["cd", "push-location", "set-location"])
 const FILES = new Set([
@@ -38,9 +29,6 @@ const FILES = new Set([
   "chmod",
   "chown",
   "cat",
-  // Leave PowerShell aliases out for now. Common ones like cat/cp/mv/rm/mkdir
-  // already hit the entries above, and alias normalization should happen in one
-  // place later so we do not risk double-prompting.
   "get-content",
   "set-content",
   "add-content",
@@ -53,6 +41,21 @@ const FILES = new Set([
 const FLAGS = new Set(["-destination", "-literalpath", "-path"])
 const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
 
+/** Tmux escape sequences that are not real shell commands. */
+const TMUX_ESCAPE =
+  /^(C-[a-zA-Z]|Escape|Tab|BTab|Up|Down|Left|Right|Home|End|PageUp|PageDown|BSpace|DC|IC|F[0-9]+|[SM]-\S+)$/
+
+function preview(text: string) {
+  if (text.length <= MAX_METADATA_LENGTH) return text
+  return text.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
+}
+
+function limit(text: string) {
+  if (text.length <= MAX_OUTPUT_BYTES) return text
+  const half = Math.floor(MAX_OUTPUT_BYTES / 2)
+  return text.slice(0, half) + `\n\n... (${text.length - MAX_OUTPUT_BYTES} bytes truncated) ...\n\n` + text.slice(-half)
+}
+
 type Part = {
   type: string
   text: string
@@ -63,8 +66,6 @@ type Scan = {
   patterns: Set<string>
   always: Set<string>
 }
-
-export const log = Log.create({ service: "bash-tool" })
 
 const resolveWasm = (asset: string) => {
   if (asset.startsWith("file://")) return fileURLToPath(asset)
@@ -262,11 +263,6 @@ async function collect(root: Node, cwd: string, ps: boolean, shell: string): Pro
   return scan
 }
 
-function preview(text: string) {
-  if (text.length <= MAX_METADATA_LENGTH) return text
-  return text.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
-}
-
 async function parse(command: string, ps: boolean) {
   const tree = await parser().then((p) => (ps ? p.ps : p.bash).parse(command))
   if (!tree) throw new Error("Failed to parse command")
@@ -294,132 +290,6 @@ async function ask(ctx: Tool.Context, scan: Scan) {
     always: Array.from(scan.always),
     metadata: {},
   })
-}
-
-async function shellEnv(ctx: Tool.Context, cwd: string) {
-  const extra = await Plugin.trigger("shell.env", { cwd, sessionID: ctx.sessionID, callID: ctx.callID }, { env: {} })
-  const tmpdir = getTmpdir(ctx.sessionID)
-  return {
-    ...process.env,
-    ...extra.env,
-    TMPDIR: tmpdir,
-    TMP: tmpdir,
-    TEMP: tmpdir,
-  }
-}
-
-function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
-  if (process.platform === "win32" && PS.has(name)) {
-    return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {
-      cwd,
-      env,
-      stdin: "ignore",
-      detached: false,
-    })
-  }
-
-  return ChildProcess.make(command, [], {
-    shell,
-    cwd,
-    env,
-    stdin: "ignore",
-    detached: process.platform !== "win32",
-  })
-}
-
-async function run(
-  input: {
-    shell: string
-    name: string
-    command: string
-    cwd: string
-    env: NodeJS.ProcessEnv
-    timeout: number
-    description: string
-  },
-  ctx: Tool.Context,
-) {
-  let output = ""
-  let expired = false
-  let aborted = false
-
-  ctx.metadata({
-    metadata: {
-      output: "",
-      description: input.description,
-    },
-  })
-
-  const exit = await runtime.runPromiseExit(
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-      const handle = yield* spawner.spawn(cmd(input.shell, input.name, input.command, input.cwd, input.env))
-
-      yield* Effect.forkScoped(
-        Stream.runForEach(Stream.decodeText(handle.all), (chunk) =>
-          Effect.sync(() => {
-            output += chunk
-            ctx.metadata({
-              metadata: {
-                output: preview(output),
-                description: input.description,
-              },
-            })
-          }),
-        ),
-      )
-
-      const abort = Effect.callback<void>((resume) => {
-        if (ctx.abort.aborted) return resume(Effect.void)
-        const handler = () => resume(Effect.void)
-        ctx.abort.addEventListener("abort", handler, { once: true })
-        return Effect.sync(() => ctx.abort.removeEventListener("abort", handler))
-      })
-
-      const timeout = Effect.sleep(`${input.timeout + 100} millis`)
-
-      const result = yield* Effect.raceAll([
-        handle.exitCode.pipe(Effect.map((code) => ({ kind: "exit" as const, code }))),
-        abort.pipe(Effect.map(() => ({ kind: "abort" as const, code: null }))),
-        timeout.pipe(Effect.map(() => ({ kind: "timeout" as const, code: null }))),
-      ])
-
-      if (result.kind === "abort") {
-        aborted = true
-        yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
-      }
-      if (result.kind === "timeout") {
-        expired = true
-        yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
-      }
-
-      return result.kind === "exit" ? result.code : null
-    }).pipe(Effect.scoped, Effect.orDie),
-  )
-
-  let code: number | null = null
-  if (Exit.isSuccess(exit)) {
-    code = exit.value
-  } else if (!Cause.hasInterruptsOnly(exit.cause)) {
-    throw Cause.squash(exit.cause)
-  }
-
-  const meta: string[] = []
-  if (expired) meta.push(`bash tool terminated command after exceeding timeout ${input.timeout} ms`)
-  if (aborted) meta.push("User aborted the command")
-  if (meta.length > 0) {
-    output += "\n\n<bash_metadata>\n" + meta.join("\n") + "\n</bash_metadata>"
-  }
-
-  return {
-    title: input.description,
-    metadata: {
-      output: preview(output),
-      exit: code,
-      description: input.description,
-    },
-    output,
-  }
 }
 
 const parser = lazy(async () => {
@@ -450,12 +320,12 @@ const parser = lazy(async () => {
 })
 
 /**
- * Parse a list of shell command strings, check for external directories and
- * bash permission rules using the same tree-sitter analysis as the standalone
- * bash tool. When every rule resolves to "allow", this is a no-op (the
- * permission.ask calls return immediately without prompting the user).
+ * Parse a shell command string, check for external directories and bash
+ * permission rules using tree-sitter analysis. When every rule resolves to
+ * "allow", this is a no-op (the permission.ask calls return immediately
+ * without prompting the user).
  */
-export async function checkCommandPermissions(commandTexts: string[], cwd: string, ctx: Tool.Context): Promise<void> {
+async function checkCommandPermissions(text: string, cwd: string, ctx: Tool.Context): Promise<void> {
   const shell = Shell.acceptable()
   const name = Shell.name(shell)
   const ps = PS.has(name)
@@ -466,8 +336,7 @@ export async function checkCommandPermissions(commandTexts: string[], cwd: strin
     always: new Set<string>(),
   }
 
-  for (const text of commandTexts) {
-    if (!text) continue
+  if (text) {
     try {
       const root = await parse(text, ps)
       const scan = await collect(root, cwd, ps, shell)
@@ -487,62 +356,106 @@ export async function checkCommandPermissions(commandTexts: string[], cwd: strin
   await ask(ctx, merged)
 }
 
-// TODO: we may wanna rename this tool so it works better on other shells
-export const BashTool = Tool.define("bash", async () => {
-  const shell = Shell.acceptable()
-  const name = Shell.name(shell)
-  const chain =
-    name === "powershell"
-      ? "If the commands depend on each other and must run sequentially, avoid '&&' in this shell because Windows PowerShell 5.1 does not support it. Use PowerShell conditionals such as `cmd1; if ($?) { cmd2 }` when later commands must depend on earlier success."
-      : "If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, Write before Bash for git operations, or git add before git commit), run these operations sequentially instead."
-  log.info("bash tool using shell", { shell })
-
-  return {
-    description: DESCRIPTION.replaceAll("${directory}", Instance.directory)
-      .replaceAll("${os}", process.platform)
-      .replaceAll("${shell}", name)
-      .replaceAll("${chaining}", chain)
-      .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
-      .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES)),
-    parameters: z.object({
-      command: z.string().describe("The command to execute"),
-      timeout: z.number().describe("Optional timeout in milliseconds").optional(),
-      workdir: z
-        .string()
-        .describe(
-          `The working directory to run the command in. Defaults to ${Instance.directory}. Use this instead of 'cd' commands.`,
-        )
-        .optional(),
-      description: z
-        .string()
-        .describe(
-          "Clear, concise description of what this command does in 5-10 words. Examples:\nInput: ls\nOutput: Lists files in current directory\n\nInput: git status\nOutput: Shows working tree status\n\nInput: npm install\nOutput: Installs package dependencies\n\nInput: mkdir foo\nOutput: Creates directory 'foo'",
-        ),
-    }),
-    async execute(params, ctx) {
-      const cwd = params.workdir ? await resolvePath(params.workdir, Instance.directory, shell) : Instance.directory
-      if (params.timeout !== undefined && params.timeout < 0) {
-        throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
-      }
-      const timeout = params.timeout ?? DEFAULT_TIMEOUT
-      const ps = PS.has(name)
-      const root = await parse(params.command, ps)
-      const scan = await collect(root, cwd, ps, shell)
-      if (!Instance.containsPath(cwd)) scan.dirs.add(cwd)
-      await ask(ctx, scan)
-
-      return run(
-        {
-          shell,
-          name,
-          command: params.command,
-          cwd,
-          env: await shellEnv(ctx, cwd),
-          timeout,
-          description: params.description,
-        },
-        ctx,
+export const ShellTool = Tool.define("shell", {
+  description:
+    "Interactive shell. Keystrokes are sent to a single persistent terminal session that is shared across every call.\n\n" +
+    "The terminal is stateful: the working directory, environment, shell history, background jobs, and any open interactive program (editor, REPL, pager, prompt) survive between calls. The terminal is never reset unless `reset` is set to true.\n\n" +
+    "Each call returns the new output that appeared since the previous call. To run a command, send the command text with a trailing newline. To abort, send `C-c`. To wait for more output without sending input, send empty `keystrokes` and a `duration`.",
+  parameters: z.object({
+    keystrokes: z
+      .string()
+      .describe(
+        "Keystrokes to send to the terminal. " +
+          "If the entire string matches a recognized key name, it is sent as that key press. " +
+          "Otherwise it is typed as literal text, and a newline is auto-appended if omitted. " +
+          "Recognized key names: Escape, Tab, Up, Down, Left, Right, Home, End, " +
+          "PageUp, PageDown, BSpace (backspace), BTab (shift-tab), F1-F12. " +
+          "Modifier prefixes: C- (ctrl), S- (shift), M- (alt) — e.g. C-c, C-d, S-Up, M-a. ",
+      ),
+    duration: z
+      .number()
+      .describe(
+        "Seconds to wait for output before this call returns. Default 1.0, max 600. " +
+          "Prefer a short duration and poll — if output is incomplete, call again with empty `keystrokes` and a duration.",
       )
-    },
-  }
+      .optional(),
+    literal: z
+      .boolean()
+      .describe(
+        "Override auto-detection to force literal text input. " +
+          "When true, keystrokes are always typed as text even if they match a special key name. " +
+          "When true, \\n is not automatically appended, and you must include a trailing \\n explicitly if needed. " +
+          "When false (default), recognized key names are sent as key presses " +
+          "and everything else is typed literally.",
+      )
+      .optional(),
+    reset: z
+      .boolean()
+      .describe(
+        "If true, kill the persistent terminal and start a fresh shell before sending `keystrokes`. " +
+          "Default false. Use this when the terminal is in an unrecoverable stuck state. " +
+          "Resetting discards all shell state — working directory, exported environment variables, history, and background jobs.",
+      )
+      .optional(),
+  }),
+  async execute(params, ctx) {
+    const cwd = Instance.directory
+    const duration = Math.min(params.duration ?? 1.0, 600)
+    const label = params.keystrokes.replace(/\n$/, "").trim()
+
+    ctx.metadata({
+      metadata: {
+        output: "",
+        command: label,
+      },
+    })
+
+    // Check permissions using tree-sitter parsing and external-directory
+    // detection. When every rule resolves to "allow" this returns
+    // immediately — no prompt.
+    if (!TMUX_ESCAPE.test(label)) {
+      await checkCommandPermissions(label, cwd, ctx)
+    }
+
+    if (params.reset) {
+      await Tmux.kill(ctx.sessionID)
+      log.info("reset shell", { sessionID: ctx.sessionID })
+    }
+
+    log.info("shell", { command: label, sessionID: ctx.sessionID })
+
+    const output = await Tmux.execute(
+      ctx.sessionID,
+      cwd,
+      [{ keystrokes: params.keystrokes, duration, literal: params.literal }],
+      (partial) => {
+        ctx.metadata({
+          metadata: {
+            output: preview(partial),
+            command: label,
+          },
+        })
+      },
+    )
+
+    const limited = limit(output)
+
+    let result: string
+    if (limited.trim()) {
+      result = `[New output]\n${limited}`
+    } else {
+      const pane = await Tmux.capture(ctx.sessionID)
+      result = `[No new output — showing current terminal]\n${limit(pane || "(empty)")}`
+    }
+
+    return {
+      title: label.slice(0, 80),
+      metadata: {
+        output: preview(output),
+        command: label,
+        truncated: output.length > MAX_OUTPUT_BYTES,
+      },
+      output: result,
+    }
+  },
 })

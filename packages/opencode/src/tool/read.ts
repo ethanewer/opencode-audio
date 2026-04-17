@@ -80,7 +80,7 @@ export const ReadTool = Tool.define<typeof ReadParams, ReadMeta>("read", async (
   const vision: VisionMode = caps?.imageInput ? "native" : caps?.hasVisionModel ? "aux" : "none"
   const audio: AudioMode = caps?.audioInput ? "native" : caps?.hasTranscription ? "aux" : "none"
   const pdf = caps?.pdfInput === true
-  // All agents use execute_commands for searching; standalone grep/glob hints are not needed.
+  // All agents use the shell tool for searching; standalone grep/glob hints are not needed.
   const search = false
 
   return {

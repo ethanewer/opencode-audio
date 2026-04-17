@@ -84,7 +84,6 @@ export const TodoTable = sqliteTable(
       .references(() => SessionTable.id, { onDelete: "cascade" }),
     content: text().notNull(),
     status: text().notNull(),
-    priority: text().notNull(),
     position: integer().notNull(),
     ...Timestamps,
   },

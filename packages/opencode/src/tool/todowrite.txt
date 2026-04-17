@@ -1,5 +1,4 @@
-Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
-It also helps the user understand the progress of the task and overall progress of their requests.
+Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user. It also helps the user understand the progress of the task and overall progress of their requests.
 
 ## When to Use This Tool
 Use this tool proactively in these scenarios:
@@ -20,7 +19,7 @@ Skip using this tool when:
 3. The task can be completed in less than 3 trivial steps
 4. The task is purely conversational or informational
 
-NOTE that you should not use this tool if there is only one trivial task to do. In this case you are better off just doing the task directly.
+In these cases you are better off just doing the task directly.
 
 ## Examples of When to Use the Todo List
 
@@ -153,15 +152,21 @@ The assistant did not use the todo list because this is a single command executi
 
 2. **Task Management**:
    - Update task status in real-time as you work
-   - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
+   - Mark tasks complete IMMEDIATELY after finishing — do not batch completions
    - Only have ONE task in_progress at any time
-   - Complete current tasks before starting new ones
-   - Cancel tasks that become irrelevant
+   - Cancel tasks that become irrelevant (do not leave them as pending)
 
 3. **Task Breakdown**:
    - Create specific, actionable items
    - Break complex tasks into smaller, manageable steps
    - Use clear, descriptive task names
 
-When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully.
+## Integration with the Agent Loop
 
+This tool is wired into two automatic mechanisms you should be aware of:
+
+1. **End-of-turn nudge.** If your turn ends while any todo is still `pending` or `in_progress`, the loop will automatically restart your turn with a reminder listing the remaining items (up to 3 times per session). Do not rely on this as a way to stop — actively mark each todo `completed` or `cancelled` as you finish it.
+
+2. **`task_complete` gate.** The `task_complete` tool will refuse to finish the task while any todo is `pending` or `in_progress`. It returns the remaining list and asks you to continue. Before calling `task_complete`, resolve every todo to `completed` or `cancelled`.
+
+When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully.

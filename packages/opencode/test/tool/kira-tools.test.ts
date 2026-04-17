@@ -36,13 +36,14 @@ describe("kira tool filtering", () => {
           agent("build") as never,
         )
         const ids = tools.map((t) => t.id)
-        expect(ids).toContain("execute_commands")
+        expect(ids).toContain("shell")
         expect(ids).toContain("task_complete")
         expect(ids).toContain("read")
         expect(ids).toContain("write")
         expect(ids).toContain("edit")
         expect(ids).toContain("invalid")
         expect(ids).not.toContain("bash")
+        expect(ids).not.toContain("execute_commands")
         expect(ids).not.toContain("grep")
         expect(ids).not.toContain("glob")
         expect(ids).toContain("webfetch")
@@ -61,11 +62,12 @@ describe("kira tool filtering", () => {
           agent("voice-build") as never,
         )
         const ids = tools.map((t) => t.id)
-        expect(ids).toContain("execute_commands")
+        expect(ids).toContain("shell")
         expect(ids).toContain("task_complete")
         expect(ids).toContain("read")
         expect(ids).toContain("speak")
         expect(ids).not.toContain("bash")
+        expect(ids).not.toContain("execute_commands")
         expect(ids).not.toContain("image_read")
       },
     })
@@ -257,9 +259,9 @@ describe("task_complete todo integration", () => {
         Todo.update({
           sessionID: sid,
           todos: [
-            { content: "Step 1", status: "completed", priority: "high" },
-            { content: "Step 2", status: "in_progress", priority: "high" },
-            { content: "Step 3", status: "pending", priority: "medium" },
+            { content: "Step 1", status: "completed" },
+            { content: "Step 2", status: "in_progress" },
+            { content: "Step 3", status: "pending" },
           ],
         })
         const tool = await TaskCompleteTool.init()
@@ -289,8 +291,8 @@ describe("task_complete todo integration", () => {
         Todo.update({
           sessionID: sid,
           todos: [
-            { content: "Step 1", status: "completed", priority: "high" },
-            { content: "Step 2", status: "completed", priority: "high" },
+            { content: "Step 1", status: "completed" },
+            { content: "Step 2", status: "completed" },
           ],
         })
         const tool = await TaskCompleteTool.init()
@@ -349,7 +351,7 @@ describe("task_complete todo integration", () => {
         // Now model creates todos instead of confirming
         Todo.update({
           sessionID: sid,
-          todos: [{ content: "New task", status: "pending", priority: "high" }],
+          todos: [{ content: "New task", status: "pending" }],
         })
         // Calls task_complete again — should bounce (not confirm)
         const r2 = await tool.execute({}, ctx(sid))
@@ -375,8 +377,8 @@ describe("task_complete todo integration", () => {
         Todo.update({
           sessionID: sid,
           todos: [
-            { content: "Done task", status: "completed", priority: "high" },
-            { content: "Skipped task", status: "cancelled", priority: "low" },
+            { content: "Done task", status: "completed" },
+            { content: "Skipped task", status: "cancelled" },
           ],
         })
         const tool = await TaskCompleteTool.init()
@@ -391,21 +393,18 @@ describe("task_complete todo integration", () => {
   })
 })
 
-describe("execute_commands tool definition", () => {
-  test("description matches KIRA exactly", async () => {
+describe("shell tool definition", () => {
+  test("shell tool is registered and describes itself as interactive", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tools = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("build") as never)
-        const exec = tools.find((t) => t.id === "execute_commands")
-        expect(exec).toBeDefined()
-        expect(exec!.description).toBe(
-          "Call this to execute commands in the terminal with your analysis and plan. " +
-            "Returns only new terminal output since the last call, labeled [New output]. " +
-            "If nothing new was produced, returns the current visible terminal, labeled [No new output — showing current terminal]. " +
-            "Set reset to true to start a fresh shell session if the terminal is stuck (e.g., in a pager or interactive prompt).",
-        )
+        const sh = tools.find((t) => t.id === "shell")
+        expect(sh).toBeDefined()
+        expect(sh!.description).toContain("Interactive shell")
+        expect(sh!.description).toContain("persistent")
+        expect(sh!.description).toContain("reset")
       },
     })
   })

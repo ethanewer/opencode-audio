@@ -144,20 +144,7 @@ export namespace SystemPrompt {
   export function todos(agent: Agent.Info) {
     if (Permission.evaluate("todowrite", "*", agent.permission).action === "deny") return
     return `# Task Management
-You have access to the todowrite tool to manage and plan tasks. Use it to break down complex work into trackable steps and give the user visibility into your progress.
-
-Use the todowrite tool when:
-- A task requires 3 or more distinct steps
-- The user provides multiple tasks or a list of things to do
-- Work is non-trivial and benefits from structured tracking
-
-Do not use it for single, straightforward tasks that need no tracking.
-
-When using the tool:
-- Create a todo list before beginning complex work
-- Mark each task as completed immediately after finishing — do not batch completions
-- Keep exactly one task in_progress at a time
-- Complete or cancel all todos before finishing the session`
+Break down and manage your work with the todowrite tool. Mark each task as completed immediately after finishing it — do not batch completions. Resolve every todo to completed or cancelled before calling task_complete.`
   }
 
   export async function skills(agent: Agent.Info) {

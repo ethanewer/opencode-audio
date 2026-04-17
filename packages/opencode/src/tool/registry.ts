@@ -19,7 +19,7 @@ import { Truncate } from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
 import { SpeakTool } from "./speak"
 import { EvalTool } from "./eval"
-import { ExecuteCommandsTool } from "./execute_commands"
+import { ShellTool } from "./shell"
 import { TaskCompleteTool } from "./task_complete"
 import { VoiceCompleteTool, NativeVoiceCompleteTool } from "./voice_complete"
 import { TaskTool } from "./task"
@@ -134,7 +134,7 @@ export namespace ToolRegistry {
           ApplyPatchTool,
           SpeakTool,
           EvalTool,
-          ExecuteCommandsTool,
+          ShellTool,
           TaskCompleteTool,
           VoiceCompleteTool,
           NativeVoiceCompleteTool,

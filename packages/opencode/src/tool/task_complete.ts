@@ -61,20 +61,19 @@ export const TaskCompleteTool = Tool.define("task_complete", {
 
     // If there are incomplete todos, bounce back before entering the confirmation flow
     const todos = Todo.get(sid)
-    const incomplete = todos.filter((t) => t.status === "pending" || t.status === "in_progress")
+    const incomplete = Todo.incomplete(todos)
     if (todos.length > 0 && incomplete.length > 0) {
       // Reset any pending confirmation so the double-confirm restarts cleanly
       pending.delete(sid)
-      const list = todos.map((t, i) => `${i + 1}. [${t.status}] ${t.content}`).join("\n")
       return {
         title: `${incomplete.length} incomplete todos`,
         metadata: { confirmed: false, todosRemaining: true },
         output: [
           "You still have incomplete items on your todo list:",
           "",
-          list,
+          Todo.incompleteList(todos),
           "",
-          "Complete or cancel all remaining todos before finishing the task. Continue working through them now.",
+          Todo.CONTINUE_HINT,
         ].join("\n"),
       }
     }

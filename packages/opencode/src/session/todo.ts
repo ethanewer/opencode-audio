@@ -9,8 +9,7 @@ export namespace Todo {
   export const Info = z
     .object({
       content: z.string().describe("Brief description of the task"),
-      status: z.string().describe("Current status of the task: pending, in_progress, completed, cancelled"),
-      priority: z.string().describe("Priority level of the task: high, medium, low"),
+      status: z.enum(["pending", "in_progress", "completed", "cancelled"]).describe("Current status of the task"),
     })
     .meta({ ref: "Todo" })
   export type Info = z.infer<typeof Info>
@@ -35,7 +34,6 @@ export namespace Todo {
             session_id: input.sessionID,
             content: todo.content,
             status: todo.status,
-            priority: todo.priority,
             position,
           })),
         )
@@ -50,8 +48,18 @@ export namespace Todo {
     )
     return rows.map((row) => ({
       content: row.content,
-      status: row.status,
-      priority: row.priority,
+      status: row.status as Info["status"],
     }))
+  }
+
+  export function incomplete(todos: Info[]) {
+    return todos.filter((t) => t.status === "pending" || t.status === "in_progress")
+  }
+
+  export const CONTINUE_HINT =
+    "Complete or cancel each remaining todo before finishing the task. Do not ask the user what to do next — proceed with the next incomplete item now."
+
+  export function incompleteList(todos: Info[]) {
+    return todos.map((t, i) => `${i + 1}. [${t.status}] ${t.content}`).join("\n")
   }
 }

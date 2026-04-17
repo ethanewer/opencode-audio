@@ -1691,9 +1691,9 @@ it.live("loop nudges build agent when todos are incomplete", () =>
       Todo.update({
         sessionID: chat.id,
         todos: [
-          { content: "Create the schema", status: "completed", priority: "high" },
-          { content: "Add the API route", status: "pending", priority: "high" },
-          { content: "Write tests", status: "pending", priority: "medium" },
+          { content: "Create the schema", status: "completed" },
+          { content: "Add the API route", status: "pending" },
+          { content: "Write tests", status: "pending" },
         ],
       })
 
@@ -1745,8 +1745,8 @@ it.live("loop does not nudge when all todos are completed", () =>
       Todo.update({
         sessionID: chat.id,
         todos: [
-          { content: "Create the schema", status: "completed", priority: "high" },
-          { content: "Skipped task", status: "cancelled", priority: "low" },
+          { content: "Create the schema", status: "completed" },
+          { content: "Skipped task", status: "cancelled" },
         ],
       })
 
@@ -1795,7 +1795,7 @@ it.live(
 
         Todo.update({
           sessionID: chat.id,
-          todos: [{ content: "Task A", status: "pending", priority: "high" }],
+          todos: [{ content: "Task A", status: "pending" }],
         })
 
         // Queue 3 text responses (one per todo nudge), then 5 for KIRA nudges after todo cap

@@ -80,7 +80,7 @@ function usesTerminalPrompt(agent: { prompt?: string }) {
   return !!agent.prompt?.includes("{terminal_state}")
 }
 
-const ACTION_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "bash"])
+const ACTION_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch", "shell"])
 const MAX_TODO_NUDGES = 3
 const MAX_EVAL_NUDGES = 2
 const MAX_EMPTY_NUDGES = 5
@@ -88,7 +88,7 @@ const MAX_EMPTY_NUDGES = 5
 function incompleteTodos(sessionID: SessionID) {
   const todos = Todo.get(sessionID)
   if (!todos.length) return undefined
-  const incomplete = todos.filter((t) => t.status === "pending" || t.status === "in_progress")
+  const incomplete = Todo.incomplete(todos)
   if (!incomplete.length) return undefined
   return { todos, incomplete }
 }
@@ -760,12 +760,12 @@ export namespace SessionPrompt {
           id: PartID.ascending(),
           messageID: msg.id,
           sessionID: input.sessionID,
-          tool: "bash",
+          tool: "shell",
           callID: ulid(),
           state: {
             status: "running",
             time: { start: Date.now() },
-            input: { command: input.command },
+            input: { keystrokes: input.command + "\n", command: input.command },
           },
         }
         yield* sessions.updatePart(part)
@@ -1325,7 +1325,6 @@ export namespace SessionPrompt {
                 const result = yield* Effect.sync(() => incompleteTodos(sessionID))
                 if (result) {
                   todoNudges++
-                  const list = result.todos.map((t, i) => `${i}. [${t.status}] ${t.content}`).join("\n")
                   const mid = MessageID.ascending()
                   yield* sessions.updateMessage({
                     id: mid,
@@ -1344,9 +1343,9 @@ export namespace SessionPrompt {
                       "<system-reminder>",
                       "Your previous turn ended but your todo list still has incomplete items.",
                       "",
-                      list,
+                      Todo.incompleteList(result.todos),
                       "",
-                      "Continue working through the remaining pending and in_progress items. Mark each todo as completed or cancelled as you finish. Do not ask the user what to do next — proceed with the next incomplete item now.",
+                      Todo.CONTINUE_HINT,
                       "</system-reminder>",
                     ].join("\n"),
                     synthetic: true,
@@ -1427,8 +1426,8 @@ export namespace SessionPrompt {
                   continue
                 }
               }
-              // Empty tool calls feedback: nudge the agent to use
-              // execute_commands when it finishes without calling any tools.
+              // Empty tool calls feedback: nudge the agent to use the shell
+              // tool when it finishes without calling any tools.
               // Only for primary sessions — subagents finish naturally.
               if (step > 0 && nudges < MAX_EMPTY_NUDGES && !session.parentID) {
                 nudges++
