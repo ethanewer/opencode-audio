@@ -13,6 +13,7 @@ import { Filesystem } from "../util/filesystem"
 import { Instance } from "../project/instance"
 import { trimDiff } from "./edit"
 import { assertExternalDirectory } from "./external-directory"
+import { TodoGate } from "../session/todo-gate"
 
 const MAX_DIAGNOSTICS_PER_FILE = 20
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
@@ -24,6 +25,19 @@ export const WriteTool = Tool.define("write", {
     filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
   }),
   async execute(params, ctx) {
+    const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset)
+    if (!gate.ok) {
+      return {
+        title: "write blocked — no active plan",
+        metadata: {
+          diagnostics: {} as Awaited<ReturnType<typeof LSP.diagnostics>>,
+          filepath: params.filePath,
+          exists: false,
+        },
+        output: TodoGate.blockMessage("write", gate.reason),
+      }
+    }
+
     const filepath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath)
     await assertExternalDirectory(ctx, filepath)
 

@@ -12,6 +12,7 @@ import { Process } from "@/util/process"
 import { fileURLToPath } from "url"
 import { Shell } from "@/shell/shell"
 import { BashArity } from "@/permission/arity"
+import { TodoGate } from "../session/todo-gate"
 
 const log = Log.create({ service: "shell-tool" })
 const MAX_OUTPUT_BYTES = 30_000
@@ -320,6 +321,53 @@ const parser = lazy(async () => {
 })
 
 /**
+ * Classify a full shell command line as "read-only" or "side-effect" by
+ * parsing it with tree-sitter and evaluating each sub-command against the
+ * shared read-only bash ruleset (the same rules the plan agent uses to
+ * restrict shell). A line is read-only only if EVERY sub-command resolves
+ * to "allow" under that ruleset. Parse failures or unknown commands are
+ * conservatively classified as side-effect.
+ */
+async function classifyLine(text: string): Promise<"read-only" | "side-effect"> {
+  const shellBin = Shell.acceptable()
+  const name = Shell.name(shellBin)
+  const ps = PS.has(name)
+  let root: Node
+  try {
+    root = await parse(text, ps)
+  } catch {
+    return "side-effect"
+  }
+
+  // Output redirections are always side effects; the permission rules already
+  // deny "* > *" / "* >> *", but redirection nodes with no command attached
+  // won't show up in commands(root).
+  for (const node of root.descendantsOfType("redirected_statement")) {
+    if (!node) continue
+    const raw = node.text
+    if (/(^|\s)(>{1,2})\s*\S/.test(raw)) return "side-effect"
+  }
+
+  const commandNodes = commands(root)
+  if (commandNodes.length === 0) {
+    // No recognized command — could be a bare variable assignment, a
+    // here-doc, or unparseable junk. Conservative default: side-effect.
+    return "side-effect"
+  }
+
+  for (const node of commandNodes) {
+    const tokens = parts(node).map((item) => item.text)
+    if (tokens.length === 0) return "side-effect"
+    // Use the raw source form so deny rules like "* > *" can fire. Wildcard
+    // patterns like "grep *" match bare "grep" because the trailing " *" is
+    // made optional by the wildcard matcher.
+    const raw = source(node)
+    if (TodoGate.classifyShell(raw) === "side-effect") return "side-effect"
+  }
+  return "read-only"
+}
+
+/**
  * Parse a shell command string, check for external directories and bash
  * permission rules using tree-sitter analysis. When every rule resolves to
  * "allow", this is a no-op (the permission.ask calls return immediately
@@ -409,6 +457,28 @@ export const ShellTool = Tool.define("shell", {
         command: label,
       },
     })
+
+    // Todo gate: if this command has side effects, require an in_progress
+    // todo with populated notes. Empty keystrokes (duration-only polls) and
+    // tmux escape sequences are exempt. Classification reuses the shared
+    // plan-mode bash allowlist so it matches what "plan" restricts to.
+    if (label && !TMUX_ESCAPE.test(label)) {
+      const classification = await classifyLine(label)
+      if (classification === "side-effect") {
+        const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset)
+        if (!gate.ok) {
+          return {
+            title: "shell blocked — no active plan",
+            metadata: {
+              output: "",
+              command: label,
+              truncated: false,
+            },
+            output: TodoGate.blockMessage("shell", gate.reason),
+          }
+        }
+      }
+    }
 
     // Check permissions using tree-sitter parsing and external-directory
     // detection. When every rule resolves to "allow" this returns

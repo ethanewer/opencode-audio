@@ -18,6 +18,7 @@ import { Filesystem } from "../util/filesystem"
 import { Instance } from "../project/instance"
 import { Snapshot } from "@/snapshot"
 import { assertExternalDirectory } from "./external-directory"
+import { TodoGate } from "../session/todo-gate"
 
 const MAX_DIAGNOSTICS_PER_FILE = 20
 
@@ -49,6 +50,26 @@ export const EditTool = Tool.define("edit", {
 
     if (params.oldString === params.newString) {
       throw new Error("No changes to apply: oldString and newString are identical.")
+    }
+
+    const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset)
+    if (!gate.ok) {
+      const blockedDiff: Snapshot.FileDiff = {
+        file: params.filePath,
+        before: "",
+        after: "",
+        additions: 0,
+        deletions: 0,
+      }
+      return {
+        metadata: {
+          diagnostics: {} as Awaited<ReturnType<typeof LSP.diagnostics>>,
+          diff: "",
+          filediff: blockedDiff,
+        },
+        title: "edit blocked — no active plan",
+        output: TodoGate.blockMessage("edit", gate.reason),
+      }
     }
 
     const filePath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath)

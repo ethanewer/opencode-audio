@@ -144,7 +144,37 @@ export namespace SystemPrompt {
   export function todos(agent: Agent.Info) {
     if (Permission.evaluate("todowrite", "*", agent.permission).action === "deny") return
     return `# Task Management
-Break down and manage your work with the todowrite tool. Mark each task as completed immediately after finishing it — do not batch completions. Resolve every todo to completed or cancelled before calling task_complete.`
+
+The todowrite tool is your plan, scratchpad, and progress record. Use it to externalize your reasoning: the \`notes\` field on each todo is where you record your plan, hypothesis, and observations so you can read them back on later turns.
+
+## Tools that are free vs. gated
+You can freely use read-only tools at any time, including:
+- \`read\`
+- Read-only shell commands: ls, cat, head, tail, less, more, file, stat, find, grep, rg, awk, sed -n, wc, which, command -v, pwd, echo, tree, readelf, objdump, xxd, hexdump, od, git status, git log, git diff, git show, env, printenv, ps, uname, uptime, date.
+
+Before using any tool that changes state, you must have an active \`in_progress\` todo with populated \`notes\` describing your current plan. State-changing tools are:
+- \`write\`, \`edit\`, \`apply_patch\`
+- Any shell command not on the read-only list above (installs, builds, network calls, rm/cp/mv/mkdir/chmod, running scripts, package managers, etc.)
+
+This gate lets you explore freely (ls, grep, file) to gather context, but forces you to commit to a plan before you do anything with side effects.
+
+## Writing a good todo list
+1. When you have enough context to plan (which is almost immediately on simple tasks, or after a few read-only commands on complex ones), call todowrite with 3–8 todos covering your milestones. Set one to \`in_progress\` and populate its \`notes\` with your immediate plan.
+2. Every todo has THREE fields. All three are required:
+   - \`content\`: short imperative title, one line.
+   - \`status\`: \`pending\`, \`in_progress\`, \`completed\`, or \`cancelled\`. Exactly one item may be \`in_progress\` at a time.
+   - \`notes\`: 1–5 sentences of working prose. For \`in_progress\` todos: your hypothesis, the specific commands/edits you are about to run, and the expected outcome. For \`completed\` todos: what you actually did and observed. For \`pending\` todos: a sketch of what you will do. For \`cancelled\` todos: one sentence on why. Never leave \`notes\` blank. Never write "TBD" or "see plan" — write the actual thought.
+3. Before each chunk of side-effect work, update the \`in_progress\` todo's \`notes\` with what you are about to do. After each chunk, update the same todo's \`notes\` with what you observed. When done, mark it \`completed\` with a 1–2 sentence summary.
+4. If the plan changes, add, re-word, or cancel todos to reflect the new plan.
+
+## Enforcement
+These rules are enforced by the runtime. You will receive a direct error message from the tool itself if you violate them:
+- Any todo submitted with empty or trivially short \`notes\` is rejected.
+- More than one \`in_progress\` todo at a time is rejected.
+- \`write\`, \`edit\`, \`apply_patch\`, and side-effect shell commands are blocked until you have an \`in_progress\` todo with populated notes. The block message tells you which tool was refused.
+- \`task_complete\` is blocked while any todo is \`pending\` or \`in_progress\`.
+
+Keep the todo list current as you learn. Mark each todo \`completed\` immediately after finishing — do not batch completions.`
   }
 
   export async function skills(agent: Agent.Info) {

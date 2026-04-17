@@ -14,6 +14,7 @@ import { Filesystem } from "../util/filesystem"
 import DESCRIPTION from "./apply_patch.txt"
 import { File } from "../file"
 import { Format } from "../format"
+import { TodoGate } from "../session/todo-gate"
 
 const PatchParams = z.object({
   patchText: z.string().describe("The full patch text that describes all changes to be made"),
@@ -25,6 +26,29 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
   async execute(params, ctx) {
     if (!params.patchText) {
       throw new Error("patchText is required")
+    }
+
+    const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset)
+    if (!gate.ok) {
+      return {
+        title: "apply_patch blocked — no active plan",
+        metadata: {
+          diff: "",
+          files: [] as Array<{
+            filePath: string
+            relativePath: string
+            type: "add" | "update" | "delete" | "move"
+            diff: string
+            before: string
+            after: string
+            additions: number
+            deletions: number
+            movePath: string | undefined
+          }>,
+          diagnostics: {} as Awaited<ReturnType<typeof LSP.diagnostics>>,
+        },
+        output: TodoGate.blockMessage("apply_patch", gate.reason),
+      }
     }
 
     // Parse the patch to get hunks

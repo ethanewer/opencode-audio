@@ -22,6 +22,7 @@ export namespace TaskComplete {
 
   export function reset(sessionID: SessionID) {
     pending.delete(sessionID)
+    Todo.reset(sessionID)
   }
 
   export function instruction(messages: MessageV2.WithParts[]) {

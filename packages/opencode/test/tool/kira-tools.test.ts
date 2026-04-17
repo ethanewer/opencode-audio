@@ -259,9 +259,9 @@ describe("task_complete todo integration", () => {
         Todo.update({
           sessionID: sid,
           todos: [
-            { content: "Step 1", status: "completed" },
-            { content: "Step 2", status: "in_progress" },
-            { content: "Step 3", status: "pending" },
+            { content: "Step 1", status: "completed", notes: "done" },
+            { content: "Step 2", status: "in_progress", notes: "working" },
+            { content: "Step 3", status: "pending", notes: "todo" },
           ],
         })
         const tool = await TaskCompleteTool.init()
@@ -291,8 +291,8 @@ describe("task_complete todo integration", () => {
         Todo.update({
           sessionID: sid,
           todos: [
-            { content: "Step 1", status: "completed" },
-            { content: "Step 2", status: "completed" },
+            { content: "Step 1", status: "completed", notes: "done" },
+            { content: "Step 2", status: "completed", notes: "done" },
           ],
         })
         const tool = await TaskCompleteTool.init()
@@ -351,7 +351,7 @@ describe("task_complete todo integration", () => {
         // Now model creates todos instead of confirming
         Todo.update({
           sessionID: sid,
-          todos: [{ content: "New task", status: "pending" }],
+          todos: [{ content: "New task", status: "pending", notes: "fresh plan" }],
         })
         // Calls task_complete again — should bounce (not confirm)
         const r2 = await tool.execute({}, ctx(sid))
@@ -377,8 +377,8 @@ describe("task_complete todo integration", () => {
         Todo.update({
           sessionID: sid,
           todos: [
-            { content: "Done task", status: "completed" },
-            { content: "Skipped task", status: "cancelled" },
+            { content: "Done task", status: "completed", notes: "finished" },
+            { content: "Skipped task", status: "cancelled", notes: "not needed" },
           ],
         })
         const tool = await TaskCompleteTool.init()
