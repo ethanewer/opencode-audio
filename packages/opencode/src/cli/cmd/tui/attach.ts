@@ -38,6 +38,11 @@ export const AttachCommand = cmd({
         alias: ["p"],
         type: "string",
         describe: "basic auth password (defaults to OPENCODE_SERVER_PASSWORD)",
+      })
+      .option("dangerous", {
+        type: "boolean",
+        default: false,
+        describe: "allow reading and writing to any directory without prompting",
       }),
   handler: async (args) => {
     const unguard = win32InstallCtrlCGuard()
@@ -77,6 +82,7 @@ export const AttachCommand = cmd({
           continue: args.continue,
           sessionID: args.session,
           fork: args.fork,
+          dangerous: args.dangerous,
         },
         directory,
         headers,

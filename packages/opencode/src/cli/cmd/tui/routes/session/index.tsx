@@ -77,6 +77,7 @@ import { useTuiConfig } from "../../context/tui-config"
 import { Eval } from "@/session/eval"
 import { Session as SessionSvc } from "@/session"
 import { MessageID, SessionID } from "@/session/schema"
+import { Permission } from "@/permission"
 
 addDefaultParsers(parsers.parsers)
 
@@ -281,6 +282,28 @@ export function Session() {
       })
     }
     setSaved(undefined)
+  })
+
+  // Ensure dangerous rules are present on the active session when the
+  // --dangerous flag is set. Scoped to read/edit/external_directory —
+  // tool availability is unchanged.
+  createEffect(() => {
+    if (!local.dangerous()) return
+    const info = session()
+    if (!info || !route.sessionID || info.parentID) return
+    if (auto()) return
+    const current = (info.permission ?? []) as Permission.Ruleset
+    const missing = Permission.DANGEROUS.filter(
+      (rule) =>
+        !current.some(
+          (r) => r.permission === rule.permission && r.pattern === rule.pattern && r.action === rule.action,
+        ),
+    )
+    if (missing.length === 0) return
+    void SessionSvc.setPermission({
+      sessionID: SessionID.make(route.sessionID),
+      permission: [...current, ...missing],
+    })
   })
 
   // Auto-handle permission and question prompts in auto mode so the loop never blocks.

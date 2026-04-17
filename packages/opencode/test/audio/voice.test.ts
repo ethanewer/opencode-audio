@@ -798,7 +798,7 @@ describe("createVoiceSession", () => {
     sse.end()
   })
 
-  test("dangerous mode passes allow-all permission ruleset", async () => {
+  test("dangerous mode passes file-system allow ruleset", async () => {
     const sse = createMockEventStream()
     const { client, calls } = createMockClient(sse)
 
@@ -807,7 +807,11 @@ describe("createVoiceSession", () => {
       permission: "dangerous",
     })
 
-    expect(calls.create[0].permission).toEqual([{ permission: "*", pattern: "*", action: "allow" }])
+    expect(calls.create[0].permission).toEqual([
+      { permission: "read", pattern: "*", action: "allow" },
+      { permission: "edit", pattern: "*", action: "allow" },
+      { permission: "external_directory", pattern: "*", action: "allow" },
+    ])
 
     session.close()
     sse.end()
@@ -1128,9 +1132,10 @@ describe("createVoiceSession", () => {
 
     await new Promise((r) => setTimeout(r, 100))
 
-    // No reply should have been made — in dangerous mode, the allow-all ruleset
-    // prevents permission events from being emitted, but even if one arrives,
-    // the handler doesn't reject it
+    // No reply should have been made — in dangerous mode, the file-system
+    // ruleset pre-approves read/edit/external_directory so they never emit
+    // a permission.asked event, and the handler does not reject events it
+    // does receive (e.g. for bash).
     expect(calls.reply.length).toBe(0)
 
     session.close()

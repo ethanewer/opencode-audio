@@ -99,6 +99,11 @@ export const TuiThreadCommand = cmd({
       .option("agent", {
         type: "string",
         describe: "agent to use",
+      })
+      .option("dangerous", {
+        type: "boolean",
+        default: false,
+        describe: "allow reading and writing to any directory without prompting",
       }),
   handler: async (args) => {
     // Keep ENABLE_PROCESSED_INPUT cleared even if other code flips it.
@@ -227,6 +232,7 @@ export const TuiThreadCommand = cmd({
             model: args.model,
             prompt,
             fork: args.fork,
+            dangerous: args.dangerous,
           },
         })
       } finally {

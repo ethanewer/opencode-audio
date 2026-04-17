@@ -100,6 +100,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const sync = useSync()
     const sdk = useSDK()
     const toast = useToast()
+    const args = useArgs()
 
     function isModelValid(model: { providerID: string; modelID: string }) {
       const provider = sync.data.provider.find((x) => x.id === model.providerID)
@@ -376,6 +377,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               { permission: "plan_enter", action: "deny", pattern: "*" },
               { permission: "tui_auto", action: "deny", pattern: "*" },
             ]
+            if (args.dangerous) rules.push(...Permission.DANGEROUS)
             return rules
           },
           arm(id: string) {
@@ -445,8 +447,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           setModelStore("ready", true)
           if (state.pending) save()
         })
-
-      const args = useArgs()
 
       // Model is derived from the current system
       const currentModel = createMemo(() => {
@@ -620,6 +620,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       agent,
       system,
       mcp,
+      dangerous: () => args.dangerous === true,
     }
     return result
   },

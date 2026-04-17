@@ -404,7 +404,9 @@ export interface VoiceSessionOptions {
   /**
    * Permission mode or a custom ruleset.
    * - `"safe"` (default) — auto-rejects any permission prompts at runtime.
-   * - `"dangerous"` — creates the session with a wildcard allow-all ruleset.
+   * - `"dangerous"` — allows the model to read and write to any directory
+   *   without prompting. Scoped to file-system access only — does not change
+   *   tool availability or enable otherwise-disabled tools.
    * - `PermissionRuleset` — a custom array of permission rules applied to the session.
    *   When a custom ruleset is provided, runtime permission prompts are still auto-rejected
    *   (same as "safe") unless the ruleset itself allows them.
@@ -542,12 +544,16 @@ export async function createVoiceSession(client: OpencodeClient, options: VoiceS
   }
 
   // Resolve permission mode:
-  //  "dangerous" → wildcard allow-all ruleset
+  //  "dangerous" → allow file-system read/write without prompting
   //  "safe"      → no extra rules (auto-reject at runtime)
   //  array       → custom ruleset passed directly
   const isDangerous = perm === "dangerous"
   const permission: PermissionRuleset | undefined = isDangerous
-    ? [{ permission: "*", pattern: "*", action: "allow" as const }]
+    ? [
+        { permission: "read", pattern: "*", action: "allow" as const },
+        { permission: "edit", pattern: "*", action: "allow" as const },
+        { permission: "external_directory", pattern: "*", action: "allow" as const },
+      ]
     : Array.isArray(perm)
       ? perm
       : undefined

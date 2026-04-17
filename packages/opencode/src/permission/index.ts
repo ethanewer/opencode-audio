@@ -293,6 +293,17 @@ export namespace Permission {
     return rulesets.flat()
   }
 
+  /**
+   * Ruleset that allows the model to read and write to any directory without
+   * prompting. Scoped to file-system access only — does not enable any
+   * otherwise-disabled tools or change tool availability.
+   */
+  export const DANGEROUS: Ruleset = [
+    { permission: "read", pattern: "*", action: "allow" },
+    { permission: "edit", pattern: "*", action: "allow" },
+    { permission: "external_directory", pattern: "*", action: "allow" },
+  ]
+
   const EDIT_TOOLS = ["edit", "write", "apply_patch", "multiedit"]
   const SAFE_TOOLS = ["speak", "invalid"]
 

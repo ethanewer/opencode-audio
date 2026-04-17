@@ -25,6 +25,7 @@ import { useSync } from "@tui/context/sync"
 import { MessageID, PartID } from "@/session/schema"
 import { Session } from "@/session"
 import { SessionID } from "@/session/schema"
+import { Permission } from "@/permission"
 import { createStore, produce } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
@@ -422,6 +423,7 @@ export function Prompt(props: PromptProps) {
       if (sessionID == null) {
         const res = await sdk.client.session.create({
           workspaceID: props.workspaceID,
+          ...(local.dangerous() ? { permission: [...Permission.DANGEROUS] } : {}),
         })
         if (res.error) return
         sessionID = res.data.id
@@ -977,6 +979,7 @@ export function Prompt(props: PromptProps) {
     if (sessionID == null) {
       const res = await sdk.client.session.create({
         workspaceID: props.workspaceID,
+        ...(local.dangerous() ? { permission: [...Permission.DANGEROUS] } : {}),
       })
 
       if (res.error) {
@@ -1531,6 +1534,9 @@ export function Prompt(props: PromptProps) {
                   </Show>
                   <text fg={theme.textMuted}>{systemProviders()}</text>
                 </box>
+              </Show>
+              <Show when={local.dangerous()}>
+                <text fg={theme.error}>△ Dangerous</text>
               </Show>
             </box>
           </box>

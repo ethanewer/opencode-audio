@@ -278,6 +278,11 @@ export const RunCommand = cmd({
         default: 5,
         describe: "max number of build-eval iterations",
       })
+      .option("dangerous", {
+        type: "boolean",
+        default: false,
+        describe: "allow reading and writing to any directory without prompting",
+      })
   },
   handler: async (args) => {
     let message = [...args.message, ...(args["--"] || [])]
@@ -374,6 +379,7 @@ export const RunCommand = cmd({
         pattern: "*",
       })
     }
+    if (args.dangerous) rules.push(...Permission.DANGEROUS)
 
     function title() {
       if (args.title === undefined) return
