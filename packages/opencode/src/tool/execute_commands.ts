@@ -72,7 +72,7 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
                 "It is better to set a smaller duration than a longer duration. " +
                 "It is always possible to wait again if the prior output has not finished, " +
                 "by running empty keystrokes with a duration on subsequent requests to wait longer. " +
-                "Never wait longer than 60 seconds; prefer to poll to see intermediate result status.",
+                "Never wait longer than 600 seconds; prefer to poll to see intermediate result status.",
             )
             .optional(),
           literal: z
@@ -100,7 +100,7 @@ export const ExecuteCommandsTool = Tool.define("execute_commands", {
     const cwd = Instance.directory
     const commands = params.commands.map((c) => ({
       keystrokes: c.keystrokes,
-      duration: Math.min(c.duration ?? 1.0, 60),
+      duration: Math.min(c.duration ?? 1.0, 600),
       literal: c.literal,
     }))
     const labels = commands.map((c) => c.keystrokes.replace(/\n$/, "").trim()).filter(Boolean)
