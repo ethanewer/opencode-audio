@@ -465,7 +465,7 @@ export const ShellTool = Tool.define("shell", {
     if (label && !TMUX_ESCAPE.test(label)) {
       const classification = await classifyLine(label)
       if (classification === "side-effect") {
-        const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset)
+        const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset, ctx.agent)
         if (!gate.ok) {
           return {
             title: "shell blocked — no active plan",

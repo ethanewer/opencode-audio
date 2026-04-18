@@ -15,11 +15,17 @@ export namespace TodoGate {
    * undefined (direct programmatic callers — plugins, SDK users, unit tests
    * for tools) or denies todowrite (the model has no way to make a plan), the
    * gate is disabled and side-effect tools run without the plan check.
+   *
+   * Verification agents (eval) are exempt: they are read-heavy by design,
+   * operate in short-lived subsessions that start with no prior todos, and
+   * shouldn't be forced to write a plan before running a test.
    */
   export function allow(
     sessionID: SessionID,
     ruleset?: Permission.Ruleset,
+    agent?: string,
   ): { ok: true } | { ok: false; reason: string } {
+    if (agent === "eval") return { ok: true }
     if (!ruleset) return { ok: true }
     if (Permission.evaluate("todowrite", "*", ruleset).action !== "allow") {
       return { ok: true }

@@ -25,7 +25,7 @@ export const WriteTool = Tool.define("write", {
     filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
   }),
   async execute(params, ctx) {
-    const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset)
+    const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset, ctx.agent)
     if (!gate.ok) {
       return {
         title: "write blocked — no active plan",

@@ -52,7 +52,7 @@ export const EditTool = Tool.define("edit", {
       throw new Error("No changes to apply: oldString and newString are identical.")
     }
 
-    const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset)
+    const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset, ctx.agent)
     if (!gate.ok) {
       const blockedDiff: Snapshot.FileDiff = {
         file: params.filePath,

@@ -1832,7 +1832,9 @@ export namespace SessionPrompt {
                   (p) => p.type === "tool" && p.tool === "eval_result" && p.state.status === "completed",
                 )
             if (evalDone) break
-            // task_complete confirmed: agent confirmed completion via double-confirmation
+            // task_complete confirmed: agent marked the task complete. The
+            // eval agent will verify in a fresh context after the build
+            // session ends (see run.ts).
             if (TaskComplete.isConfirmed(sessionID)) {
               TaskComplete.reset(sessionID)
               break

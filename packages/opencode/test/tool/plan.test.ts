@@ -470,7 +470,6 @@ describe("tool.plan_exit", () => {
     const server = await llm([
       { type: "tool", tool: "plan_exit", input: {} },
       { type: "tool", tool: "task_complete", input: {} },
-      { type: "tool", tool: "task_complete", input: {} },
     ])
 
     try {
@@ -499,8 +498,9 @@ describe("tool.plan_exit", () => {
           const msgs = await Session.messages({ sessionID: session.id })
           const turn = msgs.find((item) => item.info.role === "assistant" && item.info.agent === "plan")
 
-          // The result is from the build session (new session)
-          expect(server.hits()).toHaveLength(3)
+          // The result is from the build session (new session). One hit for
+          // plan_exit, one for the single task_complete.
+          expect(server.hits()).toHaveLength(2)
           expect(result.info.role).toBe("assistant")
           expect(result.info.sessionID).not.toBe(session.id)
           expect(turn && turn.info.role === "assistant" ? turn.info.finish : undefined).toBe("tool-calls")
@@ -525,7 +525,6 @@ describe("tool.plan_exit", () => {
   test("loop auto-handoffs via session permissions without env var (TUI auto mode)", async () => {
     const server = await llm([
       { type: "tool", tool: "plan_exit", input: {} },
-      { type: "tool", tool: "task_complete", input: {} },
       { type: "tool", tool: "task_complete", input: {} },
     ])
 
@@ -555,8 +554,9 @@ describe("tool.plan_exit", () => {
 
           const result = await SessionPrompt.loop({ sessionID: session.id })
 
-          // The result is from the build session (new session)
-          expect(server.hits()).toHaveLength(3)
+          // The result is from the build session (new session). One hit for
+          // plan_exit, one for the single task_complete.
+          expect(server.hits()).toHaveLength(2)
           expect(result.info.role).toBe("assistant")
           expect(result.info.sessionID).not.toBe(session.id)
 
@@ -583,7 +583,6 @@ describe("tool.plan_exit", () => {
     const server = await llm([
       { type: "text", text: "Plan:\n1. Run bun typecheck.\n2. Run bun test." },
       { type: "tool", tool: "plan_exit", input: {} },
-      { type: "tool", tool: "task_complete", input: {} },
       { type: "tool", tool: "task_complete", input: {} },
     ])
 
@@ -612,8 +611,10 @@ describe("tool.plan_exit", () => {
           const result = await SessionPrompt.loop({ sessionID: session.id })
           const retry = JSON.stringify(server.hits()[1])
 
-          // The result is from the build session (new session)
-          expect(server.hits()).toHaveLength(4)
+          // The result is from the build session (new session). Hits: plan
+          // initial text (no plan_exit), plan retry (with plan_exit), build
+          // task_complete.
+          expect(server.hits()).toHaveLength(3)
           expect(result.info.role).toBe("assistant")
           expect(result.info.sessionID).not.toBe(session.id)
           expect(retry).toContain("Your turn ended without completing the plan")

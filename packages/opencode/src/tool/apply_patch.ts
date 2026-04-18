@@ -28,7 +28,7 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
       throw new Error("patchText is required")
     }
 
-    const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset)
+    const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset, ctx.agent)
     if (!gate.ok) {
       return {
         title: "apply_patch blocked — no active plan",

@@ -124,10 +124,10 @@ describe("kira tool filtering", () => {
   })
 })
 
-describe("task_complete double-confirmation", () => {
+describe("task_complete state helpers", () => {
   const sid = "ses_test_tc" as any
 
-  test("first call returns checklist, second call confirms", () => {
+  test("initial state: not pending, not confirmed", () => {
     TaskComplete.reset(sid)
     expect(TaskComplete.isPending(sid)).toBe(false)
     expect(TaskComplete.isConfirmed(sid)).toBe(false)
@@ -155,76 +155,6 @@ describe("task_complete double-confirmation", () => {
       },
     ]
     expect(TaskComplete.instruction(msgs)).toBe("N/A")
-  })
-
-  test("pending/confirmed state transitions", () => {
-    TaskComplete.reset(sid)
-    expect(TaskComplete.isPending(sid)).toBe(false)
-    expect(TaskComplete.isConfirmed(sid)).toBe(false)
-  })
-
-  test("checklist shows first message for single user input", async () => {
-    const id = SessionID.make("ses_tc_single")
-    TaskComplete.reset(id)
-    const msgs: MessageV2.WithParts[] = [
-      {
-        info: { role: "user", id: "m1" } as any,
-        parts: [{ type: "text", text: "Build a REST API", synthetic: false } as any],
-      },
-    ]
-    const tool = await TaskCompleteTool.init()
-    const result = await tool.execute(
-      {},
-      {
-        sessionID: id,
-        messageID: MessageID.make(""),
-        callID: "",
-        agent: "build",
-        abort: AbortSignal.any([]),
-        messages: msgs,
-        metadata: () => {},
-        ask: async () => {},
-      },
-    )
-    expect(result.output).toContain("Build a REST API")
-    expect(result.metadata.confirmed).toBe(false)
-    TaskComplete.reset(id)
-  })
-
-  test("checklist uses fast path when synthetic messages pad the count", async () => {
-    const id = SessionID.make("ses_tc_synth")
-    TaskComplete.reset(id)
-    const msgs: MessageV2.WithParts[] = [
-      {
-        info: { role: "user", id: "m1" } as any,
-        parts: [{ type: "text", text: "Fix the bug", synthetic: false } as any],
-      },
-      {
-        info: { role: "user", id: "m2" } as any,
-        parts: [{ type: "text", text: "WARNINGS: no tool calls", synthetic: true } as any],
-      },
-      {
-        info: { role: "user", id: "m3" } as any,
-        parts: [{ type: "text", text: "", synthetic: false } as any],
-      },
-    ]
-    const tool = await TaskCompleteTool.init()
-    const result = await tool.execute(
-      {},
-      {
-        sessionID: id,
-        messageID: MessageID.make(""),
-        callID: "",
-        agent: "build",
-        abort: AbortSignal.any([]),
-        messages: msgs,
-        metadata: () => {},
-        ask: async () => {},
-      },
-    )
-    expect(result.output).toContain("Fix the bug")
-    expect(result.metadata.confirmed).toBe(false)
-    TaskComplete.reset(id)
   })
 })
 
@@ -280,7 +210,7 @@ describe("task_complete todo integration", () => {
     })
   })
 
-  test("enters double-confirm when all todos are completed", async () => {
+  test("single call confirms when all todos are completed", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -296,15 +226,9 @@ describe("task_complete todo integration", () => {
           ],
         })
         const tool = await TaskCompleteTool.init()
-        // First call: should enter checklist (not bounce)
         const r1 = await tool.execute({}, ctx(sid))
         expect(r1.metadata.todosRemaining).toBe(false)
-        expect(r1.metadata.confirmed).toBe(false)
-        expect(r1.output).toContain("Checklist")
-        expect(TaskComplete.isPending(sid)).toBe(true)
-        // Second call: should confirm
-        const r2 = await tool.execute({}, ctx(sid))
-        expect(r2.metadata.confirmed).toBe(true)
+        expect(r1.metadata.confirmed).toBe(true)
         expect(TaskComplete.isConfirmed(sid)).toBe(true)
         Todo.update({ sessionID: sid, todos: [] })
         TaskComplete.reset(sid)
@@ -312,7 +236,7 @@ describe("task_complete todo integration", () => {
     })
   })
 
-  test("enters double-confirm with no todos at all", async () => {
+  test("single call confirms with no todos at all", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -320,22 +244,18 @@ describe("task_complete todo integration", () => {
         const session = await Session.create({})
         const sid = session.id
         TaskComplete.reset(sid)
-        // No todos written — should go straight to checklist
+        // No todos written — single call should confirm
         const tool = await TaskCompleteTool.init()
         const r1 = await tool.execute({}, ctx(sid))
         expect(r1.metadata.todosRemaining).toBe(false)
-        expect(r1.metadata.confirmed).toBe(false)
-        expect(r1.output).toContain("Checklist")
-        expect(TaskComplete.isPending(sid)).toBe(true)
-        // Second call: should confirm
-        const r2 = await tool.execute({}, ctx(sid))
-        expect(r2.metadata.confirmed).toBe(true)
+        expect(r1.metadata.confirmed).toBe(true)
+        expect(TaskComplete.isConfirmed(sid)).toBe(true)
         TaskComplete.reset(sid)
       },
     })
   })
 
-  test("resets pending state when bouncing on incomplete todos", async () => {
+  test("bounce on incomplete todos, then later confirm after completing them", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -343,23 +263,25 @@ describe("task_complete todo integration", () => {
         const session = await Session.create({})
         const sid = session.id
         TaskComplete.reset(sid)
-        // Simulate: first call enters checklist (no todos)
         const tool = await TaskCompleteTool.init()
-        const r1 = await tool.execute({}, ctx(sid))
-        expect(r1.metadata.confirmed).toBe(false)
-        expect(TaskComplete.isPending(sid)).toBe(true)
-        // Now model creates todos instead of confirming
+        // Model has an incomplete todo and calls task_complete — should bounce
         Todo.update({
           sessionID: sid,
-          todos: [{ content: "New task", status: "pending", notes: "fresh plan" }],
+          todos: [{ content: "New task", status: "in_progress", notes: "still working on the fix" }],
         })
-        // Calls task_complete again — should bounce (not confirm)
+        const r1 = await tool.execute({}, ctx(sid))
+        expect(r1.metadata.todosRemaining).toBe(true)
+        expect(r1.metadata.confirmed).toBe(false)
+        expect(r1.output).toContain("incomplete items")
+        expect(TaskComplete.isConfirmed(sid)).toBe(false)
+        // Model completes the todo and calls again — should confirm
+        Todo.update({
+          sessionID: sid,
+          todos: [{ content: "New task", status: "completed", notes: "fixed" }],
+        })
         const r2 = await tool.execute({}, ctx(sid))
-        expect(r2.metadata.todosRemaining).toBe(true)
-        expect(r2.metadata.confirmed).toBe(false)
-        expect(r2.output).toContain("incomplete items")
-        // pending should be reset
-        expect(TaskComplete.isPending(sid)).toBe(false)
+        expect(r2.metadata.confirmed).toBe(true)
+        expect(TaskComplete.isConfirmed(sid)).toBe(true)
         Todo.update({ sessionID: sid, todos: [] })
         TaskComplete.reset(sid)
       },
@@ -385,7 +307,7 @@ describe("task_complete todo integration", () => {
         const r1 = await tool.execute({}, ctx(sid))
         // cancelled is not pending/in_progress, so should NOT bounce
         expect(r1.metadata.todosRemaining).toBe(false)
-        expect(r1.output).toContain("Checklist")
+        expect(r1.metadata.confirmed).toBe(true)
         Todo.update({ sessionID: sid, todos: [] })
         TaskComplete.reset(sid)
       },
@@ -409,7 +331,7 @@ describe("shell tool definition", () => {
     })
   })
 
-  test("task_complete description matches KIRA", async () => {
+  test("task_complete description mentions eval verification", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -417,7 +339,8 @@ describe("shell tool definition", () => {
         const tools = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("build") as never)
         const tc = tools.find((t) => t.id === "task_complete")
         expect(tc).toBeDefined()
-        expect(tc!.description).toBe("Call this when the task is complete.")
+        expect(tc!.description).toContain("evaluation agent")
+        expect(tc!.description).toContain("fresh context")
       },
     })
   })

@@ -393,10 +393,21 @@ export namespace Eval {
     onBuild?: (sessionID: SessionID) => void | Promise<void>
   }): Promise<Result> {
     const max = input.max ?? 5
+    // The eval agent runs in a fresh sub-session. Its ruleset must:
+    //   1. deny plan transitions / user questions (headless)
+    //   2. allow it to read any file in the project (including /data, /tests)
+    //   3. allow external_directory so it can cd/ls anywhere to verify the task
+    //   4. keep edit denied — enforced separately in the Agent definition too
+    //
+    // Without (2) and (3) the eval sub-session can't actually read the inputs
+    // the build agent was supposed to process, and will silently fall back to
+    // static analysis (which we've tuned the prompt to refuse).
     const rules: Permission.Ruleset = [
       { permission: "question", action: "deny", pattern: "*" },
       { permission: "plan_enter", action: "deny", pattern: "*" },
       { permission: "plan_exit", action: "deny", pattern: "*" },
+      { permission: "read", action: "allow", pattern: "*" },
+      { permission: "external_directory", action: "allow", pattern: "*" },
     ]
     const msgs = await Session.messages({ sessionID: input.sessionID })
     const ctx = turn(msgs)

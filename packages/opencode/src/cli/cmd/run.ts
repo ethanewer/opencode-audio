@@ -264,7 +264,7 @@ export const RunCommand = cmd({
       })
       .option("eval", {
         type: "boolean",
-        describe: "run eval agent after build completes (default: true with --agent auto)",
+        describe: "run eval agent after build completes (default: true)",
       })
       .option("eval-iterations", {
         type: "number",
@@ -709,10 +709,10 @@ export const RunCommand = cmd({
         // Wait for build to finish
         await idle
 
-        // Run eval if enabled
-        // Eval is on by default with --agent auto.
-        // It can be explicitly enabled/disabled with --eval.
-        const doEval = args.eval ?? auto
+        // Run eval if enabled. Eval is on by default and can be disabled
+        // with --eval=false. It verifies the build session's work in a fresh
+        // context and loops back to the build session with feedback on failure.
+        const doEval = args.eval ?? true
         if (doEval && !error && !args.attach) {
           const maxIter = args.evalIterations ?? 5
           const model = args.model ? Provider.parseModel(args.model) : undefined
