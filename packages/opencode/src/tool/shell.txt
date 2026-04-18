@@ -14,30 +14,21 @@ Each call returns the new output since the previous call, labeled `[New output]`
 - Batch independent commands into one call when it saves round trips.
 
 # File operations
-There are no `read`, `write`, or `edit` tools — use the shell. All standard shell features are available: `>` and `>>` for redirection, `echo`, `printf`, `tee`, `cat > file <<EOF`, etc. Use whatever fits best. The two helpers below are just conveniences for common cases:
-- **Read text files**: `cat path`, `sed -n 'START,ENDp' path`, `grep -n PATTERN path`, `head -N path`, `tail -N path`, `wc -l path`. Use `read_multimodal` only for PDFs, images, and audio files.
-- **Append a single line**: `echo 'text' >> /abs/path` is fine. For multi-line content, `echo` gets painful to escape — use a heredoc instead.
-- **Create or overwrite a file with multi-line content**: the bundled `write` helper ships stdin verbatim with no escaping, creates parent dirs, and reports the byte count. Equivalent to `cat > /abs/path <<'EOF' ... EOF` with a `mkdir -p` in front:
+There are no `read`, `write`, or `edit` tools — use ordinary bash. `read_multimodal` is only for PDFs, images, and audio files.
+
+- **Read**: `cat path`, `sed -n 'START,ENDp' path`, `grep -n PATTERN path`, `head -N path`, `tail -N path`, `wc -l path`, `find DIR -name PAT`.
+- **Single short line**: `echo 'text' >> /abs/path` to append, `echo 'text' > /abs/path` to overwrite.
+- **Multi-line content (new file or full overwrite)**: use a quoted heredoc so nothing inside gets shell-expanded. Pick a delimiter that doesn't appear in the body (`EOF`, `PY`, `END`, etc.):
   ```
-  write /abs/path <<'EOF'
-  file content goes here, exactly as-is — no escaping needed
+  mkdir -p /abs/dir
+  cat > /abs/dir/file.py <<'EOF'
+  file content goes here, exactly as written — no escaping needed
   EOF
   ```
-- **Edit an existing file**: the bundled `patch` helper uses search/replace blocks — no line numbers, same semantics as a one-shot find-and-replace. Each block replaces an exact string with another exact string:
-  ```
-  patch /abs/path <<'EOF'
-  <<<
-  old exact text (must appear exactly once in the file)
-  ===
-  new text
-  >>>
-  EOF
-  ```
-  - The old text must match the file byte-for-byte, including indentation and trailing whitespace. Copy-paste from the file you just read.
-  - If the old text isn't unique, include more surrounding lines until it is — or pass `--all` to replace every occurrence: `patch --all /abs/path <<'EOF' ...`.
-  - Stack multiple `<<<...===...>>>` blocks in one call to make several edits at once. Each block is applied in order, to the file as modified by earlier blocks.
-  - An empty old text (`<<<` immediately followed by `===`) prepends to the file (or creates it if it doesn't exist).
-  - On mismatch or non-unique match, `patch` exits non-zero and does not modify the file.
+  `cat >> path <<'EOF' ... EOF` appends the same way.
+- **Targeted edit of an existing file**: the most reliable approach is to re-read the file, then rewrite the whole thing with `cat > path <<'EOF' ... EOF`. This is the shell equivalent of the old edit tool: no line numbers to get wrong, no search-and-replace ambiguity.
+- **Small in-place tweak**: `sed -i 's/PATTERN/REPLACEMENT/' path` works, but beware — `sed -i` silently succeeds when PATTERN doesn't match, and regex metacharacters in PATTERN or REPLACEMENT need escaping. For anything non-trivial, prefer reading the file and rewriting it.
+- **Large files where you want to patch rather than rewrite**: `patch(1)` accepts a unified diff on stdin if you produce correct `--- / +++ / @@` headers; otherwise, read-then-rewrite is safer.
 
 # Before each call
 Fill in `analysis` and `plan` honestly. They are visible to you on later turns and help you reason about progress. Keep them short (one or two sentences each). Do not repeat the command list in `plan`.

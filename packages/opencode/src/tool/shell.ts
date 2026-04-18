@@ -405,7 +405,6 @@ async function checkCommandPermissions(text: string, cwd: string, ctx: Tool.Cont
 }
 
 import SHELL_DESCRIPTION from "./shell.txt"
-import { detectFileEffects, type FileEffect } from "./shell-detect"
 
 const ShellParams = z.object({
   analysis: z
@@ -457,7 +456,6 @@ type ShellMetadata = {
   analysis: string
   plan: string
   commands: string[]
-  effects?: FileEffect[]
   truncated: boolean
   reset?: boolean
 }
@@ -474,22 +472,12 @@ export const ShellTool = Tool.define<typeof ShellParams, ShellMetadata>("shell",
     }))
     const labels = commands.map((c) => c.keystrokes.replace(/\n$/, "").trim()).filter(Boolean)
 
-    // Detect write/patch patterns before running so the TUI can show a proper
-    // diff/new-file view. We compute effects from the proposed keystrokes and
-    // the current filesystem state. Effects are only meaningful for side-
-    // effect commands; read-only commands produce none.
-    const effects = await detectFileEffects(
-      commands.map((c) => c.keystrokes),
-      cwd,
-    )
-
     ctx.metadata({
       metadata: {
         output: "",
         analysis: params.analysis,
         plan: params.plan,
         commands: labels,
-        effects,
         truncated: false,
         reset: params.reset === true,
       },
@@ -510,7 +498,6 @@ export const ShellTool = Tool.define<typeof ShellParams, ShellMetadata>("shell",
             analysis: params.analysis,
             plan: params.plan,
             commands: labels,
-            effects,
             truncated: false,
           },
           output: TodoGate.blockMessage("shell", gate.reason),
@@ -540,7 +527,6 @@ export const ShellTool = Tool.define<typeof ShellParams, ShellMetadata>("shell",
           analysis: params.analysis,
           plan: params.plan,
           commands: labels,
-          effects,
           truncated: false,
         },
       })
@@ -560,7 +546,6 @@ export const ShellTool = Tool.define<typeof ShellParams, ShellMetadata>("shell",
         analysis: params.analysis,
         plan: params.plan,
         commands: labels,
-        effects,
         truncated: output.length > MAX_OUTPUT_BYTES,
       },
       output: result,
