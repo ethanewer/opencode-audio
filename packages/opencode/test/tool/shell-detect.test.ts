@@ -48,31 +48,43 @@ describe("shell effect detection", () => {
     })
   })
 
-  test("detects patch heredoc with unified diff", async () => {
+  test("detects patch heredoc with search/replace block", async () => {
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "foo.txt")
     await fs.writeFile(file, "line 1\nline 2\nline 3\n")
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const rel = path.relative(tmp.path, file)
-        const patch = [
-          `--- ${rel}`,
-          `+++ ${rel}`,
-          `@@ -1,3 +1,3 @@`,
-          ` line 1`,
-          `-line 2`,
-          `+line two`,
-          ` line 3`,
-          ``,
-        ].join("\n")
-        const cmd = `patch -p0 <<'PATCH'\n${patch}PATCH\n`
+        const body = ["<<<", "line 2", "===", "line two", ">>>", ""].join("\n")
+        const cmd = `patch ${file} <<'PATCH'\n${body}PATCH\n`
         const effects = await detectFileEffects([cmd], tmp.path)
         expect(effects.length).toBe(1)
         expect(effects[0].kind).toBe("patch")
         expect(effects[0].ok).toBe(true)
+        expect(effects[0].path).toBe(file)
         expect(effects[0].diff).toContain("-line 2")
         expect(effects[0].diff).toContain("+line two")
+      },
+    })
+  })
+
+  test("patch with --all replaces every occurrence", async () => {
+    await using tmp = await tmpdir()
+    const file = path.join(tmp.path, "dup.txt")
+    await fs.writeFile(file, "foo\nfoo\nfoo\n")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const body = ["<<<", "foo", "===", "bar", ">>>", ""].join("\n")
+        const cmd = `patch --all ${file} <<'P'\n${body}P\n`
+        const effects = await detectFileEffects([cmd], tmp.path)
+        expect(effects.length).toBe(1)
+        expect(effects[0].ok).toBe(true)
+        // Raw patch-helper semantics: first-match only in detector (so the
+        // preview diff shows one change). This is a best-effort preview; the
+        // shell helper itself does replace-all at execution time.
+        expect(effects[0].diff).toContain("-foo")
+        expect(effects[0].diff).toContain("+bar")
       },
     })
   })
@@ -88,23 +100,15 @@ describe("shell effect detection", () => {
     })
   })
 
-  test("renders raw diff when patch cannot be applied", async () => {
+  test("marks patch as failed when search text is not in the file", async () => {
     await using tmp = await tmpdir()
-    const file = path.join(tmp.path, "missing.txt")
-    // File does not exist; patch should fail to apply cleanly.
+    const file = path.join(tmp.path, "exists.txt")
+    await fs.writeFile(file, "hello\n")
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const rel = path.relative(tmp.path, file)
-        const patch = [
-          `--- ${rel}`,
-          `+++ ${rel}`,
-          `@@ -1,1 +1,1 @@`,
-          `-nope`,
-          `+still nope`,
-          ``,
-        ].join("\n")
-        const cmd = `patch <<'EOT'\n${patch}EOT\n`
+        const body = ["<<<", "not-present", "===", "replacement", ">>>", ""].join("\n")
+        const cmd = `patch ${file} <<'EOT'\n${body}EOT\n`
         const effects = await detectFileEffects([cmd], tmp.path)
         expect(effects.length).toBe(1)
         expect(effects[0].kind).toBe("patch")

@@ -7,37 +7,37 @@ Every call takes three fields: `analysis` (what you observe now), `plan` (what t
 Each call returns the new output since the previous call, labeled `[New output]`. If nothing new was produced, the current visible terminal is returned instead, labeled `[No new output — showing current terminal]`.
 
 # Sending commands
-- To run a shell command, put its text in `keystrokes`; a trailing newline is auto-appended if you omit it.
+- Put shell command text in `keystrokes`; a trailing newline is auto-appended if you omit it.
 - To send a control key, use `C-c` (Ctrl+C), `C-d`, `Escape`, `Tab`, `Up`, `Down`, `Enter`, `BSpace`, etc.
 - To wait for a long command to finish, send `{ "commands": [], "duration": N }` to poll for N more seconds.
-- Set `duration` per command: 0.1 for instant commands (cd, ls, echo), 1.0 for normal, larger for slow (builds, tests, installs). Never wait longer than 60 seconds; prefer to poll.
-- Batch independent commands into one call when it saves round trips (e.g. `ls /a` then `ls /b` then `cat /c`).
+- Set `duration` per command: 0.1 for instant (cd, ls, echo), 1.0 for normal, larger for slow (builds, tests, installs). Never wait longer than 60 seconds; prefer to poll.
+- Batch independent commands into one call when it saves round trips.
 
 # File operations
-There are no `read`, `write`, or `edit` tools. Use the shell:
-- **Read text files**: `cat path`, `sed -n 'START,ENDp' path`, `grep -n PATTERN path`, `head -N path`, `tail -N path`, `wc -l path`, `find DIR -name PAT`. Use `read_multimodal` only for PDFs, images, and audio.
-- **Create or overwrite a file**: use the bundled `write` helper:
+There are no `read`, `write`, or `edit` tools — use the shell. All standard shell features are available: `>` and `>>` for redirection, `echo`, `printf`, `tee`, `cat > file <<EOF`, etc. Use whatever fits best. The two helpers below are just conveniences for common cases:
+- **Read text files**: `cat path`, `sed -n 'START,ENDp' path`, `grep -n PATTERN path`, `head -N path`, `tail -N path`, `wc -l path`. Use `read_multimodal` only for PDFs, images, and audio files.
+- **Append a single line**: `echo 'text' >> /abs/path` is fine. For multi-line content, `echo` gets painful to escape — use a heredoc instead.
+- **Create or overwrite a file with multi-line content**: the bundled `write` helper ships stdin verbatim with no escaping, creates parent dirs, and reports the byte count. Equivalent to `cat > /abs/path <<'EOF' ... EOF` with a `mkdir -p` in front:
   ```
   write /abs/path <<'EOF'
-  file content goes here, verbatim
+  file content goes here, exactly as-is — no escaping needed
   EOF
   ```
-  `write` creates parent directories automatically and overwrites existing files.
-- **Edit an existing file**: prefer the system `patch` command with a unified diff. This is the most compact way to express small changes without restating the whole file:
+- **Edit an existing file**: the bundled `patch` helper uses search/replace blocks — no line numbers, same semantics as a one-shot find-and-replace. Each block replaces an exact string with another exact string:
   ```
-  patch -p0 <<'EOF'
-  --- path/to/file
-  +++ path/to/file
-  @@ -10,3 +10,3 @@
-   context line above
-  -old line
-  +new line
-   context line below
+  patch /abs/path <<'EOF'
+  <<<
+  old exact text (must appear exactly once in the file)
+  ===
+  new text
+  >>>
   EOF
   ```
-  Include 1–3 lines of context around each hunk so `patch` can locate the change even if line numbers drift. Use `patch --dry-run` first if you're unsure. On failure, `patch` writes a `.rej` file and prints which hunk failed.
-- **Whole-file replacement**: use `write` when the file is new or when you're replacing most of it.
-- **Small one-line tweaks** (one or two characters): `sed -i` is fine, but the silent-no-match behavior bites on non-trivial patterns — prefer `patch` whenever you're changing more than a character.
+  - The old text must match the file byte-for-byte, including indentation and trailing whitespace. Copy-paste from the file you just read.
+  - If the old text isn't unique, include more surrounding lines until it is — or pass `--all` to replace every occurrence: `patch --all /abs/path <<'EOF' ...`.
+  - Stack multiple `<<<...===...>>>` blocks in one call to make several edits at once. Each block is applied in order, to the file as modified by earlier blocks.
+  - An empty old text (`<<<` immediately followed by `===`) prepends to the file (or creates it if it doesn't exist).
+  - On mismatch or non-unique match, `patch` exits non-zero and does not modify the file.
 
 # Before each call
 Fill in `analysis` and `plan` honestly. They are visible to you on later turns and help you reason about progress. Keep them short (one or two sentences each). Do not repeat the command list in `plan`.

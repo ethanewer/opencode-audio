@@ -125,11 +125,13 @@ export namespace Agent {
                   question: "allow",
                   plan_enter: "allow",
                   task_complete: "allow",
-                  todowrite: "allow",
                   // Shell-only agent: all file operations go through the shell
-                  // tool (write helper + patch command). edit/write/apply_patch
-                  // tools are disabled so the model has exactly one way to
-                  // modify files.
+                  // tool (write helper + patch helper). edit/write/apply_patch
+                  // are disabled so the model has exactly one way to modify
+                  // files. todowrite is also disabled — planning happens in
+                  // the model's own context, and the shell tool's
+                  // analysis/plan fields carry turn-level reasoning.
+                  todowrite: "deny",
                   edit: "deny",
                   write: "deny",
                   apply_patch: "deny",

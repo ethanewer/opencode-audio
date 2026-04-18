@@ -256,7 +256,8 @@ describe("kira agent integration", () => {
           expect(names).not.toContain("grep")
           expect(names).toContain("webfetch")
           expect(names).not.toContain("task")
-          expect(names).toContain("todowrite")
+          // todowrite is denied on the shell-only build agent
+          expect(names).not.toContain("todowrite")
         }),
         { git: true, config: providerCfg },
       ),
