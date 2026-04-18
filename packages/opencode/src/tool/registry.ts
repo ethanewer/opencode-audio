@@ -215,8 +215,21 @@ export namespace ToolRegistry {
 
           const usePatch =
             model.modelID.includes("gpt-") && !model.modelID.includes("oss") && !model.modelID.includes("gpt-4")
-          if (tool.id === "apply_patch") return usePatch
-          if (tool.id === "edit" || tool.id === "write") return !usePatch
+          // Per-agent permission overrides take precedence: if the agent
+          // denies edit/write/apply_patch, the tool is not exposed regardless
+          // of the model-default routing above.
+          if (tool.id === "apply_patch") {
+            if (agent?.permission && evaluate("apply_patch", "*", agent.permission).action === "deny") return false
+            return usePatch
+          }
+          if (tool.id === "edit") {
+            if (agent?.permission && evaluate("edit", "*", agent.permission).action === "deny") return false
+            return !usePatch
+          }
+          if (tool.id === "write") {
+            if (agent?.permission && evaluate("write", "*", agent.permission).action === "deny") return false
+            return !usePatch
+          }
 
           if (tool.id === "speak") {
             if (!agent?.permission) return false

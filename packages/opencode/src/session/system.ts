@@ -149,12 +149,13 @@ The todowrite tool is your plan, scratchpad, and progress record. Use it to exte
 
 ## Tools that are free vs. gated
 You can freely use read-only tools at any time, including:
-- \`read\`
+- \`read_multimodal\`
 - Read-only shell commands: ls, cat, head, tail, less, more, file, stat, find, grep, rg, awk, sed -n, wc, which, command -v, pwd, echo, tree, readelf, objdump, xxd, hexdump, od, git status, git log, git diff, git show, env, printenv, ps, uname, uptime, date.
 
-Before using any tool that changes state, you must have an active \`in_progress\` todo with populated \`notes\` describing your current plan. State-changing tools are:
-- \`write\`, \`edit\`, \`apply_patch\`
-- Any shell command not on the read-only list above (installs, builds, network calls, rm/cp/mv/mkdir/chmod, running scripts, package managers, etc.)
+Before using any shell command that changes state, you must have an active \`in_progress\` todo with populated \`notes\` describing your current plan. State-changing shell commands include:
+- Creating or overwriting files (the \`write\` heredoc helper, redirections like \`>\` and \`>>\`, \`tee\`, \`cp\`, \`mv\`).
+- Editing files (\`patch\`, \`sed -i\`).
+- Any shell command not on the read-only list above (installs, builds, network calls, rm/mkdir/chmod, running scripts, package managers, etc.)
 
 This gate lets you explore freely (ls, grep, file) to gather context, but forces you to commit to a plan before you do anything with side effects.
 
@@ -171,7 +172,7 @@ This gate lets you explore freely (ls, grep, file) to gather context, but forces
 These rules are enforced by the runtime. You will receive a direct error message from the tool itself if you violate them:
 - Any todo submitted with empty or trivially short \`notes\` is rejected.
 - More than one \`in_progress\` todo at a time is rejected.
-- \`write\`, \`edit\`, \`apply_patch\`, and side-effect shell commands are blocked until you have an \`in_progress\` todo with populated notes. The block message tells you which tool was refused.
+- Side-effect shell commands are blocked until you have an \`in_progress\` todo with populated notes.
 - \`task_complete\` is blocked while any todo is \`pending\` or \`in_progress\`.
 
 Keep the todo list current as you learn. Mark each todo \`completed\` immediately after finishing — do not batch completions.`

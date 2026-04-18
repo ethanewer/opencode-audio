@@ -42,8 +42,13 @@ test("build agent has correct default properties", async () => {
       expect(build).toBeDefined()
       expect(build?.mode).toBe("primary")
       expect(build?.native).toBe(true)
-      expect(evalPerm(build, "edit")).toBe("allow")
+      // Shell-only: edit/write/apply_patch tools are denied; all file ops go
+      // through the shell tool.
+      expect(evalPerm(build, "edit")).toBe("deny")
+      expect(evalPerm(build, "write")).toBe("deny")
+      expect(evalPerm(build, "apply_patch")).toBe("deny")
       expect(evalPerm(build, "bash")).toBe("allow")
+      expect(evalPerm(build, "shell")).toBe("allow")
     },
   })
 })
@@ -236,8 +241,9 @@ test("agent permission config merges with defaults", async () => {
       expect(build).toBeDefined()
       // Specific pattern is denied
       expect(Permission.evaluate("bash", "rm -rf *", build!.permission).action).toBe("deny")
-      // Edit still allowed
-      expect(evalPerm(build, "edit")).toBe("allow")
+      // Shell-only default: edit stays denied
+      expect(evalPerm(build, "edit")).toBe("deny")
+      expect(evalPerm(build, "shell")).toBe("allow")
     },
   })
 })

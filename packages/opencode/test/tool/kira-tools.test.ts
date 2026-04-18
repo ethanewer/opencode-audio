@@ -38,9 +38,8 @@ describe("kira tool filtering", () => {
         const ids = tools.map((t) => t.id)
         expect(ids).toContain("shell")
         expect(ids).toContain("task_complete")
-        expect(ids).toContain("read")
-        expect(ids).toContain("write")
-        expect(ids).toContain("edit")
+        // Read is exposed to the model as `read_multimodal`.
+        expect(ids).toContain("read_multimodal")
         expect(ids).toContain("invalid")
         expect(ids).not.toContain("bash")
         expect(ids).not.toContain("execute_commands")
@@ -48,6 +47,25 @@ describe("kira tool filtering", () => {
         expect(ids).not.toContain("glob")
         expect(ids).toContain("webfetch")
         expect(ids).not.toContain("image_read")
+      },
+    })
+  })
+
+  test("shell-only build denies edit, write, and apply_patch", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // The real "build" agent (loaded via Agent.get) denies edit/write/apply_patch.
+        const { Agent } = await import("../../src/agent/agent")
+        const build = await Agent.get("build")
+        const tools = await ToolRegistry.tools({ providerID: provider, modelID: model, imageInput: true }, build as never)
+        const ids = tools.map((t) => t.id)
+        expect(ids).toContain("shell")
+        expect(ids).toContain("read_multimodal")
+        expect(ids).not.toContain("edit")
+        expect(ids).not.toContain("write")
+        expect(ids).not.toContain("apply_patch")
       },
     })
   })
@@ -64,7 +82,7 @@ describe("kira tool filtering", () => {
         const ids = tools.map((t) => t.id)
         expect(ids).toContain("shell")
         expect(ids).toContain("task_complete")
-        expect(ids).toContain("read")
+        expect(ids).toContain("read_multimodal")
         expect(ids).toContain("speak")
         expect(ids).not.toContain("bash")
         expect(ids).not.toContain("execute_commands")
@@ -98,7 +116,7 @@ describe("kira tool filtering", () => {
         try {
           const plan = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("plan") as never)
           expect(plan.map((t) => t.id)).toContain("plan_exit")
-          expect(plan.map((t) => t.id)).toContain("read")
+          expect(plan.map((t) => t.id)).toContain("read_multimodal")
 
           const build = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("build") as never)
           expect(build.map((t) => t.id)).not.toContain("plan_exit")
@@ -118,7 +136,7 @@ describe("kira tool filtering", () => {
         const tools = await ToolRegistry.tools({ providerID: provider, modelID: model }, agent("eval") as never)
         const ids = tools.map((t) => t.id)
         expect(ids).toContain("eval_result")
-        expect(ids).toContain("read")
+        expect(ids).toContain("read_multimodal")
       },
     })
   })

@@ -1,0 +1,43 @@
+Interactive shell. Keystrokes are sent to a single persistent tmux session that is shared across every call.
+
+The terminal is stateful: working directory, environment, shell history, background jobs, and any open interactive program (editor, REPL, pager, prompt) survive between calls. The session is never reset unless `reset` is true.
+
+Every call takes three fields: `analysis` (what you observe now), `plan` (what this batch will do), and `commands` (the keystrokes to send). The command array may be empty to poll for more output without sending input.
+
+Each call returns the new output since the previous call, labeled `[New output]`. If nothing new was produced, the current visible terminal is returned instead, labeled `[No new output — showing current terminal]`.
+
+# Sending commands
+- To run a shell command, put its text in `keystrokes`; a trailing newline is auto-appended if you omit it.
+- To send a control key, use `C-c` (Ctrl+C), `C-d`, `Escape`, `Tab`, `Up`, `Down`, `Enter`, `BSpace`, etc.
+- To wait for a long command to finish, send `{ "commands": [], "duration": N }` to poll for N more seconds.
+- Set `duration` per command: 0.1 for instant commands (cd, ls, echo), 1.0 for normal, larger for slow (builds, tests, installs). Never wait longer than 60 seconds; prefer to poll.
+- Batch independent commands into one call when it saves round trips (e.g. `ls /a` then `ls /b` then `cat /c`).
+
+# File operations
+There are no `read`, `write`, or `edit` tools. Use the shell:
+- **Read text files**: `cat path`, `sed -n 'START,ENDp' path`, `grep -n PATTERN path`, `head -N path`, `tail -N path`, `wc -l path`, `find DIR -name PAT`. Use `read_multimodal` only for PDFs, images, and audio.
+- **Create or overwrite a file**: use the bundled `write` helper:
+  ```
+  write /abs/path <<'EOF'
+  file content goes here, verbatim
+  EOF
+  ```
+  `write` creates parent directories automatically and overwrites existing files.
+- **Edit an existing file**: prefer the system `patch` command with a unified diff. This is the most compact way to express small changes without restating the whole file:
+  ```
+  patch -p0 <<'EOF'
+  --- path/to/file
+  +++ path/to/file
+  @@ -10,3 +10,3 @@
+   context line above
+  -old line
+  +new line
+   context line below
+  EOF
+  ```
+  Include 1–3 lines of context around each hunk so `patch` can locate the change even if line numbers drift. Use `patch --dry-run` first if you're unsure. On failure, `patch` writes a `.rej` file and prints which hunk failed.
+- **Whole-file replacement**: use `write` when the file is new or when you're replacing most of it.
+- **Small one-line tweaks** (one or two characters): `sed -i` is fine, but the silent-no-match behavior bites on non-trivial patterns — prefer `patch` whenever you're changing more than a character.
+
+# Before each call
+Fill in `analysis` and `plan` honestly. They are visible to you on later turns and help you reason about progress. Keep them short (one or two sentences each). Do not repeat the command list in `plan`.

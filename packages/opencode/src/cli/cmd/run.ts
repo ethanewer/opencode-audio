@@ -152,7 +152,10 @@ function task(info: ToolProps<typeof TaskTool>) {
 
 function shell(info: ToolProps<typeof ShellTool>) {
   const output = info.part.state.status === "completed" ? info.part.state.output?.trim() : undefined
-  const command = info.metadata.command ?? info.input.keystrokes?.replace(/\n$/, "").trim() ?? ""
+  const cmds = info.metadata.commands ?? []
+  const first = Array.isArray(cmds) ? cmds[0] : undefined
+  const fromInput = info.input.commands?.[0]?.keystrokes?.replace(/\n$/, "").trim()
+  const command = (typeof first === "string" && first) || fromInput || ""
   if (!command) {
     block({ icon: "~", title: "Waiting." }, output)
     return

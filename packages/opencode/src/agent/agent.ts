@@ -126,6 +126,13 @@ export namespace Agent {
                   plan_enter: "allow",
                   task_complete: "allow",
                   todowrite: "allow",
+                  // Shell-only agent: all file operations go through the shell
+                  // tool (write helper + patch command). edit/write/apply_patch
+                  // tools are disabled so the model has exactly one way to
+                  // modify files.
+                  edit: "deny",
+                  write: "deny",
+                  apply_patch: "deny",
                 }),
                 user,
               ),

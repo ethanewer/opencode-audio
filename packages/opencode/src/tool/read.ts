@@ -66,8 +66,14 @@ const SEARCH_HINTS = [
   "- If you are unsure of the correct file path, use the glob tool to look up filenames by glob pattern.",
 ].join("\n")
 
+const PREAMBLE = [
+  "Read a file from the local filesystem, with first-class support for multimodal formats (PDFs, images, audio).",
+  "",
+  "For plain text, code, or config files prefer shell commands (cat, sed -n, head, tail, grep) — they are faster and let you batch operations. Use this tool when the file is a PDF, image, or audio file the shell cannot decode, or when you need offset/limit semantics on a text file.",
+].join("\n")
+
 function describe(vision: VisionMode, audio: AudioMode, pdf: boolean, search: boolean) {
-  const parts = [DESCRIPTION]
+  const parts = [PREAMBLE, "", DESCRIPTION]
   if (search) parts.push(SEARCH_HINTS)
   if (VISION_DESC[vision]) parts.push(VISION_DESC[vision])
   if (pdf) parts.push(PDF_DESC)
@@ -75,7 +81,9 @@ function describe(vision: VisionMode, audio: AudioMode, pdf: boolean, search: bo
   return parts.join("\n")
 }
 
-export const ReadTool = Tool.define<typeof ReadParams, ReadMeta>("read", async (initCtx) => {
+export const ReadTool = Tool.define<typeof ReadParams, ReadMeta>(
+  "read",
+  async (initCtx) => {
   const caps = initCtx?.capabilities
   const vision: VisionMode = caps?.imageInput ? "native" : caps?.hasVisionModel ? "aux" : "none"
   const audio: AudioMode = caps?.audioInput ? "native" : caps?.hasTranscription ? "aux" : "none"
@@ -377,7 +385,9 @@ export const ReadTool = Tool.define<typeof ReadParams, ReadMeta>("read", async (
       }
     },
   }
-})
+  },
+  "read_multimodal",
+)
 
 async function retry<T>(fn: () => Promise<T>): Promise<T> {
   for (let i = 0; i < MAX_RETRIES; i++) {

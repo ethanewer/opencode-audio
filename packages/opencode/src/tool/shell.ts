@@ -404,86 +404,125 @@ async function checkCommandPermissions(text: string, cwd: string, ctx: Tool.Cont
   await ask(ctx, merged)
 }
 
-export const ShellTool = Tool.define("shell", {
-  description:
-    "Interactive shell. Keystrokes are sent to a single persistent terminal session that is shared across every call.\n\n" +
-    "The terminal is stateful: the working directory, environment, shell history, background jobs, and any open interactive program (editor, REPL, pager, prompt) survive between calls. The terminal is never reset unless `reset` is set to true.\n\n" +
-    "Each call returns the new output that appeared since the previous call. To run a command, send the command text with a trailing newline. To abort, send `C-c`. To wait for more output without sending input, send empty `keystrokes` and a `duration`.",
-  parameters: z.object({
-    keystrokes: z
-      .string()
-      .describe(
-        "Keystrokes to send to the terminal. " +
-          "If the entire string matches a recognized key name, it is sent as that key press. " +
-          "Otherwise it is typed as literal text, and a newline is auto-appended if omitted. " +
-          "Recognized key names: Escape, Tab, Up, Down, Left, Right, Home, End, " +
-          "PageUp, PageDown, BSpace (backspace), BTab (shift-tab), F1-F12. " +
-          "Modifier prefixes: C- (ctrl), S- (shift), M- (alt) — e.g. C-c, C-d, S-Up, M-a. ",
-      ),
-    duration: z
-      .number()
-      .describe(
-        "Seconds to wait for output before this call returns. Default 1.0, max 600. " +
-          "Prefer a short duration and poll — if output is incomplete, call again with empty `keystrokes` and a duration.",
-      )
-      .optional(),
-    literal: z
-      .boolean()
-      .describe(
-        "Override auto-detection to force literal text input. " +
-          "When true, keystrokes are always typed as text even if they match a special key name. " +
-          "When true, \\n is not automatically appended, and you must include a trailing \\n explicitly if needed. " +
-          "When false (default), recognized key names are sent as key presses " +
-          "and everything else is typed literally.",
-      )
-      .optional(),
-    reset: z
-      .boolean()
-      .describe(
-        "If true, kill the persistent terminal and start a fresh shell before sending `keystrokes`. " +
-          "Default false. Use this when the terminal is in an unrecoverable stuck state. " +
-          "Resetting discards all shell state — working directory, exported environment variables, history, and background jobs.",
-      )
-      .optional(),
-  }),
+import SHELL_DESCRIPTION from "./shell.txt"
+import { detectFileEffects, type FileEffect } from "./shell-detect"
+
+const ShellParams = z.object({
+  analysis: z
+    .string()
+    .describe(
+      "Short analysis of the current terminal state and what you just observed. " +
+        "What do you see? What has been accomplished? What still needs to be done?",
+    ),
+  plan: z
+    .string()
+    .describe(
+      "Short plan for this batch of commands. What are you about to run and why? What outcome do you expect?",
+    ),
+  commands: z
+    .array(
+      z.object({
+        keystrokes: z
+          .string()
+          .describe(
+            "Keystrokes to send to the terminal. If the entire string matches a recognized key name (Escape, Tab, Up, Down, Left, Right, Home, End, PageUp, PageDown, BSpace, BTab, F1-F12, or C-/S-/M- modified keys like C-c, C-d), it is sent as that key press. Otherwise it is typed as literal text, and a newline is auto-appended if the string does not already end with one.",
+          ),
+        duration: z
+          .number()
+          .describe(
+            "Seconds to wait for output after this command before the next begins. Default 1.0, max 600. On immediate commands (cd, ls, echo) use 0.1. On normal commands use 1.0. On slow commands (make, large tests, installs) use a larger value. You can always poll with empty keystrokes and a duration to wait longer.",
+          )
+          .optional(),
+        literal: z
+          .boolean()
+          .describe(
+            "Force literal text input. When true, recognized key names are typed as text instead of pressed, and no newline is auto-appended.",
+          )
+          .optional(),
+      }),
+    )
+    .describe(
+      "Commands to run. Each command's keystrokes are sent to the shared tmux session in order. The array may be empty to poll for more output from a prior call.",
+    ),
+  reset: z
+    .boolean()
+    .describe(
+      "If true, kill the persistent terminal and start a fresh shell before sending commands. Use this only when the terminal is in an unrecoverable stuck state.",
+    )
+    .optional(),
+})
+
+type ShellMetadata = {
+  output: string
+  analysis: string
+  plan: string
+  commands: string[]
+  effects?: FileEffect[]
+  truncated: boolean
+  reset?: boolean
+}
+
+export const ShellTool = Tool.define<typeof ShellParams, ShellMetadata>("shell", {
+  description: SHELL_DESCRIPTION,
+  parameters: ShellParams,
   async execute(params, ctx) {
     const cwd = Instance.directory
-    const duration = Math.min(params.duration ?? 1.0, 600)
-    const label = params.keystrokes.replace(/\n$/, "").trim()
+    const commands = params.commands.map((c) => ({
+      keystrokes: c.keystrokes,
+      duration: Math.min(c.duration ?? 1.0, 600),
+      literal: c.literal,
+    }))
+    const labels = commands.map((c) => c.keystrokes.replace(/\n$/, "").trim()).filter(Boolean)
+
+    // Detect write/patch patterns before running so the TUI can show a proper
+    // diff/new-file view. We compute effects from the proposed keystrokes and
+    // the current filesystem state. Effects are only meaningful for side-
+    // effect commands; read-only commands produce none.
+    const effects = await detectFileEffects(
+      commands.map((c) => c.keystrokes),
+      cwd,
+    )
 
     ctx.metadata({
       metadata: {
         output: "",
-        command: label,
+        analysis: params.analysis,
+        plan: params.plan,
+        commands: labels,
+        effects,
+        truncated: false,
+        reset: params.reset === true,
       },
     })
 
-    // Todo gate: if this command has side effects, require an in_progress
-    // todo with populated notes. Empty keystrokes (duration-only polls) and
-    // tmux escape sequences are exempt. Classification reuses the shared
-    // plan-mode bash allowlist so it matches what "plan" restricts to.
-    if (label && !TMUX_ESCAPE.test(label)) {
+    // Todo gate: any side-effect command requires an in_progress todo with
+    // populated notes. Empty keystrokes and tmux escape sequences are exempt.
+    for (const label of labels) {
+      if (!label || TMUX_ESCAPE.test(label)) continue
       const classification = await classifyLine(label)
-      if (classification === "side-effect") {
-        const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset, ctx.agent)
-        if (!gate.ok) {
-          return {
-            title: "shell blocked — no active plan",
-            metadata: {
-              output: "",
-              command: label,
-              truncated: false,
-            },
-            output: TodoGate.blockMessage("shell", gate.reason),
-          }
+      if (classification !== "side-effect") continue
+      const gate = TodoGate.allow(ctx.sessionID, ctx.ruleset, ctx.agent)
+      if (!gate.ok) {
+        return {
+          title: "shell blocked — no active plan",
+          metadata: {
+            output: "",
+            analysis: params.analysis,
+            plan: params.plan,
+            commands: labels,
+            effects,
+            truncated: false,
+          },
+          output: TodoGate.blockMessage("shell", gate.reason),
         }
       }
+      break
     }
 
-    // Check permissions using tree-sitter parsing and external-directory
-    // detection. When every rule resolves to "allow" this returns
-    // immediately — no prompt.
-    if (!TMUX_ESCAPE.test(label)) {
+    // Permission checks. When every rule resolves to "allow" this returns
+    // immediately without prompting.
+    for (const label of labels) {
+      if (!label || TMUX_ESCAPE.test(label)) continue
       await checkCommandPermissions(label, cwd, ctx)
     }
 
@@ -492,37 +531,36 @@ export const ShellTool = Tool.define("shell", {
       log.info("reset shell", { sessionID: ctx.sessionID })
     }
 
-    log.info("shell", { command: label, sessionID: ctx.sessionID })
+    log.info("shell", { commands: labels.length, sessionID: ctx.sessionID })
 
-    const output = await Tmux.execute(
-      ctx.sessionID,
-      cwd,
-      [{ keystrokes: params.keystrokes, duration, literal: params.literal }],
-      (partial) => {
-        ctx.metadata({
-          metadata: {
-            output: preview(partial),
-            command: label,
-          },
-        })
-      },
-    )
+    const output = await Tmux.execute(ctx.sessionID, cwd, commands, (partial) => {
+      ctx.metadata({
+        metadata: {
+          output: preview(partial),
+          analysis: params.analysis,
+          plan: params.plan,
+          commands: labels,
+          effects,
+          truncated: false,
+        },
+      })
+    })
 
     const limited = limit(output)
+    const result = limited.trim()
+      ? `[New output]\n${limited}`
+      : `[No new output — showing current terminal]\n${limit((await Tmux.capture(ctx.sessionID)) || "(empty)")}`
 
-    let result: string
-    if (limited.trim()) {
-      result = `[New output]\n${limited}`
-    } else {
-      const pane = await Tmux.capture(ctx.sessionID)
-      result = `[No new output — showing current terminal]\n${limit(pane || "(empty)")}`
-    }
+    const title = params.plan.slice(0, 80) || labels[0]?.slice(0, 80) || "shell"
 
     return {
-      title: label.slice(0, 80),
+      title,
       metadata: {
         output: preview(output),
-        command: label,
+        analysis: params.analysis,
+        plan: params.plan,
+        commands: labels,
+        effects,
         truncated: output.length > MAX_OUTPUT_BYTES,
       },
       output: result,

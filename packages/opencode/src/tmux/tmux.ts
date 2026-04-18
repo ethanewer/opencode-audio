@@ -102,6 +102,11 @@ export namespace Tmux {
       `export TMPDIR=${shellEscape(tmpdir)} TMP=${shellEscape(tmpdir)} TEMP=${shellEscape(tmpdir)}\n`,
     )
     await sendKeys(name, `cd ${shellEscape(cwd)}\n`)
+    // Install the `write` helper on disk (idempotent, fast) and add its dir
+    // to PATH via one short sendKeys.
+    const scripts = await import("../session/shell-scripts")
+    await scripts.installOnDisk()
+    await sendKeys(name, scripts.pathExport() + "\n")
     await Bun.sleep(300)
     const prior = await capturePane(name)
     state = { name, seq: 0, prior }

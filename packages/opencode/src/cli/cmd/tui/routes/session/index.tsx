@@ -1971,14 +1971,37 @@ function shellCmd(state: Record<string, any>): string {
 }
 
 function Shell(props: ToolProps<typeof ShellTool> & { groupFollower?: boolean; groupOutput?: string }) {
-  const { theme } = useTheme()
+  const ctx = use()
+  const { theme, syntax } = useTheme()
   const reset = createMemo(() => !!props.input.reset)
   const userShell = createMemo(() => !!(props.metadata as Record<string, any>).userShell)
 
+  const view = createMemo(() => {
+    const diffStyle = ctx.tui.diff_style
+    if (diffStyle === "stacked") return "unified"
+    return ctx.width > 120 ? "split" : "unified"
+  })
+
+  const effects = createMemo(() => {
+    const list = (props.metadata as Record<string, any>).effects
+    if (!Array.isArray(list)) return []
+    return list as Array<{ kind: "write" | "patch"; path: string; diff?: string; additions: number; deletions: number; ok: boolean }>
+  })
+
   const cmd = createMemo(() => {
-    const c = props.metadata.command
+    // New-schema shells: first command's keystrokes
+    const list = (props.input as any).commands as Array<{ keystrokes: string }> | undefined
+    if (Array.isArray(list) && list.length > 0) {
+      return list[0].keystrokes.replace(/\n$/, "").trim()
+    }
+    const metaCmds = (props.metadata as Record<string, any>).commands
+    if (Array.isArray(metaCmds) && metaCmds.length > 0 && typeof metaCmds[0] === "string") {
+      return metaCmds[0]
+    }
+    // Legacy fallback
+    const c = (props.metadata as any).command
     if (typeof c === "string" && c) return c
-    const keys = props.input.keystrokes
+    const keys = (props.input as any).keystrokes
     if (typeof keys === "string") return keys.replace(/\n$/, "").trim()
     return ""
   })
@@ -1995,7 +2018,13 @@ function Shell(props: ToolProps<typeof ShellTool> & { groupFollower?: boolean; g
   })
   const label = createMemo(() => cmd() || "Waiting.")
 
-  const duration = createMemo(() => Math.min(props.input.duration ?? 1.0, 60))
+  const duration = createMemo(() => {
+    const list = (props.input as any).commands as Array<{ duration?: number }> | undefined
+    if (Array.isArray(list) && list.length > 0) return Math.min(list[0].duration ?? 1.0, 60)
+    const d = (props.input as any).duration
+    if (typeof d === "number") return Math.min(d, 60)
+    return 1.0
+  })
 
   const [tick, setTick] = createSignal(0)
   let timer: ReturnType<typeof setInterval> | undefined
@@ -2033,6 +2062,41 @@ function Shell(props: ToolProps<typeof ShellTool> & { groupFollower?: boolean; g
     return <text fg={theme.textMuted}>{t}</text>
   })
 
+  function EffectDiff(p: { diff: string; filePath: string }) {
+    return (
+      <box paddingLeft={1}>
+        <diff
+          diff={p.diff}
+          view={view()}
+          filetype={filetype(p.filePath)}
+          syntaxStyle={syntax()}
+          showLineNumbers={true}
+          width="100%"
+          wrapMode={ctx.diffWrapMode()}
+          fg={theme.text}
+          addedBg={theme.diffAddedBg}
+          removedBg={theme.diffRemovedBg}
+          contextBg={theme.diffContextBg}
+          addedSignColor={theme.diffHighlightAdded}
+          removedSignColor={theme.diffHighlightRemoved}
+          lineNumberFg={theme.diffLineNumber}
+          lineNumberBg={theme.diffContextBg}
+          addedLineNumberBg={theme.diffAddedLineNumberBg}
+          removedLineNumberBg={theme.diffRemovedLineNumberBg}
+        />
+      </box>
+    )
+  }
+
+  function effectTitle(e: { kind: "write" | "patch"; path: string; ok: boolean; additions: number; deletions: number }) {
+    const rel = normalizePath(e.path)
+    if (e.kind === "write") {
+      return e.additions > 0 && e.deletions === 0 ? `# Created ${rel}` : `← Wrote ${rel}`
+    }
+    if (!e.ok) return `! Patch failed ${rel}`
+    return `← Patched ${rel}`
+  }
+
   return (
     <>
       <Show when={reset()}>
@@ -2059,6 +2123,15 @@ function Shell(props: ToolProps<typeof ShellTool> & { groupFollower?: boolean; g
           </text>
         </box>
       </Show>
+      <For each={effects()}>
+        {(e) => (
+          <BlockTool title={effectTitle(e)} part={props.part}>
+            <Show when={e.diff} fallback={<text fg={theme.textMuted}>(no diff available)</text>}>
+              <EffectDiff diff={e.diff!} filePath={e.path} />
+            </Show>
+          </BlockTool>
+        )}
+      </For>
     </>
   )
 }

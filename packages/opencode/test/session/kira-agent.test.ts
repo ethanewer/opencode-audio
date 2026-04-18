@@ -244,9 +244,11 @@ describe("kira agent integration", () => {
           const names = tools!.map((t) => t.function.name)
           expect(names).toContain("shell")
           expect(names).toContain("task_complete")
-          expect(names).toContain("read")
-          expect(names).toContain("edit")
-          expect(names).toContain("write")
+          expect(names).toContain("read_multimodal")
+          // Shell-only build: edit/write/apply_patch tools are denied.
+          expect(names).not.toContain("edit")
+          expect(names).not.toContain("write")
+          expect(names).not.toContain("apply_patch")
           expect(names).not.toContain("transcribe")
           expect(names).not.toContain("bash")
           expect(names).not.toContain("execute_commands")
@@ -414,7 +416,7 @@ describe("kira agent integration", () => {
           const first = inputs[0]!
           const tools = (first as any).tools as { function: { name: string } }[] | undefined
           const names = tools?.map((t) => t.function.name) ?? []
-          expect(names).toContain("read")
+          expect(names).toContain("read_multimodal")
           expect(names).toContain("shell")
           expect(names).toContain("plan_exit")
           expect(names).not.toContain("bash")
