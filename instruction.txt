@@ -1,0 +1,334 @@
+You are working in a new branch dedicated to auditing and fixing the **eval feature**.
+
+## Objective
+
+Perform a **full technical and product audit** of the eval feature across all execution paths where the eval agent is used. Fix any issues you find that are related to eval behavior, prompts, orchestration, output quality, or handoff between agents. When finished, commit your changes, publish the branch, and add a top-level markdown report documenting the audit and fixes.
+
+## Scope
+
+Your audit must cover every place the eval agent is used, including at minimum:
+
+1. **Interactive CLI**
+
+   * When the user types **slash eval**
+
+2. **Auto mode**
+
+   * When eval is triggered during an auto loop
+
+3. **Headless CLI / open code run**
+
+   * When eval is triggered in a loop while using open code run with the headless CLI
+
+Do not assume these flows behave consistently. Verify each one directly.
+
+## Core audit requirements
+
+You must determine whether the eval agent works correctly in all supported settings and whether its prompts and surrounding orchestration produce the intended behavior.
+
+### 1. Eval context isolation
+
+Verify that the eval agent starts in a **new context** when it is supposed to.
+
+Check for:
+
+* accidental leakage of prior reasoning or irrelevant conversation state
+* incorrect inheritance of build context
+* inconsistent context setup across interactive, auto, and headless flows
+
+If behavior differs by entrypoint, identify the rule, determine whether it is intended, and fix inconsistencies where appropriate.
+
+### 2. User instruction extraction
+
+Audit the **user instruction extraction agent** carefully.
+
+Verify:
+
+* the user’s instruction is extracted accurately
+* it preserves the actual task, constraints, and latest user intent
+* it does not over-summarize away important requirements
+* it does not introduce new assumptions or distort the task
+
+Also verify invocation timing:
+
+* it should be invoked **only when appropriate**
+* specifically, it should be invoked when there are **multiple user messages** or when the **user has answered a question from the model**
+* it should not run unnecessarily on simple single-message cases
+
+If the current invocation policy is ambiguous or partially correct, make it explicit, consistent, and well-documented in code and in your report.
+
+### 3. Eval agent behavior and permissions
+
+Verify that the eval agent is prompted and configured to behave correctly.
+
+It should:
+
+* actively investigate problems
+* run tests when useful
+* write temporary scripts or test harnesses when useful
+* gather enough evidence to support its conclusions
+
+It must **not modify repository files**.
+
+Check both prompt wording and actual enforcement. If “should not modify files” is only implied and not reliably enforced, fix that.
+
+### 4. Eval output quality and format
+
+This is extremely important.
+
+Audit whether the feedback produced by the eval agent is in a format that is actually useful for the downstream build agent.
+
+The eval output must:
+
+* clearly explain the issue or issues found
+* include enough detail for the build agent to act
+* distinguish verified problems from suspicions
+* provide clear next-step instructions
+* avoid ambiguity, vagueness, or bloated commentary
+* make it easy for the build agent to either:
+
+  1. fix the issues, or
+  2. call the **eval rebuttal tool** to challenge the evaluation
+
+You must verify that the format is strong not just in theory, but in real examples across the supported flows.
+
+### 5. Build-agent handoff
+
+The build agent must receive eval feedback in a form it can reliably use.
+
+Audit whether the handoff from eval to build is working correctly:
+
+* Does build understand the eval output?
+* Does build attempt to fix the issues directly when appropriate?
+* Does build invoke the **eval rebuttal tool** when it disagrees?
+* Are there cases where build gets stuck because eval output is poorly structured or insufficiently actionable?
+
+Fix prompt design and orchestration issues so that this handoff is reliable.
+
+### 6. Eval rebuttal flow
+
+Verify that the **eval rebuttal** path works correctly end to end.
+
+Specifically test whether:
+
+* rebuttal is available in the right circumstances
+* build can use it correctly
+* the triggering conditions are sensible
+* the system behaves well when eval is wrong, incomplete, or overly strict
+
+If the rebuttal flow is missing, weakly prompted, or poorly integrated, fix it.
+
+### 7. Prompt quality review
+
+Audit all prompts related to:
+
+* eval
+* user instruction extraction
+* build handoff from eval
+* eval rebuttal
+
+Improve them using current best practices for prompting modern **OpenAI** and **Anthropic** models, especially for:
+
+* agentic workflows
+* evaluator roles
+* structured outputs
+* tool use
+* handoff between specialist agents
+* instruction fidelity
+* context isolation
+* constrained behavior
+
+Do not make prompts longer unless the additional detail clearly improves reliability.
+
+## Behavioral expectations
+
+Be proactive and thorough.
+
+In addition to the specific requirements above, look for any behavior related to eval that is:
+
+* incorrect
+* inconsistent across surfaces
+* fragile
+* unintuitive
+* likely to cause poor UX or agent failure
+* likely to produce low-quality evaluation feedback or poor downstream fixes
+
+If you find such issues and they are meaningfully related to the eval feature, fix them in this branch.
+
+## Testing and verification
+
+You have access to API keys in your environment and may run **end-to-end tests** as needed.
+
+You must verify the feature at multiple levels, as appropriate:
+
+* unit tests
+* integration tests
+* end-to-end tests
+* prompt-output spot checks using realistic scenarios
+
+Your verification must explicitly cover:
+
+* slash eval in the interactive CLI
+* eval inside auto loops
+* eval inside headless CLI open code run loops
+* instruction extraction trigger conditions
+* eval’s ability to run tests / scripts without modifying files
+* build successfully fixing issues after eval
+* build successfully using eval rebuttal when appropriate
+
+Prefer concrete evidence over assumptions.
+
+## Deliverables
+
+By the end, you must provide all of the following.
+
+### 1. Code and prompt changes
+
+Implement all necessary fixes related to the eval feature, including orchestration, prompts, formatting, and tests.
+
+### 2. Verification
+
+Add or update tests as needed and run the appropriate validation to confirm the fixes work.
+
+### 3. Top-level markdown report
+
+Create a **top-level markdown file** that includes:
+
+* the intended design of the eval feature
+* the audit scope
+* what you inspected
+* what was already working and correct
+* what was incorrect or risky
+* how each issue was fixed
+* how each fix was verified
+* any remaining caveats or follow-up items
+
+### 4. Branch publication
+
+Commit all changes and publish the branch.
+
+## Output format
+
+When finished, report back with:
+
+* a concise summary of the audit
+* the main issues found
+* the key fixes made
+* the verification performed
+* the branch name
+* the commit hash or hashes
+* the path to the top-level markdown audit report
+
+---
+
+# Guidelines on prompt improvement
+
+Use these guidelines when improving prompts for engineering agents, audits, or agent-behavior investigations.
+
+## 1. Define the objective clearly
+
+State exactly what success looks like. Replace vague goals like “look into this” with concrete outcomes like:
+
+* audit all entrypoints
+* fix issues found
+* verify with tests
+* document results
+* publish the branch
+
+## 2. Separate scope from requirements
+
+Make it easy to see:
+
+* where the agent must look
+* what behaviors it must verify
+* what fixes it is expected to make
+
+This prevents omissions and reduces misinterpretation.
+
+## 3. Convert paragraphs into executable checks
+
+Long prose often hides important requirements. Turn them into explicit audit items such as:
+
+* verify eval starts in a new context
+* verify instruction extraction runs only under defined conditions
+* verify eval can run tests but cannot modify files
+
+This makes the prompt more actionable.
+
+## 4. Distinguish “investigate” from “fix”
+
+If you want the agent to do more than inspect, say so explicitly. Good prompts clearly state:
+
+* what must be audited
+* what must be changed if broken
+* what should be left alone if already correct
+
+## 5. Define behavior, not just implementation details
+
+Say what the system should do from a product and UX perspective, not only which code paths to inspect. This helps the agent catch problems that are technically consistent but still wrong in practice.
+
+## 6. Call out critical quality bars
+
+If one part matters more than the rest, label it clearly. For example:
+
+* “This is extremely important”
+* “The output must be actionable for the build agent”
+* “Do not treat format quality as a minor detail”
+
+This helps the agent prioritize correctly.
+
+## 7. Specify trigger conditions precisely
+
+Where timing matters, define when something should and should not happen. Ambiguous phrases like “when needed” should be replaced by rules such as:
+
+* only when there are multiple user messages
+* only after the user answers a model question
+
+## 8. Require end-to-end verification
+
+Do not rely only on code inspection. For workflow features, require testing through the real entrypoints and loops where behavior may differ.
+
+## 9. Require documentation of both correct and incorrect behavior
+
+A strong audit prompt should ask the agent to document:
+
+* what is already correct
+* what is broken
+* how it knows
+* what changed
+
+This produces a more trustworthy final report.
+
+## 10. Encourage initiative on adjacent issues
+
+If the prompt is too narrow, the agent may ignore obvious related problems. Add a clause allowing fixes for nearby issues that are clearly part of the same feature area.
+
+## 11. Tighten ambiguous terms
+
+Replace fuzzy language like:
+
+* “works correctly”
+* “good format”
+* “right times”
+
+with definitions such as:
+
+* starts in a clean context
+* produces actionable, structured feedback
+* only invokes extraction under specified conditions
+
+## 12. Make deliverables explicit
+
+Always state the required outputs:
+
+* code changes
+* tests
+* markdown report
+* branch name
+* commit hash
+
+Without this, agents often stop after partial completion.
+
+---
+
+If you want, I can also turn this into a version optimized specifically for a coding agent like Codex/Claude Code/OpenAI agents, with a stricter phase-by-phase structure.
