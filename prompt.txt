@@ -1,0 +1,349 @@
+You are working in a **new branch** dedicated to auditing and fixing the **auto feature**.
+
+## Objective
+
+Perform a **full technical and product audit** of the auto feature across all relevant execution paths. Fix any issues you find that are related to auto behavior, orchestration, prompts, loop control, mode transitions, append interactions, headless parity, or user experience. When finished, commit your changes, publish the branch, and add a top-level markdown report documenting the audit, findings, fixes, and verification.
+
+## Intended behavior
+
+The auto feature should be a mode that runs:
+
+1. **planning**
+2. **building**
+3. **evaluation**
+4. and, if problems are found, an **evaluation → build loop** until the work is complete or the system reaches its intended stopping condition
+
+The goal of auto mode is that a user can:
+
+* switch to **auto mode**
+* send a message
+* and have the system continue working without getting stuck on avoidable interruptions such as:
+
+  * the model asking the user a question mid-loop
+  * permission dialogs
+  * other unnecessary pauses that break the autonomous experience
+
+Auto mode should be robust and predictable even when the user switches modes frequently or uses related features such as append.
+
+## Core product requirements
+
+### 1. Autonomous execution
+
+Auto mode should complete as much work as possible without user intervention.
+
+Verify that:
+
+* the system does not hang unnecessarily
+* the model does not stall because it asks the user a question that should have been handled internally
+* the loop continues appropriately through planning, build, and eval
+* the feature reaches a sensible stopping condition
+
+### 2. Permission handling
+
+Permission requests should be **automatically rejected** in auto mode.
+
+Verify that:
+
+* permission dialogs are not surfaced in a way that blocks progress
+* permission-denied outcomes are handled cleanly
+* the model is prompted to work around missing permissions as best as possible
+* the loop does not stall or fail in a confusing way because a permission was denied automatically
+
+If this behavior is inconsistent, incomplete, or poorly communicated to the model, fix it.
+
+### 3. Entry and re-entry behavior
+
+Audit both ways auto mode can be used:
+
+* when the **first message** is started from auto mode
+* when **auto mode is activated during an existing session**
+
+Do not assume these are equivalent. Verify both.
+
+### 4. Mode switching and session continuity
+
+Auto mode must behave correctly regardless of how the user switches modes in the interactive CLI.
+
+You must specifically verify scenarios such as:
+
+* the user runs **planning**, then sends a new message in **auto mode**
+* the user runs **auto mode once**, then sends another message in **auto mode**
+* the user runs **auto** for a whole feature, then uses **build** for a git-related modification, then starts another feature in **auto**
+* the user switches between modes multiple times within the same session
+
+For all such transitions, verify:
+
+* correct loop initialization
+* correct state handling
+* correct context setup
+* correct agent/mode behavior for the new message
+* no leakage of stale state or unintended carryover from the prior mode
+
+If behavior is ambiguous, make it consistent and intuitive, then document the rule.
+
+### 5. Append interaction
+
+Auto mode must work correctly with the **append** feature.
+
+Verify that:
+
+* messages can be appended while the agent is working
+* a new auto loop starts as soon as the current work is done, when that is the intended behavior
+* queued appended messages are admitted into the system correctly
+* mode, agent, and queue semantics remain correct when append and auto are used together
+* repeated appended messages behave correctly and predictably
+
+Fix any race conditions, state mismatches, dropped messages, duplicate work, or unintuitive UX.
+
+### 6. Interactive CLI and headless parity
+
+Verify that auto mode is aligned with the behavior of **headless CLI open code run**.
+
+The two should be **extremely similar**, with the main difference being the added interactivity of the interactive CLI.
+
+Audit whether:
+
+* the orchestration logic matches
+* the plan/build/eval loop is equivalent
+* retry and stopping behavior are equivalent
+* permissions and other non-interactive constraints are handled consistently
+* prompt design is consistent where it should be
+* any differences are intentional rather than accidental
+
+If there are discrepancies, determine whether they are justified. Fix unjustified inconsistencies.
+
+### 7. Nudge behavior
+
+Audit the correctness of the **nudge** features that are intended to help the agent complete its work.
+
+Verify that:
+
+* nudges trigger in the right conditions
+* nudges are not overused
+* nudges work on the first try when they are used
+* nudges meaningfully help the system continue toward completion
+* nudges are not compensating for preventable prompt or orchestration weaknesses
+
+Also improve the underlying prompts so that nudges are needed as rarely as possible.
+
+Do not treat nudges as the primary solution if prompt or loop design can be improved directly.
+
+### 8. Prompt quality and agent behavior
+
+Audit all prompts related to auto mode, including prompts for:
+
+* planning
+* build
+* eval
+* loop continuation
+* permission handling
+* recovery from blocked actions
+* nudges
+* auto-specific orchestration and stopping behavior
+
+Improve these prompts using current best practices for prompting modern **OpenAI** and **Anthropic** models, especially for:
+
+* agentic workflows
+* long-running loops
+* clear handoff between planning, build, and eval
+* constrained autonomy
+* recovery from blocked actions
+* minimizing unnecessary questions to the user
+* producing actionable outputs for downstream agents
+
+Do not make prompts longer unless the extra detail clearly improves behavior.
+
+### 9. Unexpected or unintuitive behavior
+
+This is a complex feature touching many parts of the codebase.
+
+Beyond the specific items above, look for any behavior related to auto mode that is:
+
+* incorrect
+* inconsistent
+* fragile
+* surprising
+* likely to create bad UX
+* likely to make the agent stall, loop badly, or terminate incorrectly
+
+If you find issues that are meaningfully related to the auto feature, fix them in this branch.
+
+## Testing and verification
+
+You must verify the feature through real usage paths, not only by reading code.
+
+Use the appropriate combination of:
+
+* unit tests
+* integration tests
+* end-to-end tests
+* realistic scenario-based manual validation
+* prompt-output spot checks where useful
+
+Your verification must explicitly cover:
+
+* starting the first message in auto mode
+* enabling auto mode mid-session
+* switching from planning to auto
+* repeated auto requests in one session
+* switching from auto to build and back to auto
+* append plus auto behavior
+* auto behavior when permissions are denied automatically
+* alignment between interactive CLI auto mode and headless CLI open code run
+* nudge behavior and first-try effectiveness
+* loop completion behavior and stopping conditions
+
+Prefer concrete evidence over assumptions.
+
+## Expectations
+
+Be proactive and thorough.
+
+You are not only auditing. You are expected to:
+
+* identify problems
+* fix them in this branch
+* improve prompts where needed
+* verify the fixes
+* document what changed
+* commit and publish the branch
+
+Do not stop at the explicitly listed scenarios if you encounter adjacent issues that are clearly part of the auto feature.
+
+## Deliverables
+
+By the end, you must provide all of the following.
+
+### 1. Code and prompt changes
+
+Implement all necessary fixes related to the auto feature, including orchestration, prompts, transitions, append interaction, permission handling, and tests.
+
+### 2. Verification
+
+Add or update tests as needed and run the appropriate validation to confirm the fixes work.
+
+### 3. Top-level markdown report
+
+Create a **top-level markdown file** that includes:
+
+* the intended design of the auto feature
+* the audit scope
+* the flows and code paths you inspected
+* what was already working and correct
+* what was incorrect, fragile, or risky
+* how each issue was fixed
+* how each fix was verified
+* any remaining caveats, limitations, or follow-up items
+
+### 4. Branch publication
+
+Commit all changes and publish the branch.
+
+## Output format
+
+When finished, report back with:
+
+* a concise summary of the audit
+* the main issues found
+* the key fixes made
+* the verification performed
+* the branch name
+* the commit hash or hashes
+* the path to the top-level markdown audit report
+
+---
+
+# Notes on prompt improvement
+
+Use these notes when improving prompts for engineering audits, agent workflows, and multi-mode CLI behavior.
+
+## 1. State the intended behavior up front
+
+Do not begin only with “audit this feature.” First define what the feature is supposed to do. This gives the agent a clear standard to evaluate against.
+
+## 2. Turn broad concerns into explicit checks
+
+A paragraph describing many scenarios is easy to misread. Convert it into concrete audit items such as:
+
+* verify permission requests are automatically rejected
+* verify a new auto loop starts correctly after append
+* verify interactive and headless flows are aligned
+
+This makes the work more complete and testable.
+
+## 3. Separate product behavior from implementation details
+
+Describe both:
+
+* what the user should experience
+* what the system should do internally
+
+This helps catch UX issues that pure code inspection might miss.
+
+## 4. Be explicit about mode transitions
+
+When features depend on switching modes mid-session, name the transitions you care about. Otherwise, an agent may only test the most obvious happy path.
+
+## 5. Distinguish audit, fix, verify, and document
+
+Strong prompts make each expectation explicit:
+
+* inspect behavior
+* fix issues found
+* validate changes with tests
+* write a report
+* publish the branch
+
+Without this, the work often stops after analysis.
+
+## 6. Define critical quality bars
+
+If a behavior matters a lot, say so clearly. Examples:
+
+* auto must not stall on avoidable user questions
+* permission handling must not block the loop
+* nudges should be rare and effective on first use
+
+This helps the agent prioritize correctly.
+
+## 7. Require parity checks when similar systems exist
+
+If there are two related execution surfaces, such as interactive CLI and headless CLI, explicitly require a parity audit. Otherwise, the agent may fix one path while leaving the other inconsistent.
+
+## 8. Prefer behavioral rules over vague words
+
+Replace phrases like:
+
+* “works correctly”
+* “aligned”
+* “good prompts”
+
+with definitions such as:
+
+* reaches a sensible stopping condition
+* behaves equivalently aside from interactivity
+* minimizes unnecessary user questions and produces actionable handoffs
+
+## 9. Ask for adjacent issue discovery
+
+For complex features, do not limit the agent to only the bugs already suspected. Add a requirement to fix related issues that are clearly part of the same feature area.
+
+## 10. Require end-to-end verification
+
+For orchestration features, code review alone is not enough. Require validation through realistic flows, especially where state transitions and loop behavior can differ from what the code seems to imply.
+
+## 11. Require documentation of what was already correct
+
+A good audit should not only list problems. It should also identify what is already working and why. This makes the result more trustworthy and more useful to future engineers.
+
+## 12. Make deliverables impossible to miss
+
+Always list the final outputs explicitly:
+
+* code changes
+* tests
+* markdown report
+* branch name
+* commit hash
+
+This reduces partial completion and improves the final handoff.
