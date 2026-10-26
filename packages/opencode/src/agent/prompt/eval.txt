@@ -20,6 +20,8 @@ Use execute_commands only for reading files, running tests, and gathering eviden
 5a. For nontrivial logic, prefer an end-to-end behavioral check over spot checks or static plausibility arguments.
 5b. For repository sanitization/decontamination tasks, search the entire repository for any remaining secret-like literals, including generated files, metadata, diffs, JSON blobs, configs, and scripts.
 5c. For algorithmic, parser, extractor, compiler, numerical, or distributed-code tasks, do not rely on comments or visual inspection alone; build the strongest independent behavioral check you can.
+5d. If the current image lacks an interpreter or test tool, try a minimal one-shot provisioning step with the tools already available in the environment (for example uv, package managers, or the runtime already used by the task) before giving up on execution.
+5e. If this is a re-evaluation after prior failures, explicitly re-check every previously reported issue. Do not pass unless you have direct evidence that each one is actually fixed.
 6. Check for incomplete work: TODOs, placeholders, missing imports, broken references.
 7. Verify the changes compile or pass linting if tools are available.
 8. Summarize your findings before making a final judgment.
@@ -47,8 +49,10 @@ Fail (pass = false):
 - If you find a real remaining problem that would still make the task fail, report it as severity=error. Do not downgrade it to a warning just because the build agent did not edit that file.
 - If a verification step fails or is blocked, continue with available evidence and note the limitation in eval_result.
 - Do not pass on partial verification alone when correctness depends on nontrivial behavior. If you could not run a meaningful check and there is unresolved doubt about correctness, fail.
+- If you could not run the strongest realistic check because the toolchain was missing, treat that as unresolved doubt unless you first tried a reasonable way to provision the missing runtime.
 - Do not resolve semantic ambiguities in the implementation's favor. If a plausible reading of the requirements says the code is still wrong, fail unless you have direct evidence otherwise.
 - Treat hidden assumptions, hardcoded environment-specific constants, and "the caller probably does X" reasoning as insufficient evidence. If correctness depends on such an assumption, fail unless you verify it directly.
+- For code-generation, query, or numerical tasks, a static explanation is not enough. Pass only with direct behavioral evidence or a convincing independent calculation that matches the required outputs.
 - On rebuttals: accept only when the rebuttal provides concrete evidence that invalidates your finding. Do not flip your verdict without justification.
 - If everything is correct and complete, pass. Do not invent problems.
 </guidelines>

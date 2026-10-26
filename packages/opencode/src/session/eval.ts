@@ -292,7 +292,13 @@ export namespace Eval {
     }
   }
 
-  function compose(instruction: string, diff: string, files: string[], hasDiff: boolean): string {
+  function compose(
+    instruction: string,
+    diff: string,
+    files: string[],
+    hasDiff: boolean,
+    prior?: { summary?: string; issues?: Issue[] },
+  ): string {
     const parts = ["## Original User Instructions\n", instruction]
     const text = instruction.toLowerCase()
     const repo = ["sanitize", "decontamin", "api key", "token", "secret", "credential"].some((x) => text.includes(x))
@@ -301,6 +307,10 @@ export namespace Eval {
     const chess = text.includes("chess") && text.includes("best move")
     const tensor = text.includes("tensor parallel") || text.includes("rowparallellinear")
     const elf = text.includes("extract") && text.includes("elf")
+    const sparql = text.includes("sparql")
+    const compcert = text.includes("compcert") || text.includes("ccomp")
+    const trace = text.includes("path tracing") || text.includes("reconstructed.ppm") || text.includes("image similarity")
+    const stan = text.includes("rstan") || text.includes("pystan") || text.includes("stan model")
 
     parts.push(
       "\n\nThe original user instructions define pass/fail. Treat the modified-files list and diff as hints only, not as the scope boundary.",
@@ -310,6 +320,9 @@ export namespace Eval {
     )
     parts.push(
       "Hidden tests may exist. Passing requires strong evidence of correctness, not just superficial checks or plausible-looking code.",
+    )
+    parts.push(
+      "If a needed interpreter or test tool is missing, try a minimal provisioning step with tools already available in the environment before falling back to static analysis.",
     )
 
     if (repo) {
@@ -332,7 +345,7 @@ export namespace Eval {
 
     if (tensor) {
       parts.push(
-        "\n\n## Task-specific evaluation guidance\nFor tensor-parallel linear layers, do not assume the caller pre-shards inputs or gradients unless the instructions explicitly say so. If correctness depends on such an unstated assumption, fail and report it as an error.",
+        "\n\n## Task-specific evaluation guidance\nFor tensor-parallel linear layers, do not assume the caller pre-shards inputs or gradients unless the instructions explicitly say so. Verify behavior for the required world sizes and gradient paths if at all possible. If correctness depends on an unstated assumption or you only have static reasoning, fail and report it as an error.",
       )
     }
 
@@ -342,9 +355,46 @@ export namespace Eval {
       )
     }
 
+    if (sparql) {
+      parts.push(
+        "\n\n## Task-specific evaluation guidance\nFor SPARQL tasks, do not pass based on manual reasoning alone. Run the query or independently compute the exact expected result set, including aggregation semantics, and compare them. Validate projected fields separately from eligibility filters: a professor may qualify through one EU department but still need all current work countries in the output. Prefer deriving the expected rows programmatically from the full graph rather than hand-enumerating entities from partial inspection. Hand-counted department sizes or manually listed professors are not sufficient evidence. If you did not actually execute the query against the graph or compare it to a programmatically derived reference set, fail.",
+      )
+    }
+
+    if (compcert) {
+      parts.push(
+        "\n\n## Task-specific evaluation guidance\nFor CompCert or toolchain-install tasks, pass only after directly proving the requested binary exists at the exact path and works on the probe flow described by the task. Download/build intent or partial installation logs are not enough.",
+      )
+    }
+
+    if (trace) {
+      parts.push(
+        "\n\n## Task-specific evaluation guidance\nFor path-tracing or image-reconstruction tasks, visual plausibility is not enough. Pass only if you directly verify the produced output against the required similarity metric or an equivalent independent computation. If you only inspected headers, pixels, or code shape, fail.",
+      )
+    }
+
+    if (stan) {
+      parts.push(
+        "\n\n## Task-specific evaluation guidance\nFor Stan or probabilistic-program translation tasks, pass only after directly checking that the produced script runs or that its generated outputs match the required posterior/statistical outputs. Manual reasoning about the model structure alone is insufficient.",
+      )
+    }
+
     if (files.length > 0) {
       parts.push("\n\n## Files Created or Modified\n")
       parts.push(files.map((f) => `- ${f}`).join("\n"))
+    }
+
+    if (prior?.summary || prior?.issues?.length) {
+      parts.push("\n\n## Previously Observed Issues To Re-check\n")
+      if (prior.summary) parts.push(prior.summary)
+      if (prior.issues?.length) {
+        parts.push(
+          prior.issues.map((x) => `- ${x.description}${x.file ? ` (file: ${x.file})` : ""}; severity=${x.severity}`).join("\n"),
+        )
+      }
+      parts.push(
+        "Do not pass unless you directly verify that every issue above is fixed. If an issue cannot be disproven with evidence, fail again.",
+      )
     }
 
     if (hasDiff) {
@@ -481,7 +531,7 @@ export namespace Eval {
       const verdict = await review({
         sessionID: evalSession.id,
         model: resolved,
-        prompt: compose(input.instruction, extra.diff, extra.files, hasDiff || !!extra.diff),
+        prompt: compose(input.instruction, extra.diff, extra.files, hasDiff || !!extra.diff, attempt > 1 ? last : undefined),
       })
 
       last = {
