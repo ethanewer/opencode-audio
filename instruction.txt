@@ -1,0 +1,126 @@
+You are working in a new branch dedicated to auditing and fixing the **slash append** feature.
+
+## Objective
+
+Perform a **full product and technical audit** of slash append, fix all issues you find that are related to the append feature, then commit and publish the branch.
+
+## Feature definition
+
+The slash append feature should behave as a **toggle** between two queueing modes:
+
+1. **Append while working**
+
+   * User messages can be added while the agent is actively working.
+   * Messages are queued.
+   * The current in-flight work should not be interrupted unless that is explicitly intended elsewhere in the system.
+
+2. **Append after working**
+
+   * User messages can still be submitted while the agent is actively working.
+   * Messages are queued.
+   * Queued messages must **not** be pulled into the model context until the model has fully completed its current work.
+
+Both modes queue messages. The key difference is **when queued messages are admitted into model context**.
+
+## Required investigation areas
+
+Audit the queueing and append behavior end to end, including state transitions, message admission, loop behavior, and UX.
+
+You must specifically investigate and verify:
+
+### 1. Basic append-mode semantics
+
+* Whether append mode correctly delays admission of queued messages until current work completes.
+* Whether non-append mode behaves correctly when messages are queued while work is in progress.
+* Whether mode toggling is reflected consistently in runtime behavior.
+
+### 2. Slash actions in the queue
+
+* The queue must support slash actions such as **slash eval**.
+* Verify that queued slash actions execute in the correct order and under the correct mode/agent context.
+* Fix any inconsistencies.
+
+### 3. Voice message behavior
+
+* Carefully investigate how queueing interacts with **voice messages**.
+* Identify any mismatch, dropped state, race, double-submit, incorrect transcription timing, or context-admission issues.
+* Fix any bugs or UX inconsistencies.
+
+### 4. Multiple queued messages
+
+* Verify the logic is robust when multiple messages are queued in succession.
+* Check ordering, batching behavior, deduplication, replay, cancellation, and admission timing.
+* Fix any edge cases.
+
+### 5. Mode and agent changes before submission
+
+Queue behavior must respect the user’s currently selected mode and agent at the time the queued message is actually submitted or started, according to intended product behavior.
+
+At minimum, verify these cases:
+
+* If the user switches to **auto mode**, then uses **slash append** to toggle append mode, then submits a message, that message should start a **new auto loop** with **plan → build → eval**.
+* If the user switches to **build mode** before submitting a new message, that message should start in **build mode**.
+* If the user changes the **agent** before submitting a queued message, the queued message must respect the correct agent selection according to intended UX. If current behavior is ambiguous, make it consistent and intuitive, then document the rule.
+
+### 6. Unintuitive or surprising UX
+
+Beyond the explicitly listed cases, look for any behavior related to append/queueing that may be technically consistent but **unintuitive, surprising, or likely to create bad UX**.
+If you find such behavior:
+
+* determine the intended behavior,
+* fix it,
+* and document both the issue and the resolution.
+
+## Expectations
+
+You are not only auditing. You are expected to:
+
+* identify all append-related issues you find,
+* fix them in this branch,
+* verify the fixes with appropriate testing,
+* and publish the final branch.
+
+Be proactive. Do not stop at the exact cases listed above if you encounter adjacent issues that are clearly part of append/queue behavior.
+
+## Deliverables
+
+By the end, you must provide all of the following:
+
+### 1. Code changes
+
+Implement all fixes related to the append feature that you find in the audit.
+
+### 2. Verification
+
+Add or update tests as needed. Verification should include:
+
+* unit tests where appropriate,
+* integration/end-to-end coverage where appropriate,
+* explicit validation of the scenarios listed above.
+
+### 3. Audit note
+
+Create a **top-level markdown file** summarizing:
+
+* how slash append is intended to work,
+* what you audited,
+* what behavior you found that is already correct,
+* what behavior was problematic,
+* how you fixed each issue,
+* how you verified each fix,
+* any remaining risks, limitations, or follow-ups.
+
+### 4. Branch publication
+
+Commit your changes and publish the branch.
+
+## Output format
+
+When you are done, provide:
+
+* a concise summary of the audit,
+* the key fixes,
+* the verification performed,
+* the branch name,
+* the commit hash or hashes,
+* and the path to the top-level markdown audit note.
